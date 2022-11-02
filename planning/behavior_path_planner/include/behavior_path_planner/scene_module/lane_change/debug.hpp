@@ -18,6 +18,8 @@
 #include "behavior_path_planner/debug_utilities.hpp"
 #include "behavior_path_planner/scene_module/lane_change/lane_change_path.hpp"
 
+#include "geometry_msgs/msg/pose.hpp"
+
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -25,8 +27,11 @@
 namespace marker_utils::lane_change_markers
 {
 using behavior_path_planner::LaneChangePath;
+using behavior_path_planner::ShiftLine;
+using geometry_msgs::msg::Pose;
 using marker_utils::CollisionCheckDebug;
 using visualization_msgs::msg::MarkerArray;
+
 MarkerArray showObjectInfo(
   const std::unordered_map<std::string, CollisionCheckDebug> & obj_debug_vec, std::string && ns);
 MarkerArray showAllValidLaneChangePath(
@@ -39,5 +44,7 @@ MarkerArray showPolygon(
   const std::unordered_map<std::string, CollisionCheckDebug> & obj_debug_vec, std::string && ns);
 MarkerArray showPolygonPose(
   const std::unordered_map<std::string, CollisionCheckDebug> & obj_debug_vec, std::string && ns);
+MarkerArray show_shift_pose(const Pose & shift_pose, std::string && ns, const int32_t id = 0);
+MarkerArray show_shift_line(const ShiftLine & shift_line, std::string && ns, const int32_t id = 0);
 }  // namespace marker_utils::lane_change_markers
 #endif  // BEHAVIOR_PATH_PLANNER__SCENE_MODULE__LANE_CHANGE__DEBUG_HPP_

@@ -15,6 +15,7 @@
 #include "behavior_path_planner/scene_module/utils/path_shifter.hpp"
 
 #include <behavior_path_planner/scene_module/lane_change/debug.hpp>
+#include <behavior_path_planner/utilities.hpp>
 #include <tier4_autoware_utils/ros/marker_helper.hpp>
 
 #include <autoware_auto_perception_msgs/msg/predicted_objects.hpp>
@@ -27,6 +28,7 @@
 
 namespace marker_utils::lane_change_markers
 {
+using behavior_path_planner::util::shiftPose;
 using geometry_msgs::msg::Point;
 using tier4_autoware_utils::createDefaultMarker;
 using tier4_autoware_utils::createMarkerColor;
@@ -234,5 +236,44 @@ MarkerArray showPolygonPose(
   }
 
   return marker_array;
+}
+
+MarkerArray show_shift_pose(const Pose & shift_pose, std::string && ns, const int32_t id)
+{
+  const auto current_time = rclcpp::Clock{RCL_ROS_TIME}.now();
+
+  Marker pose_marker = createDefaultMarker(
+    "map", current_time, ns, id, Marker::CUBE, createMarkerScale(1.5, 1.5, 1.5),
+    createMarkerColor(1.0, 1.0, 0.0, 0.9));
+  pose_marker.pose = shift_pose;
+  MarkerArray msg;
+  msg.markers = {pose_marker};
+  return msg;
+}
+
+MarkerArray show_shift_line(const ShiftLine & shift_line, std::string && ns, const int32_t id)
+{
+  const auto current_time = rclcpp::Clock{RCL_ROS_TIME}.now();
+
+  Marker start_point = createDefaultMarker(
+    "map", current_time, ns, id + 1, Marker::CUBE, createMarkerScale(0.2, 0.2, 0.2),
+    createMarkerColor(1.0, 1.0, 0.0, 0.9));
+  start_point.pose = shift_line.start;
+  shiftPose(&start_point.pose, shift_line.start_shift_length);
+
+  Marker end_point = createDefaultMarker(
+    "map", current_time, ns, id + 2, Marker::CUBE, createMarkerScale(0.2, 0.2, 0.2),
+    createMarkerColor(1.0, 1.0, 0.0, 0.9));
+  end_point.pose = shift_line.end;
+  shiftPose(&end_point.pose, shift_line.end_shift_length);
+
+  Marker start_to_end_line = createDefaultMarker(
+    "map", current_time, ns, id + 3, Marker::LINE_STRIP, createMarkerScale(0.2, 0.0, 0.0),
+    createMarkerColor(1.0, 1.0, 0.0, 0.9));
+  start_to_end_line.points = {start_point.pose.position, end_point.pose.position};
+
+  MarkerArray msg;
+  msg.markers = {start_point, end_point, start_to_end_line};
+  return msg;
 }
 }  // namespace marker_utils::lane_change_markers

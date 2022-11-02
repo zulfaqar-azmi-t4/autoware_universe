@@ -79,6 +79,7 @@ bool PathShifter::generate(
   // Guard
   if (reference_path_.points.empty()) {
     RCLCPP_ERROR_STREAM(logger_, "reference path is empty.");
+    std::cerr << "A\n";
     return false;
   }
 
@@ -89,6 +90,8 @@ bool PathShifter::generate(
     RCLCPP_DEBUG_STREAM_THROTTLE(
       logger_, clock_, 3000, "shift_lines_ is empty. Return reference with base offset.");
     shiftBaseLength(shifted_path, base_offset_);
+
+    std::cerr << "B\n";
     return true;
   }
 
@@ -99,6 +102,8 @@ bool PathShifter::generate(
         logger_, clock_, 3000,
         "shift start point and end point can't be adjoining "
         "Maybe shift length is too short?");
+
+      std::cerr << "C" << shift_line.start_idx << " " << shift_line.end_idx << "\n";
       return false;
     }
   }
@@ -106,6 +111,8 @@ bool PathShifter::generate(
   // Check if the shift points are sorted correctly
   if (!checkShiftLinesAlignment(shift_lines_)) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to sort shift points..!!");
+
+    std::cerr << "D\n";
     return false;
   }
 
@@ -116,6 +123,8 @@ bool PathShifter::generate(
         logger_, clock_, 3000,
         "shift start point is at the edge of path. It could cause undesired result."
         " Maybe path is too short for backward?");
+
+      std::cerr << "F\n";
     }
   }
 

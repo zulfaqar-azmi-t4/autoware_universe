@@ -135,6 +135,11 @@ TurnSignalInfo calc_turn_signal_info(
 
 void get_turn_signal_info(
   const LaneChangePath & lane_change_path, TurnSignalInfo * turn_signal_info);
+
+std::optional<LaneChangeAbortPath> get_abort_paths(
+  const std::shared_ptr<const PlannerData> & planner_data, const LaneChangePath & selected_path,
+  ShiftLine & shift);
+
 }  // namespace behavior_path_planner::lane_change_utils
 
 #endif  // BEHAVIOR_PATH_PLANNER__SCENE_MODULE__LANE_CHANGE__UTIL_HPP_

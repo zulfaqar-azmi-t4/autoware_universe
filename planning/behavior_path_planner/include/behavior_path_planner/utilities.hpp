@@ -201,8 +201,13 @@ bool calcObjectPolygon(const PredictedObject & object, Polygon2d * object_polygo
 bool calcObjectPolygon(
   const Shape & object_shape, const Pose & object_pose, Polygon2d * object_polygon);
 
-PredictedPath resamplePredictedPath(
-  const PredictedPath & input_path, const double resolution, const double duration);
+bool
+calcObjectPolygon(
+const Shape & object_shape, const Pose & object_pose, Polygon2d * object_polygon);
+
+  PredictedPath
+  resamplePredictedPath(
+    const PredictedPath & input_path, const double resolution, const double duration);
 
 double getDistanceBetweenPredictedPaths(
   const PredictedPath & path1, const PredictedPath & path2, const double start_time,
@@ -394,7 +399,6 @@ PathWithLaneId setDecelerationVelocityForTurnSignal(
 std::uint8_t getHighestProbLabel(const std::vector<ObjectClassification> & classification);
 
 lanelet::ConstLanelets getCurrentLanes(const std::shared_ptr<const PlannerData> & planner_data);
-
 lanelet::ConstLanelets getExtendedCurrentLanes(
   const std::shared_ptr<const PlannerData> & planner_data);
 

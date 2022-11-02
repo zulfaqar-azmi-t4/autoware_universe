@@ -89,6 +89,8 @@ private:
   std::shared_ptr<LaneChangeParameters> parameters_;
   LaneChangeStatus status_;
   PathShifter path_shifter_;
+  mutable LaneChangeStates current_lane_change_state_;
+  std::shared_ptr<LaneChangeAbortPath> abort_path_;
 
   double lane_change_lane_length_{200.0};
   double check_distance_{100.0};
@@ -140,6 +142,7 @@ private:
     rtc_interface_right_.clearCooperateStatus();
   }
 
+  lanelet::ConstLanelets get_original_lanes() const;
   PathWithLaneId getReferencePath() const;
   lanelet::ConstLanelets getLaneChangeLanes(
     const lanelet::ConstLanelets & current_lanes, const double lane_change_lane_length) const;
@@ -152,9 +155,10 @@ private:
   bool isSafe() const;
   bool isNearEndOfLane() const;
   bool isCurrentSpeedLow() const;
-  bool isAbortConditionSatisfied() const;
+  bool isAbortConditionSatisfied();
   bool hasFinishedLaneChange() const;
 
+  void append_marker_array(const MarkerArray & marker_array) const;
   void setObjectDebugVisualization() const;
   mutable std::unordered_map<std::string, CollisionCheckDebug> object_debug_;
   mutable std::vector<LaneChangePath> debug_valid_path_;
