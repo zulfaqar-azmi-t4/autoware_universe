@@ -14,6 +14,7 @@
 
 #include "behavior_path_planner/scene_module/lane_change/util.hpp"
 
+#include "behavior_path_planner/path_utilities.hpp"
 #include "behavior_path_planner/scene_module/utils/path_shifter.hpp"
 #include "behavior_path_planner/utilities.hpp"
 
@@ -292,9 +293,11 @@ bool selectSafePath(
     const size_t current_seg_idx = motion_utils::findFirstNearestSegmentIndexWithSoftConstraints(
       path.path.points, current_pose, common_parameters.ego_nearest_dist_threshold,
       common_parameters.ego_nearest_yaw_threshold);
+    Pose ego_pose_before_collision;
     if (isLaneChangePathSafe(
           path.path, current_lanes, target_lanes, dynamic_objects, current_pose, current_seg_idx,
-          current_twist, common_parameters, ros_parameters, debug_data, true, path.acceleration)) {
+          current_twist, common_parameters, ros_parameters, ego_pose_before_collision, debug_data,
+          true, path.acceleration)) {
       *selected_path = path;
       return true;
     }
@@ -352,7 +355,7 @@ bool isLaneChangePathSafe(
   const PredictedObjects::ConstSharedPtr dynamic_objects, const Pose & current_pose,
   const size_t & current_seg_idx, const Twist & current_twist,
   const BehaviorPathPlannerParameters & common_parameters,
-  const LaneChangeParameters & lane_change_parameters,
+  const LaneChangeParameters & lane_change_parameters, Pose & ego_pose_before_collision,
   std::unordered_map<std::string, CollisionCheckDebug> & debug_data, const bool use_buffer,
   const double acceleration)
 {
@@ -429,7 +432,7 @@ bool isLaneChangePathSafe(
       if (!util::isSafeInLaneletCollisionCheck(
             current_pose, current_twist, vehicle_predicted_path, vehicle_info, check_start_time,
             check_end_time, time_resolution, obj, obj_path, common_parameters,
-            current_debug_data.second)) {
+            ego_pose_before_collision, current_debug_data.second)) {
         appendDebugInfo(current_debug_data, false);
         return false;
       }
@@ -466,7 +469,7 @@ bool isLaneChangePathSafe(
         if (!util::isSafeInLaneletCollisionCheck(
               current_pose, current_twist, vehicle_predicted_path, vehicle_info, check_start_time,
               check_end_time, time_resolution, obj, obj_path, common_parameters,
-              current_debug_data.second)) {
+              ego_pose_before_collision, current_debug_data.second)) {
           appendDebugInfo(current_debug_data, false);
           return false;
         }
@@ -648,7 +651,8 @@ inline double abort_point(
 }
 
 std::optional<LaneChangeAbortPath> get_abort_paths(
-  const std::shared_ptr<const PlannerData> & planner_data, const LaneChangePath & selected_path, ShiftLine & shift)
+  const std::shared_ptr<const PlannerData> & planner_data, const LaneChangePath & selected_path,
+  const Pose & ego_pose_before_collision, ShiftLine & shift)
 {
   const auto & route_handler = planner_data->route_handler;
   const auto current_speed = util::l2Norm(planner_data->self_odometry->twist.twist.linear);
@@ -662,29 +666,35 @@ std::optional<LaneChangeAbortPath> get_abort_paths(
 
   const auto ego_nearest_dist_threshold = planner_data->parameters.ego_nearest_dist_threshold;
   const auto ego_nearest_yaw_threshold = planner_data->parameters.ego_nearest_yaw_threshold;
-
-  const PathWithLaneId path = selected_path.path;
+  constexpr double RESAMPLE_INTERVAL{1.0};
+  auto path = util::resamplePathWithSpline(selected_path.path, RESAMPLE_INTERVAL);
 
   const auto ego_pose_idx = motion_utils::findFirstNearestIndexWithSoftConstraints(
     path.points, current_pose, ego_nearest_dist_threshold, ego_nearest_yaw_threshold);
-  const auto & ego_pose_point = path.points.at(ego_pose_idx).point.pose;
+  const auto ego_pose_before_collision_idx = motion_utils::findFirstNearestIndexWithSoftConstraints(
+    path.points, ego_pose_before_collision, ego_nearest_dist_threshold, ego_nearest_yaw_threshold);
 
-  const auto pose_idx = [&abort_point_dist, &ego_pose_point, &ego_pose_idx, &path](
+  const auto pose_idx = [&abort_point_dist, &ego_pose_before_collision_idx, &ego_pose_idx, &path](
                           const double accel, const double jerk, const double param_time,
                           const double min_dist) {
+    if (ego_pose_idx > ego_pose_before_collision_idx) {
+      return ego_pose_idx;
+    }
     const double turning_point_dist =
       std::max(std::invoke(abort_point_dist, accel, jerk, param_time), min_dist);
-    const auto finder = std::find_if(
-      path.points.cbegin() + static_cast<int>(ego_pose_idx), path.points.cend(),
-      [&ego_pose_point, &turning_point_dist](const PathPointWithLaneId & next) {
-        const auto next_pose_point = next.point.pose;
-        return tier4_autoware_utils::calcDistance2d(ego_pose_point, next_pose_point) >
-               turning_point_dist;
-      });
-    return std::distance(path.points.cbegin(), finder);
+    const auto & points = path.points;
+    double sum{0.0};
+    size_t idx{0};
+    for (idx = ego_pose_idx; idx < ego_pose_before_collision_idx; ++idx) {
+      sum += tier4_autoware_utils::calcDistance2d(points.at(idx), points.at(idx + 1));
+      if (sum > turning_point_dist) {
+        break;
+      }
+    }
+    return idx;
   };
 
-  const auto turning_pose_idx = pose_idx(0.0, 0.5, 3.0, 3.0);
+  const auto turning_pose_idx = pose_idx(0.0, 0.5, 3.0, 2.0);
   std::cerr << "turning pose idx " << turning_pose_idx << '\n';
   const auto turning_pose = path.points.at(turning_pose_idx).point.pose;
 
@@ -721,7 +731,8 @@ std::optional<LaneChangeAbortPath> get_abort_paths(
   shift_line.end = reference_lane_segment.points.front().point.pose;
   shift_line.end_shift_length = -arc_position.distance;
   shift_line.start_idx = motion_utils::findNearestIndex(path.points, turning_pose.position);
-  shift_line.end_idx = motion_utils::findNearestIndex(path.points, reference_lane_segment.points.front().point.pose.position);
+  shift_line.end_idx = motion_utils::findNearestIndex(
+    path.points, reference_lane_segment.points.front().point.pose.position);
   shift = shift_line;
   std::cerr << shift_line.end_shift_length << '\n';
 
@@ -739,12 +750,15 @@ std::optional<LaneChangeAbortPath> get_abort_paths(
   }
 
   PathWithLaneId sh;
-  sh.points.insert(sh.points.end(), shifted_path.path.points.begin() + shift_line.start_idx, shifted_path.path.points.begin()+shift_line.end_idx);
+  sh.points.insert(
+    sh.points.end(), shifted_path.path.points.begin() + shift_line.start_idx,
+    shifted_path.path.points.begin() + shift_line.end_idx);
 
   LaneChangeAbortPath abort_path;
   abort_path.prev_path = selected_path.path;
   abort_path.shifted_path = shifted_path;
-  abort_path.path = combineReferencePath(combineReferencePath(get_before_abort_segment, sh), reference_lane_segment);
+  abort_path.path = combineReferencePath(
+    combineReferencePath(get_before_abort_segment, sh), reference_lane_segment);
   abort_path.shift_line = shift_line;
   return std::optional<LaneChangeAbortPath>{abort_path};
 }

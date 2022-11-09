@@ -40,7 +40,8 @@ struct LaneChangePath
 };
 using LaneChangePaths = std::vector<LaneChangePath>;
 
-struct LaneChangeAbortPath : LaneChangePath{
+struct LaneChangeAbortPath : LaneChangePath
+{
   PathWithLaneId prev_path;
 };
 

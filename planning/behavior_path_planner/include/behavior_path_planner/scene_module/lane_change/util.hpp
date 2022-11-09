@@ -94,6 +94,7 @@ bool isLaneChangePathSafe(
   const size_t & current_seg_idx, const Twist & current_twist,
   const BehaviorPathPlannerParameters & common_parameters,
   const behavior_path_planner::LaneChangeParameters & lane_change_parameters,
+  Pose & ego_pose_before_collision,
   std::unordered_map<std::string, CollisionCheckDebug> & debug_data, const bool use_buffer = true,
   const double acceleration = 0.0);
 
@@ -138,7 +139,7 @@ void get_turn_signal_info(
 
 std::optional<LaneChangeAbortPath> get_abort_paths(
   const std::shared_ptr<const PlannerData> & planner_data, const LaneChangePath & selected_path,
-  ShiftLine & shift);
+  const Pose & ego_lerp_pose_before_collision, ShiftLine & shift);
 
 }  // namespace behavior_path_planner::lane_change_utils
 
