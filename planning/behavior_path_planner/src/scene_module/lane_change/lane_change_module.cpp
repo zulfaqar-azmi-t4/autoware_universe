@@ -42,7 +42,6 @@ LaneChangeModule::LaneChangeModule(
   const std::string & name, rclcpp::Node & node, std::shared_ptr<LaneChangeParameters> parameters)
 : SceneModuleInterface{name, node},
   parameters_{std::move(parameters)},
-  current_lane_change_state_{LaneChangeStates::Trying},
   rtc_interface_left_(&node, "lane_change_left"),
   rtc_interface_right_(&node, "lane_change_right"),
   uuid_left_{generateUUID()},
@@ -88,6 +87,7 @@ void LaneChangeModule::onEntry()
 {
   RCLCPP_DEBUG(getLogger(), "LANE_CHANGE onEntry");
   current_state_ = BT::NodeStatus::SUCCESS;
+  current_lane_change_state_ = LaneChangeStates::Trying;
   updateLaneChangeStatus();
   // Get arclength to start lane change
   const auto current_pose = planner_data_->self_pose->pose;
@@ -221,6 +221,8 @@ CandidateOutput LaneChangeModule::planCandidate() const
       getSafePath(lane_change_lanes, check_distance_, selected_path);
     selected_path.path.header = planner_data_->route_handler->getRouteHeader();
   }
+  std::cerr << ((current_lane_change_state_ == LaneChangeStates::Abort) ? "Abort" : "No abort")
+            << '\n';
 
   if (current_lane_change_state_ == LaneChangeStates::Abort) {
     if (abort_path_) {
