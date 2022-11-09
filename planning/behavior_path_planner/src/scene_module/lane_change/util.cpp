@@ -660,8 +660,8 @@ std::optional<LaneChangeAbortPath> get_abort_paths(
 
   const auto abort_point_dist =
     [&](const double param_accel, const double param_jerk, const double param_time) {
-      return current_speed * param_time + param_accel * std::pow(param_time, 2) / 2. -
-             param_jerk * std::pow(param_jerk, 3) / 6.;
+      return std::max(1.0, current_speed) * param_time +
+             param_accel * std::pow(param_time, 2) / 2. - param_jerk * std::pow(param_jerk, 3) / 6.;
     };
 
   const auto ego_nearest_dist_threshold = planner_data->parameters.ego_nearest_dist_threshold;
@@ -674,31 +674,50 @@ std::optional<LaneChangeAbortPath> get_abort_paths(
   const auto ego_pose_before_collision_idx = motion_utils::findFirstNearestIndexWithSoftConstraints(
     path.points, ego_pose_before_collision, ego_nearest_dist_threshold, ego_nearest_yaw_threshold);
 
-  const auto pose_idx = [&abort_point_dist, &ego_pose_before_collision_idx, &ego_pose_idx, &path](
-                          const double accel, const double jerk, const double param_time,
-                          const double min_dist) {
-    if (ego_pose_idx > ego_pose_before_collision_idx) {
-      return ego_pose_idx;
-    }
-    const double turning_point_dist =
-      std::max(std::invoke(abort_point_dist, accel, jerk, param_time), min_dist);
-    const auto & points = path.points;
-    double sum{0.0};
-    size_t idx{0};
-    for (idx = ego_pose_idx; idx < ego_pose_before_collision_idx; ++idx) {
-      sum += tier4_autoware_utils::calcDistance2d(points.at(idx), points.at(idx + 1));
-      if (sum > turning_point_dist) {
-        break;
+  const auto pose_idx_min =
+    [&abort_point_dist, &ego_pose_before_collision_idx, &ego_pose_idx, &path](
+      const double accel, const double jerk, const double param_time, const double min_dist) {
+      if (ego_pose_idx > ego_pose_before_collision_idx) {
+        return ego_pose_idx;
       }
-    }
-    return idx;
-  };
+      const double turning_point_dist =
+        std::min(std::invoke(abort_point_dist, accel, jerk, param_time), min_dist);
+      const auto & points = path.points;
+      double sum{0.0};
+      size_t idx{0};
+      for (idx = ego_pose_idx; idx < ego_pose_before_collision_idx; ++idx) {
+        sum += tier4_autoware_utils::calcDistance2d(points.at(idx), points.at(idx + 1));
+        if (sum > turning_point_dist) {
+          break;
+        }
+      }
+      return idx;
+    };
 
-  const auto turning_pose_idx = pose_idx(0.0, 0.5, 3.0, 2.0);
+  const auto pose_idx_max =
+    [&abort_point_dist, &ego_pose_before_collision_idx, &ego_pose_idx, &path](
+      const double accel, const double jerk, const double param_time, const double min_dist) {
+      if (ego_pose_idx > ego_pose_before_collision_idx) {
+        return ego_pose_idx;
+      }
+      const double turning_point_dist =
+        std::max(std::invoke(abort_point_dist, accel, jerk, param_time), min_dist);
+      const auto & points = path.points;
+      double sum{0.0};
+      size_t idx{0};
+      for (idx = ego_pose_idx; idx < ego_pose_before_collision_idx; ++idx) {
+        sum += tier4_autoware_utils::calcDistance2d(points.at(idx), points.at(idx + 1));
+        if (sum > turning_point_dist) {
+          break;
+        }
+      }
+      return idx;
+    };
+  const auto turning_pose_idx = pose_idx_min(0.0, 0.5, 3.0, 5.0);
   std::cerr << "turning pose idx " << turning_pose_idx << '\n';
   const auto turning_pose = path.points.at(turning_pose_idx).point.pose;
 
-  const auto return_pose_idx = pose_idx(0.0, 0.5, 10.0, 10.0);
+  const auto return_pose_idx = pose_idx_max(0.0, 0.5, 10.0, 10.0);
 
   std::cerr << "return pose idx " << return_pose_idx << '\n';
   const auto return_pose = path.points.at(return_pose_idx).point.pose;
