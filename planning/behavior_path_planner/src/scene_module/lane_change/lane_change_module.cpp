@@ -52,6 +52,7 @@ LaneChangeModule::LaneChangeModule(
 
 BehaviorModuleOutput LaneChangeModule::run()
 {
+  const auto tmp_plan = [this](){
   RCLCPP_DEBUG(getLogger(), "Was waiting approval, and now approved. Do plan().");
   current_state_ = BT::NodeStatus::RUNNING;
   is_activated_ = isActivated();
@@ -81,6 +82,24 @@ BehaviorModuleOutput LaneChangeModule::run()
     {start_distance, finish_distance}, SteeringFactor::LANE_CHANGE, steering_factor_direction,
     SteeringFactor::TURNING, "");
   return output;
+  };
+
+  current_state_ = BT::NodeStatus::RUNNING;
+
+  updateData();
+
+  if (!isWaitingApproval()) {
+    return tmp_plan();
+  }
+
+  // module is waiting approval. Check it.
+  if (isActivated()) {
+    RCLCPP_DEBUG(logger_, "Was waiting approval, and now approved. Do plan().");
+    return tmp_plan();
+  } else {
+    RCLCPP_DEBUG(logger_, "keep waiting approval... Do planCandidate().");
+    return planWaitingApproval();
+  }
 }
 
 void LaneChangeModule::onEntry()
@@ -192,10 +211,23 @@ BehaviorModuleOutput LaneChangeModule::plan()
       const auto stop_point = util::insertStopPoint(0.1, &path);
     }
   }
+
+  static bool is_abort_path_approved = false;
   if (current_lane_change_state_ == LaneChangeStates::Abort) {
-    if (abort_path_) {
-      path = abort_path_->path;
+    if (isActivated()) {
+      is_abort_path_approved = true;
     }
+    if (!is_abort_path_approved) {
+      waitApproval();
+      removePreviousRTCStatusLeft();
+      removePreviousRTCStatusRight();
+      uuid_left_ = generateUUID();
+      uuid_right_ = generateUUID();
+    }
+  }
+
+  if (is_abort_path_approved && abort_path_) {
+    path = abort_path_->path;
   }
 
   BehaviorModuleOutput output;
@@ -216,15 +248,21 @@ CandidateOutput LaneChangeModule::planCandidate() const
   CandidateOutput output;
 
   LaneChangePath selected_path;
-    if (current_lane_change_state_ != LaneChangeStates::Abort) {
-      // Get lane change lanes
-      const auto current_lanes = util::getCurrentLanes(planner_data_);
-      const auto lane_change_lanes = getLaneChangeLanes(current_lanes, lane_change_lane_length_);
+  if (current_lane_change_state_ != LaneChangeStates::Abort) {
+    // Get lane change lanes
+    const auto current_lanes = util::getCurrentLanes(planner_data_);
+    const auto lane_change_lanes = getLaneChangeLanes(current_lanes, lane_change_lane_length_);
 
-      [[maybe_unused]] const auto [found_valid_path, found_safe_path] =
-        getSafePath(lane_change_lanes, check_distance_, selected_path);
-      selected_path.path.header = planner_data_->route_handler->getRouteHeader();
+    [[maybe_unused]] const auto [found_valid_path, found_safe_path] =
+      getSafePath(lane_change_lanes, check_distance_, selected_path);
+    selected_path.path.header = planner_data_->route_handler->getRouteHeader();
+  }
+
+  if (current_lane_change_state_ == LaneChangeStates::Abort) {
+    if (abort_path_) {
+      selected_path = *abort_path_;
     }
+  }
 
   if (selected_path.path.points.empty()) {
     return output;
@@ -264,10 +302,16 @@ BehaviorModuleOutput LaneChangeModule::planWaitingApproval()
   out.path = std::make_shared<PathWithLaneId>(getReferencePath());
   const auto candidate = planCandidate();
   out.path_candidate = std::make_shared<PathWithLaneId>(candidate.path_candidate);
-  updateRTCStatus(candidate);
-  std::cerr << ((candidate_uuid_ == uuid_left_) || candidate_uuid_ == uuid_right_) << '\n';
-  waitApproval();
-  clearWaitingApproval();
+
+  bool not_waiting_anymore = false;
+  if (!not_waiting_anymore) {
+    updateRTCStatus(candidate);
+    waitApproval();
+    std::cerr << ((candidate_uuid_ == uuid_left_) || candidate_uuid_ == uuid_right_) << '\n';
+  } else {
+    clearWaitingApproval();
+    removeCandidateRTCStatus();
+  }
   return out;
 }
 
