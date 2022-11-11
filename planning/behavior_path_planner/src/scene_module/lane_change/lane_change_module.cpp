@@ -33,6 +33,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <fmt/format.h>
 
 namespace behavior_path_planner
 {
@@ -94,10 +95,8 @@ BehaviorModuleOutput LaneChangeModule::run()
 
   // module is waiting approval. Check it.
   if (isActivated()) {
-    RCLCPP_DEBUG(logger_, "Was waiting approval, and now approved. Do plan().");
     return tmp_plan();
   } else {
-    RCLCPP_DEBUG(logger_, "keep waiting approval... Do planCandidate().");
     return planWaitingApproval();
   }
 }
@@ -214,15 +213,19 @@ BehaviorModuleOutput LaneChangeModule::plan()
 
   static bool is_abort_path_approved = false;
   if (current_lane_change_state_ == LaneChangeStates::Abort) {
+    fmt::print(stderr, "in plan() abort\n");
     if (isActivated()) {
       is_abort_path_approved = true;
     }
     if (!is_abort_path_approved) {
       waitApproval();
+      std::cerr << "plan() wait for approval is runned.\n";
+      std::cerr << "uuid left = " << uuid_left_.uuid.at(0) << " " << '\n';
       removePreviousRTCStatusLeft();
       removePreviousRTCStatusRight();
       uuid_left_ = generateUUID();
       uuid_right_ = generateUUID();
+      std::cerr << "uuid left = " << uuid_left_.uuid.at(0) << " " << '\n';
     }
   }
 
@@ -259,9 +262,12 @@ CandidateOutput LaneChangeModule::planCandidate() const
   }
 
   if (current_lane_change_state_ == LaneChangeStates::Abort) {
+    std::cerr << "abort\n";
     if (abort_path_) {
       selected_path = *abort_path_;
     }
+  } else {
+    std::cerr << "Not abort \n";
   }
 
   if (selected_path.path.points.empty()) {
@@ -303,14 +309,16 @@ BehaviorModuleOutput LaneChangeModule::planWaitingApproval()
   const auto candidate = planCandidate();
   out.path_candidate = std::make_shared<PathWithLaneId>(candidate.path_candidate);
 
+  fmt::print(stderr, "planned.\n");
   bool not_waiting_anymore = false;
   if (!not_waiting_anymore) {
     updateRTCStatus(candidate);
     waitApproval();
-    std::cerr << ((candidate_uuid_ == uuid_left_) || candidate_uuid_ == uuid_right_) << '\n';
+    fmt::print(stderr, "is waiting anymore.\n");
   } else {
     clearWaitingApproval();
     removeCandidateRTCStatus();
+    fmt::print(stderr, "not waiting anymore.\n");
   }
   return out;
 }
