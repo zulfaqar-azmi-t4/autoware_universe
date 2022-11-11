@@ -195,18 +195,6 @@ BehaviorModuleOutput LaneChangeModule::plan()
   if (current_lane_change_state_ == LaneChangeStates::Abort) {
     if (abort_path_) {
       path = abort_path_->path;
-
-      removePreviousRTCStatusRight();
-      removePreviousRTCStatusLeft();
-
-      uuid_left_ = generateUUID();
-      uuid_right_ = generateUUID();
-      candidate_uuid_ = generateUUID();
-
-      updateRegisteredRTCStatus(*abort_path_);
-    } else if (isWaitingApproval()) {
-      clearWaitingApproval();
-      removeCandidateRTCStatus();
     }
   }
 
@@ -228,7 +216,6 @@ CandidateOutput LaneChangeModule::planCandidate() const
   CandidateOutput output;
 
   LaneChangePath selected_path;
-  if (!is_activated_) {
     if (current_lane_change_state_ != LaneChangeStates::Abort) {
       // Get lane change lanes
       const auto current_lanes = util::getCurrentLanes(planner_data_);
@@ -238,15 +225,6 @@ CandidateOutput LaneChangeModule::planCandidate() const
         getSafePath(lane_change_lanes, check_distance_, selected_path);
       selected_path.path.header = planner_data_->route_handler->getRouteHeader();
     }
-  }
-  std::cerr << ((current_lane_change_state_ == LaneChangeStates::Abort) ? "Abort" : "No abort")
-            << '\n';
-
-  if (current_lane_change_state_ == LaneChangeStates::Abort) {
-    if (abort_path_) {
-      selected_path = static_cast<LaneChangePath>(*abort_path_);
-    }
-  }
 
   if (selected_path.path.points.empty()) {
     return output;
