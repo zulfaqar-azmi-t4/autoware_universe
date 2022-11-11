@@ -38,6 +38,20 @@ namespace behavior_path_planner
 using autoware_auto_planning_msgs::msg::PathWithLaneId;
 using marker_utils::CollisionCheckDebug;
 
+inline std::string toStr(const LaneChangeStates state)
+{
+  if (state == LaneChangeStates::Trying) {
+    return "Trying";
+  } else if (state == LaneChangeStates::Success) {
+    return "Success";
+  } else if (state == LaneChangeStates::Revert) {
+    return "Revert";
+  } else if (state == LaneChangeStates::Abort) {
+    return "Abort";
+  }
+  return "UNKNOWN";
+}
+
 class LaneChangeModule : public SceneModuleInterface
 {
 public:
@@ -101,7 +115,12 @@ private:
   UUID uuid_right_;
   UUID candidate_uuid_;
 
+  bool is_abort_path_approved_ = false;
+  bool is_abort_approval_requested_ = false;
+
   bool is_activated_ = false;
+
+  void resetParameters();
 
   void waitApprovalLeft(const double start_distance, const double finish_distance)
   {

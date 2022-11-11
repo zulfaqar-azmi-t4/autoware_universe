@@ -35,6 +35,15 @@
 #include <vector>
 #include <fmt/format.h>
 
+std::string to_string(const unique_identifier_msgs::msg::UUID & uuid)
+{
+  std::stringstream ss;
+  for (auto i = 0; i < 16; ++i) {
+    ss << std::hex << std::setfill('0') << std::setw(2) << +uuid.uuid[i];
+  }
+  return ss.str();
+}
+
 namespace behavior_path_planner
 {
 using autoware_auto_perception_msgs::msg::ObjectClassification;
@@ -89,6 +98,8 @@ BehaviorModuleOutput LaneChangeModule::run()
   return output;
   };
 
+  RCLCPP_INFO(getLogger(), "current_lane_change_state_ = %s", toStr(current_lane_change_state_).c_str());
+
   current_state_ = BT::NodeStatus::RUNNING;
 
   updateData();
@@ -107,6 +118,11 @@ BehaviorModuleOutput LaneChangeModule::run()
   }
 }
 
+void LaneChangeModule::resetParameters() {
+  is_abort_path_approved_ = false;
+  is_abort_approval_requested_ = false;
+}
+
 void LaneChangeModule::onEntry()
 {
   RCLCPP_DEBUG(getLogger(), "LANE_CHANGE onEntry");
@@ -118,6 +134,7 @@ void LaneChangeModule::onEntry()
   const auto arclength_start =
     lanelet::utils::getArcCoordinates(status_.lane_change_lanes, current_pose);
   status_.start_distance = arclength_start.length;
+  resetParameters();
 }
 
 void LaneChangeModule::onExit()
@@ -127,6 +144,7 @@ void LaneChangeModule::onExit()
   steering_factor_interface_ptr_->clearSteeringFactors();
   debug_marker_.markers.clear();
   current_state_ = BT::NodeStatus::IDLE;
+  resetParameters();
   RCLCPP_DEBUG(getLogger(), "LANE_CHANGE onExit");
 }
 
@@ -217,34 +235,34 @@ BehaviorModuleOutput LaneChangeModule::plan()
     }
   }
 
-  static bool is_abort_path_approved = false;
+
+  RCLCPP_INFO(getLogger(), "current_lane_change_state_ = %s", toStr(current_lane_change_state_).c_str());
+
   if (current_lane_change_state_ == LaneChangeStates::Abort) {
 
-
-    static bool is_abort_approved_once = false;
-    if (!is_abort_approved_once) {
+    if (!is_abort_approval_requested_) {
+      std::cerr << "uuid left = " << to_string(uuid_left_) << '\n';
       uuid_left_ = generateUUID();
       uuid_right_ = generateUUID();
       candidate_uuid_ = generateUUID();
-      is_abort_approved_once = true;
-      RCLCPP_ERROR(getLogger(), "plan() uuid is reset for abort.");
-    }
-
-    fmt::print(stderr, "in plan() abort\n");
-    if (isActivated()) {
-      is_abort_path_approved = true;
-    }
-    if (!is_abort_path_approved) {
-      waitApproval();
-      std::cerr << "plan() wait for approval is runned.\n";
-      std::cerr << "uuid left = " << uuid_left_.uuid.at(0) << " " << '\n';
       removePreviousRTCStatusLeft();
       removePreviousRTCStatusRight();
-      std::cerr << "uuid left = " << uuid_left_.uuid.at(0) << " " << '\n';
+      is_abort_approval_requested_ = true;
+      RCLCPP_ERROR(getLogger(), "plan() uuid is reset to request abort approval.");
+      std::cerr << "uuid left = " << to_string(uuid_left_) << '\n';
+    } else {
+      fmt::print(stderr, "approval request is done(change uuid). check isActivated(). \n");
+      if (isActivated()) {
+        is_abort_path_approved_ = true;
+        RCLCPP_INFO(getLogger(), "isActivated() is true. set is_abort_path_approved to true.");
+      } else {
+        RCLCPP_INFO(getLogger(), "isActivated() is False.");
+        waitApproval();
+      }
     }
   }
 
-  if (is_abort_path_approved && abort_path_) {
+  if (is_abort_path_approved_ && abort_path_) {
     path = abort_path_->path;
   }
 
@@ -277,12 +295,14 @@ CandidateOutput LaneChangeModule::planCandidate() const
   }
 
   if (current_lane_change_state_ == LaneChangeStates::Abort) {
-    std::cerr << "abort\n";
-    if (abort_path_) {
+    std::cerr << "[planCandidate] abort\n";
+    if (is_abort_path_approved_ && abort_path_) {
       selected_path = *abort_path_;
+      std::cerr << "[planCandidate] abort: abort path is used as an output.\n";
+    } else {
+      selected_path.path = abort_path_->prev_path;
+      std::cerr << "[planCandidate] in the abort status, but not approved. Use previous path. \n";
     }
-  } else {
-    std::cerr << "Not abort \n";
   }
 
   if (selected_path.path.points.empty()) {
@@ -324,16 +344,16 @@ BehaviorModuleOutput LaneChangeModule::planWaitingApproval()
   const auto candidate = planCandidate();
   out.path_candidate = std::make_shared<PathWithLaneId>(candidate.path_candidate);
 
-  fmt::print(stderr, "planned.\n");
+  fmt::print(stderr, "[planWaitingApproval] planned.\n");
   bool not_waiting_anymore = false;
   if (!not_waiting_anymore) {
     updateRTCStatus(candidate);
     waitApproval();
-    fmt::print(stderr, "is waiting.\n");
+    fmt::print(stderr, "[planWaitingApproval] is waiting.\n");
   } else {
     clearWaitingApproval();
     removeCandidateRTCStatus();
-    fmt::print(stderr, "not waiting anymore.\n");
+    fmt::print(stderr, "[planWaitingApproval] not waiting anymore.\n");
   }
   return out;
 }
