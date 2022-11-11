@@ -58,36 +58,42 @@ BehaviorModuleOutput LaneChangeModule::run()
   current_state_ = BT::NodeStatus::RUNNING;
   is_activated_ = isActivated();
   auto output = plan();
-  const auto turn_signal_info = output.turn_signal_info;
-  const auto current_pose = planner_data_->self_pose->pose;
-  const double start_distance = motion_utils::calcSignedArcLength(
-    output.path->points, current_pose.position, status_.lane_change_path.shift_line.start.position);
-  const double finish_distance = motion_utils::calcSignedArcLength(
-    output.path->points, current_pose.position, status_.lane_change_path.shift_line.end.position);
 
-  const uint16_t steering_factor_direction =
-    std::invoke([this, &start_distance, &finish_distance, &turn_signal_info]() {
-      if (turn_signal_info.turn_signal.command == TurnIndicatorsCommand::ENABLE_LEFT) {
-        waitApprovalLeft(start_distance, finish_distance);
-        return SteeringFactor::LEFT;
-      }
-      if (turn_signal_info.turn_signal.command == TurnIndicatorsCommand::ENABLE_RIGHT) {
-        waitApprovalRight(start_distance, finish_distance);
-        return SteeringFactor::RIGHT;
-      }
-      return SteeringFactor::UNKNOWN;
-    });
-  // TODO(tkhmy) add handle status TRYING
-  steering_factor_interface_ptr_->updateSteeringFactor(
-    {status_.lane_change_path.shift_line.start, status_.lane_change_path.shift_line.end},
-    {start_distance, finish_distance}, SteeringFactor::LANE_CHANGE, steering_factor_direction,
-    SteeringFactor::TURNING, "");
+  // const auto turn_signal_info = output.turn_signal_info;
+  // const auto current_pose = planner_data_->self_pose->pose;
+  // const double start_distance = motion_utils::calcSignedArcLength(
+  //   output.path->points, current_pose.position, status_.lane_change_path.shift_line.start.position);
+  // const double finish_distance = motion_utils::calcSignedArcLength(
+  //   output.path->points, current_pose.position, status_.lane_change_path.shift_line.end.position);
+
+  // const uint16_t steering_factor_direction =
+  //   std::invoke([this, &start_distance, &finish_distance, &turn_signal_info]() {
+  //     if (turn_signal_info.turn_signal.command == TurnIndicatorsCommand::ENABLE_LEFT) {
+  //       waitApprovalLeft(start_distance, finish_distance);
+  //       return SteeringFactor::LEFT;
+  //     }
+  //     if (turn_signal_info.turn_signal.command == TurnIndicatorsCommand::ENABLE_RIGHT) {
+  //       waitApprovalRight(start_distance, finish_distance);
+  //       return SteeringFactor::RIGHT;
+  //     }
+  //     return SteeringFactor::UNKNOWN;
+  //   });
+  // // TODO(tkhmy) add handle status TRYING
+  // steering_factor_interface_ptr_->updateSteeringFactor(
+  //   {status_.lane_change_path.shift_line.start, status_.lane_change_path.shift_line.end},
+  //   {start_distance, finish_distance}, SteeringFactor::LANE_CHANGE, steering_factor_direction,
+  //   SteeringFactor::TURNING, "");
+
+    // std::cerr << "reset uuid: " << reinterpret_cast<char*>(&uuid_left_) << ", " << reinterpret_cast<char*>(&uuid_right_) << ", " << reinterpret_cast<char*>(&candidate_uuid_) << std::endl;
+
   return output;
   };
 
   current_state_ = BT::NodeStatus::RUNNING;
 
   updateData();
+
+  std::cerr << "name: " << name() << ", isActivated: " << (isActivated() ? "True" : "False") << ", isWaitingApproval: " << (isWaitingApproval() ? "True" : "False") << std::endl;
 
   if (!isWaitingApproval()) {
     return tmp_plan();
@@ -213,6 +219,17 @@ BehaviorModuleOutput LaneChangeModule::plan()
 
   static bool is_abort_path_approved = false;
   if (current_lane_change_state_ == LaneChangeStates::Abort) {
+
+
+    static bool is_abort_approved_once = false;
+    if (!is_abort_approved_once) {
+      uuid_left_ = generateUUID();
+      uuid_right_ = generateUUID();
+      candidate_uuid_ = generateUUID();
+      is_abort_approved_once = true;
+      RCLCPP_ERROR(getLogger(), "plan() uuid is reset for abort.");
+    }
+
     fmt::print(stderr, "in plan() abort\n");
     if (isActivated()) {
       is_abort_path_approved = true;
@@ -223,8 +240,6 @@ BehaviorModuleOutput LaneChangeModule::plan()
       std::cerr << "uuid left = " << uuid_left_.uuid.at(0) << " " << '\n';
       removePreviousRTCStatusLeft();
       removePreviousRTCStatusRight();
-      uuid_left_ = generateUUID();
-      uuid_right_ = generateUUID();
       std::cerr << "uuid left = " << uuid_left_.uuid.at(0) << " " << '\n';
     }
   }
@@ -314,7 +329,7 @@ BehaviorModuleOutput LaneChangeModule::planWaitingApproval()
   if (!not_waiting_anymore) {
     updateRTCStatus(candidate);
     waitApproval();
-    fmt::print(stderr, "is waiting anymore.\n");
+    fmt::print(stderr, "is waiting.\n");
   } else {
     clearWaitingApproval();
     removeCandidateRTCStatus();
