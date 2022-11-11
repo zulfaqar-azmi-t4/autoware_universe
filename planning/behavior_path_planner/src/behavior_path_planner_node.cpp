@@ -739,6 +739,7 @@ bool BehaviorPathPlannerNode::isForcedCandidatePath() const
     const auto & is_waiting_approval = module_status_ptr->is_waiting_approval;
     const auto & is_execution_ready = module_status_ptr->is_execution_ready;
     if (is_waiting_approval && !is_execution_ready) {
+      std::cerr << "is waiting approval, but execution not ready.\n";
       return true;
     }
     break;
