@@ -134,6 +134,7 @@ void LaneChangeModule::resetParameters()
   is_abort_path_approved_ = false;
   is_abort_approval_requested_ = false;
   current_lane_change_state_ = LaneChangeStates::Trying;
+  abort_path_.reset();
 }
 
 void LaneChangeModule::onEntry()
@@ -615,7 +616,6 @@ bool LaneChangeModule::isAbortConditionSatisfied()
   const auto & common_parameters = planner_data_->parameters;
 
   const auto & current_lanes = status_.current_lanes;
-  abort_path_.reset();
 
   // check abort enable flag
   if (!parameters_->enable_abort_lane_change) {
@@ -727,11 +727,13 @@ bool LaneChangeModule::isAbortConditionSatisfied()
     append_marker_array(
       marker_utils::lane_change_markers::show_shift_line(shift_line, "abort_shift", 0L));
     if (abort_path) {
-      abort_path_ = std::make_shared<LaneChangeAbortPath>(*abort_path);
+      if (!abort_path_) {
+        abort_path_ = std::make_shared<LaneChangeAbortPath>(*abort_path);
+      }
     }
     return true;
   }
-  abort_path_.reset();
+
   std::cerr << "path safe\n";
   return false;
 }

@@ -809,7 +809,7 @@ std::optional<LaneChangeAbortPath> get_abort_paths(
       return idx;
     };
 
-  const auto pose_idx_max =
+  [[maybe_unused]] const auto pose_idx_max =
     [&](const double accel, const double jerk, const double param_time, const double min_dist) {
       if (ego_pose_idx > ego_pose_before_collision_idx) {
         return ego_pose_idx;
@@ -827,8 +827,8 @@ std::optional<LaneChangeAbortPath> get_abort_paths(
       }
       return idx;
     };
-  const auto abort_start_idx = pose_idx_max(0.0, 0.5, 3.0, 5.0);
-  const auto abort_end_idx = pose_idx_max(0.0, 0.5, 10.0, 10.0);
+  const auto abort_start_idx = pose_idx_min(0.0, 0.5, 3.0, 6.0);
+  const auto abort_end_idx = pose_idx_max(0.0, 0.5, 6.0, 12.0);
   if (abort_start_idx >= abort_end_idx) {
     fmt::print(stderr, "[util.getAbortPath] abort start >= abort end\n");
     return std::nullopt;
