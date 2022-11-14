@@ -104,7 +104,8 @@ private:
   LaneChangeStatus status_;
   PathShifter path_shifter_;
   mutable LaneChangeStates current_lane_change_state_;
-  std::shared_ptr<LaneChangeAbortPath> abort_path_;
+  mutable std::shared_ptr<LaneChangeAbortPath> abort_path_;
+  mutable std::shared_ptr<LaneChangePath> force_lane_change_path_;
 
   double lane_change_lane_length_{200.0};
   double check_distance_{100.0};

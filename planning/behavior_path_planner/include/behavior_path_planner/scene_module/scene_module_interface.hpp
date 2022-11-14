@@ -155,7 +155,8 @@ public:
 
     updateData();
 
-    std::cerr << "name: " << name_ << ", isActivated: " << (isActivated() ? "True" : "False") << std::endl;
+    std::cerr << "name: " << name_ << ", isActivated: " << (isActivated() ? "True" : "False")
+              << std::endl;
 
     if (!isWaitingApproval()) {
       return plan();

@@ -21,6 +21,8 @@
 #include <lanelet2_extension/utility/utilities.hpp>
 #include <tier4_autoware_utils/tier4_autoware_utils.hpp>
 
+#include <fmt/format.h>
+
 #include <limits>
 #include <string>
 #include <utility>
@@ -124,7 +126,10 @@ bool PathShifter::generate(
         "shift start point is at the edge of path. It could cause undesired result."
         " Maybe path is too short for backward?");
 
-      std::cerr << "F\n";
+      fmt::print(
+        stderr,
+        "[path_shifter.generate] shift start point is at the edge of path. it could cause "
+        "undesired result.");
     }
   }
 

@@ -139,6 +139,9 @@ void get_turn_signal_info(
 
 std::optional<LaneChangeAbortPath> get_abort_paths(
   const std::shared_ptr<const PlannerData> & planner_data, const LaneChangePath & selected_path,
+  ShiftLine & shift);
+std::optional<LaneChangeAbortPath> get_abort_paths(
+  const std::shared_ptr<const PlannerData> & planner_data, const LaneChangePath & selected_path,
   const Pose & ego_lerp_pose_before_collision, ShiftLine & shift);
 
 }  // namespace behavior_path_planner::lane_change_utils

@@ -14,6 +14,8 @@
 
 #include "behavior_path_planner/scene_module/scene_module_bt_node_interface.hpp"
 
+#include <fmt/format.h>
+
 #include <memory>
 #include <string>
 
@@ -62,6 +64,11 @@ BT::NodeStatus SceneModuleBTNodeInterface::tick()
       }
       module_status_->is_waiting_approval = scene_module_->isWaitingApproval();
       module_status_->is_execution_ready = scene_module_->isExecutionReady();
+      if (scene_module_->name() == "LaneChange") {
+        fmt::print(
+          stderr, "tick(), if-try, is waiting approval {}, is execution ready {}\n",
+          module_status_->is_waiting_approval, module_status_->is_execution_ready);
+      }
     } catch (const std::exception & e) {
       RCLCPP_ERROR_STREAM(
         scene_module_->getLogger(), "behavior module has failed with exception: " << e.what());
@@ -87,6 +94,12 @@ BT::NodeStatus SceneModuleBTNodeInterface::tick()
       module_status_->status = current_status;
       module_status_->is_waiting_approval = scene_module_->isWaitingApproval();
       module_status_->is_execution_ready = scene_module_->isExecutionReady();
+
+      if (scene_module_->name() == "LaneChange") {
+        fmt::print(
+          stderr, "tick(), while-try, is waiting approval {}, is execution ready {}\n",
+          module_status_->is_waiting_approval, module_status_->is_execution_ready);
+      }
     } catch (const std::exception & e) {
       RCLCPP_ERROR_STREAM(
         scene_module_->getLogger(), "behavior module has failed with exception: " << e.what());

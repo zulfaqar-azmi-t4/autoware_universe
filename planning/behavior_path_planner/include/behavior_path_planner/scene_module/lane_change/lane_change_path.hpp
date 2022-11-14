@@ -42,6 +42,11 @@ using LaneChangePaths = std::vector<LaneChangePath>;
 
 struct LaneChangeAbortPath : LaneChangePath
 {
+  LaneChangeAbortPath() = default;
+  explicit LaneChangeAbortPath(const LaneChangePath & path)
+  : LaneChangePath(path), prev_path(path.path)
+  {
+  }
   PathWithLaneId prev_path;
 };
 
