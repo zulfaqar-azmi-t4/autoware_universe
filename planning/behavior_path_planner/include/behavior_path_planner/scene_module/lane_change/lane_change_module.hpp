@@ -232,6 +232,7 @@ private:
   bool isCurrentSpeedLow() const;
   bool isAbortConditionSatisfied();
   bool hasFinishedLaneChange() const;
+  void generateDrivableArea(PathWithLaneId & path) const;
 
   void append_marker_array(const MarkerArray & marker_array) const;
   void setObjectDebugVisualization() const;
