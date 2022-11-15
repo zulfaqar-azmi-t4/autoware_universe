@@ -393,6 +393,9 @@ BehaviorModuleOutput LaneChangeModule::planWaitingApproval()
   BehaviorModuleOutput out;
   out.path = std::make_shared<PathWithLaneId>(getReferencePath());
   [[maybe_unused]] const auto abort_condition_satisfied = isAbortConditionSatisfied();
+  if (current_lane_change_state_ == LaneChangeStates::Abort) {
+    out.path = std::make_shared<PathWithLaneId>(abort_path_->prev_path);
+  }
   const auto candidate = planCandidate();
   out.path_candidate = std::make_shared<PathWithLaneId>(candidate.path_candidate);
 
