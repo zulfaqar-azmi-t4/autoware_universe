@@ -36,6 +36,15 @@
 #include <utility>
 #include <vector>
 
+std::string to_string(const unique_identifier_msgs::msg::UUID & uuid)
+{
+  std::stringstream ss;
+  for (auto i = 0; i < 16; ++i) {
+    ss << std::hex << std::setfill('0') << std::setw(2) << +uuid.uuid[i];
+  }
+  return ss.str();
+}
+
 namespace behavior_path_planner
 {
 using autoware_auto_perception_msgs::msg::ObjectClassification;
@@ -54,24 +63,49 @@ LaneChangeModule::LaneChangeModule(
 
 BehaviorModuleOutput LaneChangeModule::run()
 {
-  RCLCPP_DEBUG(getLogger(), "Was waiting approval, and now approved. Do plan().");
-  current_state_ = BT::NodeStatus::RUNNING;
-  is_activated_ = isActivated();
-  auto output = plan();
-  updateSteeringFactorPtr(output);
+  const auto tmp_plan = [this]() {
+    RCLCPP_DEBUG(getLogger(), "Was waiting approval, and now approved. Do plan().");
+    current_state_ = BT::NodeStatus::RUNNING;
+    is_activated_ = isActivated();
+    auto output = plan();
 
-  return output;
+    return output;
+  };
+
+  RCLCPP_INFO(
+    getLogger(), "current_lane_change_state_ = %s", toStr(current_lane_change_state_).c_str());
+
+  current_state_ = BT::NodeStatus::RUNNING;
+
+  updateData();
+
+  if (!isWaitingApproval()) {
+    return tmp_plan();
+  }
+
+  // module is waiting approval. Check it.
+  return isActivated() ? tmp_plan() : planWaitingApproval();
+}
+
+void LaneChangeModule::initParameters()
+{
+  is_abort_path_approved_ = false;
+  is_abort_approval_requested_ = false;
+  current_lane_change_state_ = LaneChangeStates::Trying;
+  abort_path_.reset();
 }
 
 void LaneChangeModule::onEntry()
 {
   RCLCPP_DEBUG(getLogger(), "LANE_CHANGE onEntry");
   current_state_ = BT::NodeStatus::SUCCESS;
+  current_lane_change_state_ = LaneChangeStates::Trying;
   updateLaneChangeStatus();
 }
 
 void LaneChangeModule::onExit()
 {
+  initParameters();
   resetParameters();
   current_state_ = BT::NodeStatus::IDLE;
   RCLCPP_DEBUG(getLogger(), "LANE_CHANGE onExit");
@@ -117,12 +151,18 @@ BT::NodeStatus LaneChangeModule::updateState()
       current_state_ = BT::NodeStatus::RUNNING;
       return current_state_;
     }
-    // cancel lane change path
+
+    if (current_lane_change_state_ == LaneChangeStates::Abort && abort_path_) {
+      current_state_ = BT::NodeStatus::RUNNING;
+      return current_state_;
+    }
     current_state_ = BT::NodeStatus::FAILURE;
     return current_state_;
   }
 
   if (hasFinishedLaneChange()) {
+    lane_change_debug_msg_array_.lane_change_info.clear();
+    abort_path_.reset();
     current_state_ = BT::NodeStatus::SUCCESS;
     return current_state_;
   }
@@ -133,14 +173,36 @@ BT::NodeStatus LaneChangeModule::updateState()
 BehaviorModuleOutput LaneChangeModule::plan()
 {
   constexpr double resample_interval{1.0};
-  auto path = util::resamplePathWithSpline(status_.lane_change_path.path, resample_interval);
-  generateExtendedDrivableArea(path);
+  auto selected_path = status_.lane_change_path.path;
+  RCLCPP_INFO(
+    getLogger(), "[plan] current_lane_change_state_ = %s",
+    toStr(current_lane_change_state_).c_str());
 
-  if (isAbortConditionSatisfied()) {
-    if (isNearEndOfLane() && isCurrentSpeedLow()) {
-      const auto stop_point = util::insertStopPoint(0.1, &path);
+  if (current_lane_change_state_ == LaneChangeStates::Abort) {
+    if (!is_abort_approval_requested_) {
+      uuid_left_ = generateUUID();
+      uuid_right_ = generateUUID();
+      candidate_uuid_ = generateUUID();
+      removePreviousRTCStatusLeft();
+      removePreviousRTCStatusRight();
+      is_abort_approval_requested_ = true;
+      RCLCPP_ERROR(getLogger(), "[plan] uuid is reset to request abort approval.");
+    } else {
+      if (isActivated()) {
+        is_abort_path_approved_ = true;
+        RCLCPP_INFO(
+          getLogger(), "[plan] isActivated() is true. set is_abort_path_approved to true.");
+        selected_path = abort_path_->path;
+      } else {
+        selected_path = abort_path_->prev_path;
+        RCLCPP_INFO(getLogger(), "[plan] isActivated() is False.");
+        waitApproval();
+      }
     }
   }
+
+ auto path = util::resamplePathWithSpline(selected_path, resample_interval);
+ generateExtendedDrivableArea(path);
 
   BehaviorModuleOutput output;
   output.path = std::make_shared<PathWithLaneId>(path);
@@ -153,14 +215,26 @@ CandidateOutput LaneChangeModule::planCandidate() const
 {
   CandidateOutput output;
 
-  // Get lane change lanes
-  const auto current_lanes = util::getCurrentLanes(planner_data_);
-  const auto lane_change_lanes = getLaneChangeLanes(current_lanes, lane_change_lane_length_);
-
   LaneChangePath selected_path;
-  [[maybe_unused]] const auto [found_valid_path, found_safe_path] =
-    getSafePath(lane_change_lanes, check_distance_, selected_path);
-  selected_path.path.header = planner_data_->route_handler->getRouteHeader();
+  if (current_lane_change_state_ != LaneChangeStates::Abort) {
+    // Get lane change lanes
+    const auto current_lanes = util::getCurrentLanes(planner_data_);
+    const auto lane_change_lanes = getLaneChangeLanes(current_lanes, lane_change_lane_length_);
+
+    [[maybe_unused]] const auto [found_valid_path, found_safe_path] =
+      getSafePath(lane_change_lanes, check_distance_, selected_path);
+    selected_path.path.header = planner_data_->route_handler->getRouteHeader();
+  }
+
+  if (current_lane_change_state_ == LaneChangeStates::Abort) {
+    if (abort_path_) {
+      if (is_abort_path_approved_) {
+        selected_path = *abort_path_;
+      } else {
+        selected_path = status_.lane_change_path;
+      }
+    }
+  }
 
   if (selected_path.path.points.empty()) {
     return output;
@@ -185,10 +259,22 @@ BehaviorModuleOutput LaneChangeModule::planWaitingApproval()
 {
   BehaviorModuleOutput out;
   out.path = std::make_shared<PathWithLaneId>(getReferencePath());
+  [[maybe_unused]] const auto abort_condition_satisfied = isAbortConditionSatisfied();
+  if (current_lane_change_state_ == LaneChangeStates::Abort) {
+    generateExtendedDrivableArea(abort_path_->prev_path);
+    out.path = std::make_shared<PathWithLaneId>(abort_path_->prev_path);
+  }
   const auto candidate = planCandidate();
   out.path_candidate = std::make_shared<PathWithLaneId>(candidate.path_candidate);
-  updateRTCStatus(candidate);
-  waitApproval();
+
+  bool not_waiting_anymore = false;
+  if (!not_waiting_anymore) {
+    updateRTCStatus(candidate);
+    waitApproval();
+  } else {
+    clearWaitingApproval();
+    removeCandidateRTCStatus();
+  }
   return out;
 }
 
@@ -201,6 +287,12 @@ void LaneChangeModule::updateLaneChangeStatus()
   LaneChangePath selected_path;
   const auto [found_valid_path, found_safe_path] =
     getSafePath(status_.lane_change_lanes, check_distance_, selected_path);
+
+  if (found_safe_path) {
+    force_lane_change_path_.reset();
+  } else {
+    force_lane_change_path_ = std::make_shared<LaneChangePath>(selected_path);
+  }
 
   // Update status
   status_.is_safe = found_safe_path;
@@ -376,7 +468,7 @@ bool LaneChangeModule::isCurrentSpeedLow() const
   return util::l2Norm(getEgoTwist().linear) < threshold_ms;
 }
 
-bool LaneChangeModule::isAbortConditionSatisfied() const
+bool LaneChangeModule::isAbortConditionSatisfied()
 {
   const auto & route_handler = planner_data_->route_handler;
   const auto current_pose = getEgoPose();
@@ -388,10 +480,12 @@ bool LaneChangeModule::isAbortConditionSatisfied() const
 
   // check abort enable flag
   if (!parameters_->enable_abort_lane_change) {
+    current_lane_change_state_ = LaneChangeStates::Success;
     return false;
   }
 
   if (!is_activated_) {
+    current_lane_change_state_ = LaneChangeStates::Success;
     return false;
   }
 
@@ -405,27 +499,29 @@ bool LaneChangeModule::isAbortConditionSatisfied() const
     return false;
   }
 
+  const auto path = status_.lane_change_path;
   // check if lane change path is still safe
-  const bool is_path_safe = std::invoke([this, &route_handler, &dynamic_objects, &current_lanes,
-                                         &current_pose, &current_twist, &common_parameters]() {
-    constexpr double check_distance = 100.0;
-    // get lanes used for detection
-    const auto & path = status_.lane_change_path;
-    const double check_distance_with_path =
-      check_distance + path.preparation_length + path.lane_change_length;
-    const auto check_lanes = route_handler->getCheckTargetLanesFromPath(
-      path.path, status_.lane_change_lanes, check_distance_with_path);
+  Pose ego_pose_before_collision;
+  const bool is_path_safe =
+    std::invoke([this, &route_handler, &dynamic_objects, &path, &current_lanes, &current_pose,
+                 &current_twist, &common_parameters, &ego_pose_before_collision]() {
+      constexpr double check_distance = 100.0;
+      // get lanes used for detection
+      const double check_distance_with_path =
+        check_distance + path.preparation_length + path.lane_change_length;
+      const auto check_lanes = route_handler->getCheckTargetLanesFromPath(
+        path.path, status_.lane_change_lanes, check_distance_with_path);
 
-    std::unordered_map<std::string, CollisionCheckDebug> debug_data;
+      std::unordered_map<std::string, CollisionCheckDebug> debug_data;
 
-    const size_t current_seg_idx = motion_utils::findFirstNearestSegmentIndexWithSoftConstraints(
-      path.path.points, current_pose, common_parameters.ego_nearest_dist_threshold,
-      common_parameters.ego_nearest_yaw_threshold);
-    return lane_change_utils::isLaneChangePathSafe(
-      path.path, current_lanes, check_lanes, dynamic_objects, current_pose, current_seg_idx,
-      current_twist, common_parameters, *parameters_, debug_data, false,
-      status_.lane_change_path.acceleration);
-  });
+      const size_t current_seg_idx = motion_utils::findFirstNearestSegmentIndexWithSoftConstraints(
+        path.path.points, current_pose, common_parameters.ego_nearest_dist_threshold,
+        common_parameters.ego_nearest_yaw_threshold);
+      return lane_change_utils::isLaneChangePathSafe(
+        path.path, current_lanes, check_lanes, dynamic_objects, current_pose, current_seg_idx,
+        current_twist, common_parameters, *parameters_, ego_pose_before_collision, debug_data,
+        false, status_.lane_change_path.acceleration);
+    });
 
   // abort only if velocity is low or vehicle pose is close enough
   if (!is_path_safe) {
@@ -435,6 +531,7 @@ bool LaneChangeModule::isAbortConditionSatisfied() const
     const bool is_within_original_lane =
       lane_change_utils::isEgoWithinOriginalLane(current_lanes, current_pose, common_parameters);
     if (is_velocity_low && is_within_original_lane) {
+      current_lane_change_state_ = LaneChangeStates::Revert;
       return true;
     }
 
@@ -446,12 +543,25 @@ bool LaneChangeModule::isAbortConditionSatisfied() const
       closest_lanelet, current_pose, *parameters_);
 
     if (is_distance_small && is_angle_diff_small) {
+      current_lane_change_state_ = LaneChangeStates::Revert;
       return true;
     }
     auto clock{rclcpp::Clock{RCL_ROS_TIME}};
     RCLCPP_WARN_STREAM_THROTTLE(
       getLogger(), clock, 1000,
       "DANGER!!! Path is not safe anymore, but it is too late to abort! Please be cautious");
+    current_lane_change_state_ = LaneChangeStates::Abort;
+
+    ShiftLine shift_line;
+    const auto abort_path = lane_change_utils::get_abort_paths(
+      planner_data_, path, ego_pose_before_collision, shift_line);
+
+    if (abort_path) {
+      if (!abort_path_) {
+        abort_path_ = std::make_shared<LaneChangeAbortPath>(*abort_path);
+      }
+    }
+    return true;
   }
 
   return false;

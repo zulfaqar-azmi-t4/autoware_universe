@@ -58,6 +58,14 @@ struct LaneChangeStatus
   bool is_safe;
   double start_distance;
 };
+
+enum class LaneChangeStates {
+  Trying = 0,
+  Success,
+  Revert,
+  Abort,
+};
+
 }  // namespace behavior_path_planner
 
 #endif  // BEHAVIOR_PATH_PLANNER__SCENE_MODULE__LANE_CHANGE__LANE_CHANGE_MODULE_DATA_HPP_

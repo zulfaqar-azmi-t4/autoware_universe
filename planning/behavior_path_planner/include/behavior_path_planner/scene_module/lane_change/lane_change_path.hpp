@@ -29,6 +29,8 @@ using behavior_path_planner::TurnSignalInfo;
 struct LaneChangePath
 {
   PathWithLaneId path;
+  lanelet::ConstLanelets reference_lanelets;
+  lanelet::ConstLanelets target_lanelets;
   ShiftedPath shifted_path;
   ShiftLine shift_line;
   double acceleration{0.0};
@@ -37,6 +39,16 @@ struct LaneChangePath
   TurnSignalInfo turn_signal_info;
 };
 using LaneChangePaths = std::vector<LaneChangePath>;
+
+struct LaneChangeAbortPath : LaneChangePath
+{
+  LaneChangeAbortPath() = default;
+  explicit LaneChangeAbortPath(const LaneChangePath & path)
+  : LaneChangePath(path), prev_path(path.path)
+  {
+  }
+  PathWithLaneId prev_path;
+};
 
 }  // namespace behavior_path_planner
 #endif  // BEHAVIOR_PATH_PLANNER__SCENE_MODULE__LANE_CHANGE__LANE_CHANGE_PATH_HPP_
