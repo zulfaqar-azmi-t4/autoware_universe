@@ -29,10 +29,10 @@
   </group>
 
   <!-- rosbridge -->
-  <group if="$(var rosbridge_enabled)">
-    <include file="$(find-pkg-share rosbridge_server)/launch/rosbridge_websocket_launch.xml">
-      <arg name="respawn" value="$(var rosbridge_respawn)"/>
-      <arg name="max_message_size" value="$(var rosbridge_max_message_size)"/>
-    </include>
-  </group>
+  <!-- <group if="$(var rosbridge_enabled)"> -->
+  <!--   <include file="$(find-pkg-share rosbridge_server)/launch/rosbridge_websocket_launch.xml"> -->
+  <!--     <arg name="respawn" value="$(var rosbridge_respawn)"/> -->
+  <!--     <arg name="max_message_size" value="$(var rosbridge_max_message_size)"/> -->
+  <!--   </include> -->
+  <!-- </group> -->
 </launch>
