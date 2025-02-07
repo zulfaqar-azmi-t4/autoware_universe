@@ -24,7 +24,7 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <jpn_signal_v2i_msgs/msg/traffic_light_info.hpp>
-#include <tier4_planning_msgs/msg/path_with_lane_id.hpp>
+#include <autoware_internal_planning_msgs/msg/path_with_lane_id.hpp>
 
 #include <functional>
 #include <map>
@@ -43,12 +43,13 @@ public:
 private:
   TrafficLightModule::PlannerParam planner_param_;
 
-  void launchNewModules(const tier4_planning_msgs::msg::PathWithLaneId & path) override;
+  void launchNewModules(const autoware_internal_planning_msgs::msg::PathWithLaneId & path) override;
 
   std::function<bool(const std::shared_ptr<SceneModuleInterfaceWithRTC> &)>
-  getModuleExpiredFunction(const tier4_planning_msgs::msg::PathWithLaneId & path) override;
+  getModuleExpiredFunction(
+    const autoware_internal_planning_msgs::msg::PathWithLaneId & path) override;
 
-  void modifyPathVelocity(tier4_planning_msgs::msg::PathWithLaneId * path) override;
+  void modifyPathVelocity(autoware_internal_planning_msgs::msg::PathWithLaneId * path) override;
 
   bool isModuleRegisteredFromRegElement(const lanelet::Id & id, const size_t module_id) const;
 
