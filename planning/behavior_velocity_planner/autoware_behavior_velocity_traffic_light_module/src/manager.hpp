@@ -23,8 +23,8 @@
 #include <autoware/universe_utils/ros/polling_subscriber.hpp>
 #include <rclcpp/rclcpp.hpp>
 
-#include <jpn_signal_v2i_msgs/msg/traffic_light_info.hpp>
 #include <autoware_internal_planning_msgs/msg/path_with_lane_id.hpp>
+#include <jpn_signal_v2i_msgs/msg/traffic_light_info.hpp>
 
 #include <functional>
 #include <map>
