@@ -15,14 +15,14 @@
 #ifndef NODE__RECOVERY_HPP_
 #define NODE__RECOVERY_HPP_
 
-#include "diagnostic_graph_utils/subscription.hpp"
+#include "autoware/diagnostic_graph_utils/subscription.hpp"
 
 #include <rclcpp/rclcpp.hpp>
 
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 
 // Autoware
-#include <component_interface_utils/rclcpp.hpp>
+#include <autoware/component_interface_utils/rclcpp.hpp>
 
 #include <autoware_adapi_v1_msgs/msg/mrm_state.hpp>
 #include <autoware_system_msgs/msg/autoware_state.hpp>
@@ -47,6 +47,8 @@ private:
   using AutowareState = autoware_system_msgs::msg::AutowareState;
   using MrmState = autoware_adapi_v1_msgs::msg::MrmState;
   using DiagnosticStatus = diagnostic_msgs::msg::DiagnosticStatus;
+  using DiagGraphSubscription = autoware::diagnostic_graph_utils::DiagGraphSubscription;
+  using DiagGraph = autoware::diagnostic_graph_utils::DiagGraph;
 
   bool fatal_error_;
   bool autonomous_available_;
