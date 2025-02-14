@@ -51,11 +51,6 @@
           "description": "If this parameter is true, operate pull over when latent faults occur.",
           "default": "false"
         },
-        "use_pull_over_after_stopped": {
-          "type": "boolean",
-          "description": "If this parameter is true, pull over can be operated after stopped.",
-          "default": "true"
-        },
         "use_comfortable_stop": {
           "type": "boolean",
           "description": "If this parameter is true, operate comfortable stop when latent faults occur.",
@@ -83,7 +78,6 @@
         "is_mrm_recoverable",
         "use_parking_after_stopped",
         "use_pull_over",
-        "use_pull_over_after_stopped",
         "use_comfortable_stop",
         "turning_hazard_on"
       ],

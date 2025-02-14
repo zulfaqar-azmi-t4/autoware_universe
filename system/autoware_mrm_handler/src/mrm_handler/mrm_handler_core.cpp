@@ -35,8 +35,6 @@ MrmHandler::MrmHandler(const rclcpp::NodeOptions & options) : Node("mrm_handler"
   param_.is_mrm_recoverable = declare_parameter<bool>("is_mrm_recoverable", true);
   param_.use_parking_after_stopped = declare_parameter<bool>("use_parking_after_stopped", false);
   param_.use_pull_over = declare_parameter<bool>("use_pull_over", false);
-  param_.use_pull_over_after_stopped =
-    declare_parameter<bool>("use_pull_over_after_stopped", false);
   param_.use_comfortable_stop = declare_parameter<bool>("use_comfortable_stop", false);
   param_.turning_hazard_on.emergency = declare_parameter<bool>("turning_hazard_on.emergency", true);
 
@@ -507,7 +505,7 @@ autoware_adapi_v1_msgs::msg::MrmState::_behavior_type MrmHandler::getCurrentMrmB
       return MrmState::EMERGENCY_STOP;
     }
     if (isStopped() && operation_mode_availability_->pull_over) {
-      if (param_.use_pull_over && param_.use_pull_over_after_stopped) {
+      if (param_.use_pull_over) {
         return MrmState::PULL_OVER;
       }
     }
@@ -526,7 +524,7 @@ autoware_adapi_v1_msgs::msg::MrmState::_behavior_type MrmHandler::getCurrentMrmB
       return MrmState::EMERGENCY_STOP;
     }
     if (isStopped() && operation_mode_availability_->pull_over) {
-      if (param_.use_pull_over && param_.use_pull_over_after_stopped) {
+      if (param_.use_pull_over) {
         return MrmState::PULL_OVER;
       }
     }
