@@ -1801,9 +1801,7 @@ PathSafetyStatus NormalLaneChange::isApprovedPathSafe() const
       lane_change_debug_.collision_check_objects_after_approval.clear();
     }
 
-    if (!safety_status.is_safe) {
-      lane_change_debug_.collision_check_objects_after_approval = debug_data;
-    }
+    lane_change_debug_.collision_check_objects_after_approval = debug_data;
   }
 
   return safety_status;
@@ -1828,7 +1826,7 @@ PathSafetyStatus NormalLaneChange::evaluateApprovedPathWithUnsafeHysteresis(
       (approved_path_safety_status.is_safe ? "safe" : "UNSAFE"));
     return approved_path_safety_status;
   }
-  return {};
+  return {true, approved_path_safety_status.is_trailing_object};
 }
 
 bool NormalLaneChange::isValidPath(const PathWithLaneId & path) const

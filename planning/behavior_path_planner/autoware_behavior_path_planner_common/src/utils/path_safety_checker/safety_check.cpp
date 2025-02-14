@@ -350,10 +350,12 @@ std::optional<PoseWithVelocityStamped> calcInterpolatedPoseWithVelocity(
 {
   // Check if relative time is in the valid range
   if (path.empty() || relative_time < 0.0) {
+    std::cerr << "relative time issue\n";
     return std::nullopt;
   }
 
   constexpr double epsilon = 1e-6;
+  std::cerr << path.size() << '\n';
   for (size_t path_idx = 1; path_idx < path.size(); ++path_idx) {
     const auto & pt = path.at(path_idx);
     const auto & prev_pt = path.at(path_idx - 1);
@@ -369,6 +371,7 @@ std::optional<PoseWithVelocityStamped> calcInterpolatedPoseWithVelocity(
     }
   }
 
+  std::cerr << "hurmmmm\n";
   return std::nullopt;
 }
 
@@ -609,6 +612,7 @@ std::vector<Polygon2d> getCollidedPolygons(
   {
     debug.ego_predicted_path = predicted_ego_path;
     debug.obj_predicted_path = target_object_path.path;
+    std::cerr << "object predicted path: " << debug.obj_predicted_path.size() << '\n';
     debug.current_obj_pose = target_object.initial_pose;
   }
 
@@ -626,9 +630,12 @@ std::vector<Polygon2d> getCollidedPolygons(
     // Note: we can create these polygons in advance. However, it can decrease the readability and
     // variability
     const auto & ego_vehicle_info = common_parameters.vehicle_info;
+
+    std::cerr << universe_utils::toHexString(target_object.uuid) <<'\n';
     const auto interpolated_data = getInterpolatedPoseWithVelocityAndPolygonStamped(
       predicted_ego_path, current_time, ego_vehicle_info);
     if (!interpolated_data) {
+      std::cerr << universe_utils::toHexString(target_object.uuid) << "cant interpolate" << '\n';
       continue;
     }
     const auto & ego_pose = interpolated_data->pose;
@@ -638,7 +645,9 @@ std::vector<Polygon2d> getCollidedPolygons(
     const double ego_yaw = tf2::getYaw(ego_pose.orientation);
     const double object_yaw = tf2::getYaw(obj_pose.orientation);
     const double yaw_difference = autoware::universe_utils::normalizeRadian(ego_yaw - object_yaw);
-    if (std::abs(yaw_difference) > yaw_difference_th) continue;
+    if (std::abs(yaw_difference) > yaw_difference_th) {
+      std::cerr << universe_utils::toHexString(target_object.uuid) << "yaw diff" << '\n';
+    }
 
     // check overlap
     if (boost::geometry::overlaps(ego_polygon, obj_polygon)) {
