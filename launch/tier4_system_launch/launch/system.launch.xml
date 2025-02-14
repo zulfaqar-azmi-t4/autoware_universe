@@ -126,6 +126,6 @@
 
   <!-- System Recover Operator -->
   <group if="$(var launch_system_recover_operator)">
-    <node pkg="diagnostic_graph_utils" exec="recovery_node" name="recovery"/>
+    <node pkg="autoware_diagnostic_graph_utils" exec="recovery_node" name="recovery"/>
   </group>
 </launch>
