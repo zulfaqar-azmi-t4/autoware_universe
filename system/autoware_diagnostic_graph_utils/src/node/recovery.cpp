@@ -15,6 +15,7 @@
 #include "recovery.hpp"
 
 #include <algorithm>
+#include <memory>
 
 namespace diagnostic_graph_utils
 {

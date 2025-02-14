@@ -31,7 +31,6 @@
 
 #include <functional>
 #include <map>  // Use map for sorting keys.
-#include <memory>
 #include <string>
 #include <vector>
 
