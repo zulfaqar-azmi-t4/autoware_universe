@@ -15,19 +15,22 @@
 #include "autoware/planning_evaluator/metrics/trajectory_metrics.hpp"
 
 #include "autoware/planning_evaluator/metrics/metrics_utils.hpp"
-#include "autoware/universe_utils/geometry/geometry.hpp"
+#include "autoware_utils/geometry/geometry.hpp"
+
+#include <algorithm>
+
 namespace planning_diagnostics
 {
 namespace metrics
 {
-using autoware::universe_utils::calcCurvature;
-using autoware::universe_utils::calcDistance2d;
+using autoware_utils::calc_curvature;
+using autoware_utils::calc_distance2d;
 
 Accumulator<double> calcTrajectoryInterval(const Trajectory & traj)
 {
   Accumulator<double> stat;
   for (size_t i = 1; i < traj.points.size(); ++i) {
-    stat.add(calcDistance2d(traj.points.at(i), traj.points.at(i - 1)));
+    stat.add(calc_distance2d(traj.points.at(i), traj.points.at(i - 1)));
   }
   return stat;
 }
@@ -107,7 +110,7 @@ Accumulator<double> calcTrajectoryCurvature(const Trajectory & traj)
       break;
     }
 
-    stat.add(calcCurvature(p1, p2, p3));
+    stat.add(calc_curvature(p1, p2, p3));
   }
   return stat;
 }
@@ -116,7 +119,7 @@ Accumulator<double> calcTrajectoryLength(const Trajectory & traj)
 {
   double length = 0.0;
   for (size_t i = 1; i < traj.points.size(); ++i) {
-    length += calcDistance2d(traj.points.at(i), traj.points.at(i - 1));
+    length += calc_distance2d(traj.points.at(i), traj.points.at(i - 1));
   }
   Accumulator<double> stat;
   stat.add(length);
@@ -127,7 +130,7 @@ Accumulator<double> calcTrajectoryDuration(const Trajectory & traj)
 {
   double duration = 0.0;
   for (size_t i = 0; i + 1 < traj.points.size(); ++i) {
-    const double length = calcDistance2d(traj.points.at(i), traj.points.at(i + 1));
+    const double length = calc_distance2d(traj.points.at(i), traj.points.at(i + 1));
     const double velocity = traj.points.at(i).longitudinal_velocity_mps;
     if (velocity != 0) {
       duration += length / std::abs(velocity);
@@ -163,7 +166,7 @@ Accumulator<double> calcTrajectoryJerk(const Trajectory & traj)
     const double vel = traj.points.at(i).longitudinal_velocity_mps;
     if (vel != 0) {
       const double duration =
-        calcDistance2d(traj.points.at(i), traj.points.at(i + 1)) / std::abs(vel);
+        calc_distance2d(traj.points.at(i), traj.points.at(i + 1)) / std::abs(vel);
       if (duration != 0) {
         const double start_accel = traj.points.at(i).acceleration_mps2;
         const double end_accel = traj.points.at(i + 1).acceleration_mps2;
