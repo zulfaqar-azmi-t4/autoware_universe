@@ -1272,8 +1272,8 @@ geometry_msgs::msg::Pose MapBasedPredictionNode::compensateTimeDelay(
   const double curr_yaw = prev_yaw + wz * dt;
 
   geometry_msgs::msg::Pose current_pose;
-  current_pose.position = autoware::universe_utils::createPoint(curr_x, curr_y, curr_z);
-  current_pose.orientation = autoware::universe_utils::createQuaternionFromYaw(curr_yaw);
+  current_pose.position = autoware_utils::create_point(curr_x, curr_y, curr_z);
+  current_pose.orientation = autoware_utils::create_quaternion_from_yaw(curr_yaw);
 
   return current_pose;
 }

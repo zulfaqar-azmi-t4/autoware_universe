@@ -126,7 +126,7 @@ std::optional<PathWithLaneId> ShiftPullOver::cropPrevModulePath(
   const double offset = autoware::motion_utils::calcSignedArcLength(
     prev_module_path.points, shift_end_idx, shift_end_pose.position);
   projected_point.point.pose =
-    autoware::universe_utils::calcOffsetPose(clipped_points.back().point.pose, offset, 0, 0);
+    autoware_utils::calc_offset_pose(clipped_points.back().point.pose, offset, 0, 0);
   clipped_points.push_back(projected_point);
   auto clipped_prev_module_path = prev_module_path;
   clipped_prev_module_path.points = clipped_points;
