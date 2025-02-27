@@ -107,8 +107,8 @@ private:
     this, "~/input/points_no_ground", autoware_utils::single_depth_sensor_qos()};
   autoware_utils::InterProcessPollingSubscriber<PredictedObjects> sub_objects_{
     this, "~/input/objects"};
-  autoware_utils::InterProcessPollingSubscriber<tier4_planning_msgs::msg::Scenario>
-    sub_scenario_{this, "~/input/scenario"};
+  autoware_utils::InterProcessPollingSubscriber<tier4_planning_msgs::msg::Scenario> sub_scenario_{
+    this, "~/input/scenario"};
 
   rclcpp::TimerBase::SharedPtr timer_;
 

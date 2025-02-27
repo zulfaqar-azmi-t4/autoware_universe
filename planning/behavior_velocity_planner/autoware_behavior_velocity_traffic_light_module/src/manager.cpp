@@ -46,7 +46,8 @@ TrafficLightModuleManager::TrafficLightModuleManager(rclcpp::Node & node)
     get_or_declare_parameter<bool>(node, ns + ".enable_pass_judge");
   planner_param_.yellow_lamp_period =
     get_or_declare_parameter<double>(node, ns + ".yellow_lamp_period");
-  planner_param_.v2i_use_rest_time = get_or_declare_parameter<bool>(node, ns + ".v2i.use_rest_time");
+  planner_param_.v2i_use_rest_time =
+    get_or_declare_parameter<bool>(node, ns + ".v2i.use_rest_time");
   planner_param_.v2i_last_time_allowed_to_pass =
     get_or_declare_parameter<double>(node, ns + ".v2i.last_time_allowed_to_pass");
   planner_param_.v2i_velocity_threshold =
@@ -58,9 +59,9 @@ TrafficLightModuleManager::TrafficLightModuleManager(rclcpp::Node & node)
 
   if (planner_param_.v2i_use_rest_time) {
     RCLCPP_INFO(logger_, "V2I is enabled");
-    v2i_subscriber_ = autoware_utils::InterProcessPollingSubscriber<
-      jpn_signal_v2i_msgs::msg::TrafficLightInfo>::
-      create_subscription(&node, "/v2i/external/v2i_traffic_light_info", 1);
+    v2i_subscriber_ =
+      autoware_utils::InterProcessPollingSubscriber<jpn_signal_v2i_msgs::msg::TrafficLightInfo>::
+        create_subscription(&node, "/v2i/external/v2i_traffic_light_info", 1);
   }
 }
 
