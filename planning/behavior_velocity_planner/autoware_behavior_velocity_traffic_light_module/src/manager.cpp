@@ -16,8 +16,7 @@
 
 #include <autoware/behavior_velocity_planner_common/utilization/util.hpp>
 #include <autoware/motion_utils/trajectory/trajectory.hpp>
-#include <autoware/universe_utils/ros/parameter.hpp>
-#include <rclcpp/logging.hpp>
+#include <autoware_utils/ros/parameter.hpp>
 
 #include <tf2/utils.h>
 
@@ -30,7 +29,7 @@
 #include <vector>
 namespace autoware::behavior_velocity_planner
 {
-using autoware::universe_utils::getOrDeclareParameter;
+using autoware_utils::get_or_declare_parameter;
 using lanelet::TrafficLight;
 
 TrafficLightModuleManager::TrafficLightModuleManager(rclcpp::Node & node)
@@ -38,28 +37,31 @@ TrafficLightModuleManager::TrafficLightModuleManager(rclcpp::Node & node)
     node, getModuleName(), getEnableRTC(node, std::string(getModuleName()) + ".enable_rtc"))
 {
   const std::string ns(TrafficLightModuleManager::getModuleName());
-  planner_param_.stop_margin = getOrDeclareParameter<double>(node, ns + ".stop_margin");
-  planner_param_.tl_state_timeout = getOrDeclareParameter<double>(node, ns + ".tl_state_timeout");
+  planner_param_.stop_margin = get_or_declare_parameter<double>(node, ns + ".stop_margin");
+  planner_param_.tl_state_timeout =
+    get_or_declare_parameter<double>(node, ns + ".tl_state_timeout");
   planner_param_.stop_time_hysteresis =
-    getOrDeclareParameter<double>(node, ns + ".stop_time_hysteresis");
-  planner_param_.enable_pass_judge = getOrDeclareParameter<bool>(node, ns + ".enable_pass_judge");
+    get_or_declare_parameter<double>(node, ns + ".stop_time_hysteresis");
+  planner_param_.enable_pass_judge =
+    get_or_declare_parameter<bool>(node, ns + ".enable_pass_judge");
   planner_param_.yellow_lamp_period =
-    getOrDeclareParameter<double>(node, ns + ".yellow_lamp_period");
-  planner_param_.v2i_use_rest_time = getOrDeclareParameter<bool>(node, ns + ".v2i.use_rest_time");
+    get_or_declare_parameter<double>(node, ns + ".yellow_lamp_period");
+  planner_param_.v2i_use_rest_time =
+    get_or_declare_parameter<bool>(node, ns + ".v2i.use_rest_time");
   planner_param_.v2i_last_time_allowed_to_pass =
-    getOrDeclareParameter<double>(node, ns + ".v2i.last_time_allowed_to_pass");
+    get_or_declare_parameter<double>(node, ns + ".v2i.last_time_allowed_to_pass");
   planner_param_.v2i_velocity_threshold =
-    getOrDeclareParameter<double>(node, ns + ".v2i.velocity_threshold");
+    get_or_declare_parameter<double>(node, ns + ".v2i.velocity_threshold");
   planner_param_.v2i_required_time_to_departure =
-    getOrDeclareParameter<double>(node, ns + ".v2i.required_time_to_departure");
+    get_or_declare_parameter<double>(node, ns + ".v2i.required_time_to_departure");
   pub_tl_state_ = node.create_publisher<autoware_perception_msgs::msg::TrafficLightGroup>(
     "~/output/traffic_signal", 1);
 
   if (planner_param_.v2i_use_rest_time) {
     RCLCPP_INFO(logger_, "V2I is enabled");
-    v2i_subscriber_ = autoware::universe_utils::InterProcessPollingSubscriber<
-      jpn_signal_v2i_msgs::msg::TrafficLightInfo>::
-      create_subscription(&node, "/v2i/external/v2i_traffic_light_info", 1);
+    v2i_subscriber_ =
+      autoware_utils::InterProcessPollingSubscriber<jpn_signal_v2i_msgs::msg::TrafficLightInfo>::
+        create_subscription(&node, "/v2i/external/v2i_traffic_light_info", 1);
   }
 }
 
@@ -127,7 +129,7 @@ void TrafficLightModuleManager::launchNewModules(
           &TrafficLightModuleManager::getV2IRestTimeToRedSignal, this,
           traffic_light_reg_elem.first->id()),
         planning_factor_interface_));
-      generateUUID(lane_id);
+      generate_uuid(lane_id);
       updateRTCStatus(
         getUUID(lane_id), true, State::WAITING_FOR_EXECUTION, std::numeric_limits<double>::lowest(),
         path.header.stamp);
@@ -191,7 +193,7 @@ void TrafficLightModuleManager::updateV2IRestTimeInfo()
   if (!v2i_subscriber_) {
     return;
   }
-  auto msg = v2i_subscriber_->takeData();
+  auto msg = v2i_subscriber_->take_data();
   if (!msg) {
     return;
   }
