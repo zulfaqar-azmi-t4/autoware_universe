@@ -27,6 +27,7 @@
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 
+#include <boost/functional/hash.hpp>
 #include <boost/geometry/algorithms/envelope.hpp>
 #include <boost/geometry/algorithms/union.hpp>
 #include <boost/geometry/index/rtree.hpp>
@@ -47,7 +48,7 @@ namespace autoware::lane_departure_checker
 {
 using autoware::universe_utils::Segment2d;
 using autoware_internal_planning_msgs::msg::PathWithLaneId;
-typedef boost::geometry::index::rtree<Segment2d, boost::geometry::index::rstar<16>> SegmentRtree;
+using SegmentRtree = boost::geometry::index::rtree<Segment2d, boost::geometry::index::rstar<16>>;
 
 class LaneDepartureChecker
 {
@@ -122,6 +123,8 @@ private:
   autoware::universe_utils::Polygon2d toPolygon2D(const lanelet::BasicPolygon2d & poly) const;
 
   mutable std::shared_ptr<universe_utils::TimeKeeper> time_keeper_;
+
+  std::vector<LaneDeparturePointCandidate> lane_departure_point_candidates_;
 };
 }  // namespace autoware::lane_departure_checker
 

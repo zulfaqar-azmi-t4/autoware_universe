@@ -57,6 +57,8 @@ FootprintMargin calcFootprintMargin(
 
 namespace autoware::lane_departure_checker::utils
 {
+using autoware::universe_utils::Point2d;
+
 TrajectoryPoints cutTrajectory(const TrajectoryPoints & trajectory, const double length)
 {
   if (trajectory.empty()) {
@@ -120,9 +122,8 @@ TrajectoryPoints resampleTrajectory(const Trajectory & trajectory, const double 
 
     if (boost::geometry::distance(prev_point.to_2d(), next_point.to_2d()) >= interval) {
       resampled.push_back(traj_point);
+      prev_point = next_point;
     }
-
-    prev_point = next_point;
   }
   resampled.push_back(trajectory.points.back());
 
@@ -243,5 +244,27 @@ double calcMaxSearchLengthForBoundaries(
     std::abs(vehicle_info.max_lateral_offset_m), std::abs(vehicle_info.min_lateral_offset_m));
   const double max_ego_search_length = std::hypot(max_ego_lon_length, max_ego_lat_length);
   return autoware::motion_utils::calcArcLength(trajectory.points) + max_ego_search_length;
+}
+
+std::optional<std::vector<Segment2d>> convert_to_segments(
+  const std::vector<Point> & boundary_points, const Point & target_point)
+{
+  if (boundary_points.size() < 2) {
+    return std::nullopt;
+  }
+
+  const auto nearest_index = motion_utils::findNearestIndex(boundary_points, target_point);
+  if (nearest_index < 2) {
+    return std::nullopt;
+  }
+  std::vector<Segment2d> segments;
+  segments.reserve(nearest_index - 1);
+
+  for (size_t i = 0; i < nearest_index - 1; ++i) {
+    const auto & curr = boundary_points[i];
+    const auto & next = boundary_points[i + 1];
+    segments.emplace_back(Point2d(curr.x, curr.y), Point2d(next.x, next.y));
+  }
+  return segments;
 }
 }  // namespace autoware::lane_departure_checker::utils

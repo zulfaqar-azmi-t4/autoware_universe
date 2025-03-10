@@ -243,6 +243,7 @@ void LaneDepartureCheckerNode::onTimer()
   predicted_trajectory_ = sub_predicted_trajectory_.takeData();
   operation_mode_ = sub_operation_mode_.takeData();
   control_mode_ = sub_control_mode_.takeData();
+  path_with_lane_boundary_ = sub_path_with_lane_boundary_.takeData();
 
   const auto lanelet_map_bin_msg = sub_lanelet_map_bin_.takeData();
   if (lanelet_map_bin_msg) {
@@ -304,6 +305,9 @@ void LaneDepartureCheckerNode::onTimer()
   input_.reference_trajectory = reference_trajectory_;
   input_.predicted_trajectory = predicted_trajectory_;
   input_.boundary_types_to_detect = node_param_.boundary_types_to_detect;
+  input_.left_lane_boundary = path_with_lane_boundary_->left_bound;
+  input_.right_lane_boundary = path_with_lane_boundary_->right_bound;
+
   processing_time_map["Node: setInputData"] = stop_watch.toc(true);
 
   output_ = lane_departure_checker_->update(input_);
@@ -561,10 +565,116 @@ visualization_msgs::msg::MarkerArray LaneDepartureCheckerNode::createMarkerArray
         marker.points.push_back(toMsg(p2.to_3d(base_link_z)));
       }
     }
-
     marker_array.markers.push_back(marker);
   }
 
+  // drivable areas
+  {
+    const auto color = createMarkerColor(1.0, 0.0, 0.0, 0.5);
+
+    auto left_marker = createDefaultMarker(
+      "map", this->now(), "left_boundary", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      createMarkerScale(0.1, 0, 0), color);
+
+    const auto & left_bound = input_.left_lane_boundary;
+    left_marker.points.reserve(left_bound.size() * 2UL);
+    for (size_t i = 0; i < left_bound.size() - 1; ++i) {
+      left_marker.points.push_back(left_bound[i]);
+      left_marker.points.push_back(left_bound[i + 1]);
+    }
+
+    marker_array.markers.push_back(left_marker);
+    auto right_marker = createDefaultMarker(
+      "map", this->now(), "right_boundary", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      createMarkerScale(0.05, 0, 0), color);
+
+    const auto & right_bound = input_.right_lane_boundary;
+    right_marker.points.reserve(right_bound.size() * 2UL);
+    for (size_t i = 0; i < right_bound.size() - 1; ++i) {
+      right_marker.points.push_back(right_bound[i]);
+      right_marker.points.push_back(right_bound[i + 1]);
+    }
+
+    marker_array.markers.push_back(right_marker);
+  }
+  // Vehicle left
+  {
+    const auto color_ok = createMarkerColor(0.0, 1.0, 0.0, 0.5);
+    const auto color_will_leave_lane = createMarkerColor(0.5, 0.5, 0.0, 0.5);
+
+    auto color = color_ok;
+    if (output_.will_leave_drivable_area) {
+      color = color_will_leave_lane;
+    }
+
+    auto marker = createDefaultMarker(
+      "map", this->now(), "vehicle_left_side", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      createMarkerScale(0.05, 0, 0), color);
+
+    for (const auto & left : output_.ego_footprint_side.left) {
+      const auto p1 = universe_utils::toMsg(left.first.to_3d(base_link_z));
+      const auto p2 = universe_utils::toMsg(left.second.to_3d(base_link_z));
+
+      marker.points.push_back(p1);
+      marker.points.push_back(p2);
+    }
+    marker_array.markers.push_back(marker);
+  }
+
+  // Vehicle right
+  {
+    const auto color_ok = createMarkerColor(0.0, 1.0, 0.0, 0.5);
+    const auto color_will_leave_lane = createMarkerColor(0.5, 0.5, 0.0, 0.5);
+
+    auto color = color_ok;
+    if (output_.will_leave_drivable_area) {
+      color = color_will_leave_lane;
+    }
+
+    auto marker = createDefaultMarker(
+      "map", this->now(), "vehicle_right_side", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      createMarkerScale(0.05, 0, 0), color);
+
+    for (const auto & right : output_.ego_footprint_side.right) {
+      const auto p1 = universe_utils::toMsg(right.first.to_3d(base_link_z));
+      const auto p2 = universe_utils::toMsg(right.second.to_3d(base_link_z));
+
+      marker.points.push_back(p1);
+      marker.points.push_back(p2);
+    }
+    marker_array.markers.push_back(marker);
+  }
+
+  {
+    const auto color_ok = createMarkerColor(0.4, 0.4, 0.9, 0.5);
+
+    auto color = color_ok;
+
+    auto marker = createDefaultMarker(
+      "map", this->now(), "right_proj", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      createMarkerScale(0.05, 0, 0), color);
+
+    for (const auto & right : output_.projection_points.right) {
+      const auto p1 = universe_utils::toMsg(right.first.to_3d(base_link_z));
+      const auto p2 = universe_utils::toMsg(right.second.to_3d(base_link_z));
+
+      marker.points.push_back(p1);
+      marker.points.push_back(p2);
+    }
+    marker_array.markers.push_back(marker);
+    auto marker2 = createDefaultMarker(
+      "map", this->now(), "left_proj", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      createMarkerScale(0.05, 0, 0), color);
+
+    for (const auto & left : output_.projection_points.left) {
+      const auto p1 = universe_utils::toMsg(left.first.to_3d(base_link_z));
+      const auto p2 = universe_utils::toMsg(left.second.to_3d(base_link_z));
+
+      marker2.points.push_back(p1);
+      marker2.points.push_back(p2);
+    }
+    marker_array.markers.push_back(marker2);
+  }
   return marker_array;
 }
 
