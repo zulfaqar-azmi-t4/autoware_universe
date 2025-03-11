@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "autoware/lane_departure_checker/utils.hpp"
+#include "autoware/lane_departure_checker/parameters.hpp"
 
 #include <autoware/motion_utils/trajectory/trajectory.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
@@ -261,5 +262,44 @@ std::optional<std::vector<Segment2d>> convert_to_segments(
     segments.emplace_back(Point2d(curr.x, curr.y), Point2d(next.x, next.y));
   }
   return segments;
+}
+
+BoxRtreeNodePair extract_uncrossable_boundaries(
+  const lanelet::LaneletMap & lanelet_map, const std::vector<std::string> & boundary_types_to_detect)
+{
+  const auto has_types =
+    [](const lanelet::ConstLineString3d & ls, const std::vector<std::string> & types) {
+      constexpr auto no_type = "";
+      const auto type = ls.attributeOr(lanelet::AttributeName::Type, no_type);
+      return (type != no_type && std::find(types.begin(), types.end(), type) != types.end());
+    };
+
+  BoxNodePair segments;
+  for (const auto & ll : lanelet_map.laneletLayer) {
+    if (has_types(ll.leftBound3d(), boundary_types_to_detect)) {
+      const auto & left = ll.leftBound3d().basicLineString();
+      for (size_t i = 0; i < left.size() - 1; ++i) {
+        Point2d p1 = {left[i].x(), left[i].y()};
+        Point2d p2 = {left[i + 1].x(), left[i + 1].y()};
+        Segment2d segment = {p1, p2};
+        segments.left.emplace_back(bg::return_envelope<Box2d>(segment), i);
+      }
+    }
+
+    if (has_types(ll.rightBound3d(), boundary_types_to_detect)) {
+      const auto & right = ll.rightBound3d().basicLineString();
+      for (size_t i = 0; i < right.size() - 1; ++i) {
+        Point2d p1 = {right[i].x(), right[i].y()};
+        Point2d p2 = {right[i + 1].x(), right[i + 1].y()};
+        Segment2d segment = {p1, p2};
+        segments.right.emplace_back(bg::return_envelope<Box2d>(segment), i);
+      }
+    }
+  }
+
+  BoxRtreeNodePair rtree;
+  rtree.left = {segments.left.begin(), segments.left.end()};
+  rtree.right = {segments.right.begin(), segments.right.end()};
+  return rtree;
 }
 }  // namespace autoware::lane_departure_checker::utils

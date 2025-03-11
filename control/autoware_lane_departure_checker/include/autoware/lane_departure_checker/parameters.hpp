@@ -24,6 +24,7 @@
 #include <autoware_planning_msgs/msg/trajectory.hpp>
 #include <autoware_planning_msgs/msg/trajectory_point.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <boost/geometry.hpp>
 
 #include <lanelet2_core/LaneletMap.h>
 
@@ -40,6 +41,12 @@ using autoware_utils::PoseDeviation;
 using TrajectoryPoints = std::vector<TrajectoryPoint>;
 using autoware_utils::LinearRing2d;
 using autoware_utils::Segment2d;
+namespace bg = boost::geometry;
+namespace bgi = bg::index;
+using autoware_utils::Point2d;
+  using autoware_utils::Box2d;
+using BoxNode = std::pair<Box2d, size_t>;
+using BoxRtreeNode = bgi::rtree<BoxNode, bgi::rstar<16>>;
 
 struct Param
 {
@@ -71,17 +78,19 @@ struct NodeParam
   bool include_left_lanes{};
   bool include_opposite_lanes{};
   bool include_conflicting_lanes{};
-  std::vector<std::string> boundary_types_to_detect{};
+  std::vector<std::string> boundary_types_to_detect;
 };
 
 template <typename T>
 struct DirectionPair
 {
-  std::vector<T> left;
-  std::vector<T> right;
+  T left;
+  T right;
 };
-  using SegmentPair = DirectionPair<Segment2d>;
-  using ProjectedPair = DirectionPair<std::pair<autoware_utils::Point2d, autoware_utils::Point2d>>;
+using SegmentPair = DirectionPair<std::vector<Segment2d>>;
+using ProjectedPair = DirectionPair<std::vector<std::pair<Point2d, Point2d>>>;
+using BoxNodePair = DirectionPair<std::vector<BoxNode>>;
+using BoxRtreeNodePair = DirectionPair<BoxRtreeNode>;
 
 struct LaneDeparturePointCandidate
 {
@@ -118,16 +127,16 @@ struct LaneDeparturePointCandidate
 
 struct Input
 {
-  nav_msgs::msg::Odometry::ConstSharedPtr current_odom{};
-  lanelet::LaneletMapPtr lanelet_map{};
-  LaneletRoute::ConstSharedPtr route{};
-  lanelet::ConstLanelets route_lanelets{};
-  lanelet::ConstLanelets shoulder_lanelets{};
-  Trajectory::ConstSharedPtr reference_trajectory{};
-  Trajectory::ConstSharedPtr predicted_trajectory{};
-  std::vector<std::string> boundary_types_to_detect{};
-  std::vector<geometry_msgs::msg::Point> left_lane_boundary{};
-  std::vector<geometry_msgs::msg::Point> right_lane_boundary{};
+  nav_msgs::msg::Odometry::ConstSharedPtr current_odom;
+  lanelet::LaneletMapPtr lanelet_map;
+  LaneletRoute::ConstSharedPtr route;
+  lanelet::ConstLanelets route_lanelets;
+  lanelet::ConstLanelets shoulder_lanelets;
+  Trajectory::ConstSharedPtr reference_trajectory;
+  Trajectory::ConstSharedPtr predicted_trajectory;
+  std::vector<std::string> boundary_types_to_detect;
+  std::vector<geometry_msgs::msg::Point> left_lane_boundary;
+  std::vector<geometry_msgs::msg::Point> right_lane_boundary;
 };
 
 struct Output
