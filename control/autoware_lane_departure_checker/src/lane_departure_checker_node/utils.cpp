@@ -247,20 +247,23 @@ double calcMaxSearchLengthForBoundaries(
 }
 
 std::optional<std::vector<Segment2d>> convert_to_segments(
-  const std::vector<Point> & boundary_points, const Point & target_point)
+  const std::vector<Point> & boundary_points, [[maybe_unused]]const Point & target_point)
 {
   if (boundary_points.size() < 2) {
     return std::nullopt;
   }
 
-  const auto nearest_index = motion_utils::findNearestIndex(boundary_points, target_point);
-  if (nearest_index < 2) {
-    return std::nullopt;
-  }
+  // const auto nearest_index = motion_utils::findNearestIndex(boundary_points, target_point);
+  // if (nearest_index < 1) {
+  //   const auto & p1 = boundary_points.at(0);
+  //   const auto & p2 = boundary_points.at(1);
+  //   Segment2d segment(Point2d(p1.x, p1.y), Point2d(p2.x, p2.y));
+  //   return std::vector<Segment2d>{segment};
+  // }
   std::vector<Segment2d> segments;
-  segments.reserve(nearest_index - 1);
+  // segments.reserve(nearest_index - 1);
 
-  for (size_t i = 0; i < nearest_index - 1; ++i) {
+  for (size_t i = 0; i < boundary_points.size() - 1; ++i) {
     const auto & curr = boundary_points[i];
     const auto & next = boundary_points[i + 1];
     segments.emplace_back(Point2d(curr.x, curr.y), Point2d(next.x, next.y));

@@ -26,6 +26,12 @@
 #include <fmt/format.h>
 #include <lanelet2_core/geometry/Polygon.h>
 #include <tf2/utils.h>
+// for writing the svg file
+#include <fstream>
+// for the geometry types
+// for the svg mapper
+#include <boost/geometry/io/svg/svg_mapper.hpp>
+#include <boost/geometry/io/svg/write.hpp>
 
 #include <algorithm>
 #include <iostream>
@@ -52,8 +58,8 @@ using autoware_utils::Point2d;
 using autoware_utils::Segment2d;
 using geometry_msgs::msg::Point;
 // R-Tree stores bounding boxes with an index reference to segments
-using BoxWithIdx = std::pair<Box2d, size_t>;
-using BoxRtree = bgi::rtree<BoxWithIdx, bgi::rstar<16>>;  // Use R* tree
+using SegmentWithIdx = std::pair<Segment2d, size_t>;
+using SegmentRtree = bgi::rtree<SegmentWithIdx, bgi::rstar<16>>;  // Use R* tree
 
 double calcBrakingDistance(
   const double abs_velocity, const double max_deceleration, const double delay_time)
@@ -71,16 +77,16 @@ bool isInAnyLane(const lanelet::ConstLanelets & candidate_lanelets, const Point2
   return false;
 }
 
-std::optional<BoxRtree> build_rtree(const std::vector<Segment2d> & boundary_segments)
+std::optional<SegmentRtree> build_rtree(const std::vector<Segment2d> & boundary_segments)
 {
-  std::vector<BoxWithIdx> boxes_with_idx;
+  std::vector<SegmentWithIdx> boxes_with_idx;
   boxes_with_idx.reserve(boundary_segments.size());
   for (size_t i = 0; i < boundary_segments.size(); ++i) {
-    Box2d bbox;
-    bg::envelope(boundary_segments[i], bbox);
-    boxes_with_idx.emplace_back(bbox, i);
+    Segment2d segment2d;
+    bg::envelope(boundary_segments[i], segment2d);
+    boxes_with_idx.emplace_back(segment2d, i);
   }
-  return BoxRtree(boxes_with_idx.begin(), boxes_with_idx.end());
+  return SegmentRtree(boxes_with_idx.begin(), boxes_with_idx.end());
 }
 
 std::pair<Point2d, double> point_to_segment_signed_projection(const Point2d & p, const Segment2d & segment)
@@ -113,13 +119,16 @@ std::pair<Point2d, double> point_to_segment_signed_projection(const Point2d & p,
   if (!rtree_bbox_opt) {
     return std::nullopt;
   }
+  // std::ofstream svg("/home/zulfaqar/Pictures/image.svg");  // /!\ CHANGE PATH
+  // boost::geometry::svg_mapper<Point2d> mapper(svg, 400, 400);
 
   const auto & rtree_bbox = *rtree_bbox_opt;
   std::vector<std::pair<Point2d, double>> projections;
   projections.reserve(segments1.size());
-  for (const auto & [p1, p2] : segments1) {
+  for (const auto & seg : segments1) {
+    const auto & p1 = seg.first;
     constexpr auto num_of_boundary_segment_to_query = 10;
-    std::vector<BoxWithIdx> nearest_segments;
+    std::vector<SegmentWithIdx> nearest_segments;
     nearest_segments.reserve(num_of_boundary_segment_to_query);  // ✅ Preallocate space
 
     rtree_bbox.query(
@@ -130,6 +139,10 @@ std::pair<Point2d, double> point_to_segment_signed_projection(const Point2d & p,
     for (const auto & [lane_bbox, idx] : nearest_segments) {
       const auto curr_projection = point_to_segment_signed_projection(p1, segments2[idx]);
       if(std::abs(min_projection.second) > std::abs(curr_projection.second)){
+        // mapper.add(segments2[idx]);
+        // mapper.add(seg);
+        // mapper.map(segments2[idx], "fill-opacity:0.3;fill:red;stroke:red;stroke-width:2");
+        // mapper.map(seg, "fill-opacity:0.3;fill:blue;stroke:blue;stroke-width:2");
         min_projection = curr_projection;
       }
     }
