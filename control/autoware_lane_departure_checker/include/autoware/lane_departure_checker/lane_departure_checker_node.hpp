@@ -28,6 +28,7 @@
 #include <autoware_internal_debug_msgs/msg/float64_stamped.hpp>
 #include <autoware_map_msgs/msg/lanelet_map_bin.hpp>
 #include <autoware_planning_msgs/msg/lanelet_route.hpp>
+#include <autoware_planning_msgs/msg/path.hpp>
 #include <autoware_planning_msgs/msg/trajectory.hpp>
 #include <autoware_vehicle_msgs/msg/control_mode_report.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -69,6 +70,8 @@ private:
     sub_operation_mode_{this, "/api/operation_mode/state"};
   autoware_utils::InterProcessPollingSubscriber<autoware_vehicle_msgs::msg::ControlModeReport>
     sub_control_mode_{this, "/vehicle/status/control_mode"};
+  autoware_utils::InterProcessPollingSubscriber<autoware_planning_msgs::msg::Path>
+    sub_path_with_lane_boundary_{this, "~/input/path_with_lane_boundary"};
 
   // Data Buffer
   nav_msgs::msg::Odometry::ConstSharedPtr current_odom_;
@@ -84,6 +87,7 @@ private:
   Trajectory::ConstSharedPtr predicted_trajectory_;
   autoware_adapi_v1_msgs::msg::OperationModeState::ConstSharedPtr operation_mode_;
   autoware_vehicle_msgs::msg::ControlModeReport::ConstSharedPtr control_mode_;
+  autoware_planning_msgs::msg::Path::ConstSharedPtr path_with_lane_boundary_;
 
   // Callback
   void onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr msg);

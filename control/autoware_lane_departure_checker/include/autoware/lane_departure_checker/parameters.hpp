@@ -17,6 +17,7 @@
 
 #include <autoware_utils/geometry/boost_geometry.hpp>
 #include <autoware_utils/geometry/pose_deviation.hpp>
+#include <autoware_utils/ros/uuid_helper.hpp>
 #include <rclcpp/node.hpp>
 
 #include <autoware_planning_msgs/msg/lanelet_route.hpp>
@@ -38,6 +39,7 @@ using autoware_planning_msgs::msg::TrajectoryPoint;
 using autoware_utils::PoseDeviation;
 using TrajectoryPoints = std::vector<TrajectoryPoint>;
 using autoware_utils::LinearRing2d;
+using autoware_utils::Segment2d;
 
 struct Param
 {
@@ -72,6 +74,48 @@ struct NodeParam
   std::vector<std::string> boundary_types_to_detect{};
 };
 
+template <typename T>
+struct DirectionPair
+{
+  std::vector<T> left;
+  std::vector<T> right;
+};
+  using SegmentPair = DirectionPair<Segment2d>;
+  using ProjectedPair = DirectionPair<std::pair<autoware_utils::Point2d, autoware_utils::Point2d>>;
+
+struct LaneDeparturePointCandidate
+{
+  boost::uuids::uuid uuid = autoware_utils::to_boost_uuid(autoware_utils::generate_uuid());
+  geometry_msgs::msg::Point point{};
+  bool is_active{true};
+  std::chrono::time_point<std::chrono::steady_clock> creation_time{
+    std::chrono::steady_clock::now()};
+  std::chrono::time_point<std::chrono::steady_clock> last_update_time;
+
+  explicit LaneDeparturePointCandidate(geometry_msgs::msg::Point point) : point(point) {}
+  void check_if_active()
+  {
+    auto current_time = std::chrono::steady_clock::now();
+    const auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(current_time - last_update_time)
+        .count();
+    const auto one_sec =
+      std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::seconds(1)).count();
+    const auto time_since_last_update = static_cast<double>(duration) / one_sec;
+    is_active = time_since_last_update < 0.5;
+    if (is_active) {
+      last_update_time = current_time;
+    }
+  }
+
+  [[nodiscard]] double time_since_creation() const
+  {
+    return std::chrono::duration<double, std::milli>(
+             std::chrono::steady_clock::now() - creation_time)
+      .count();
+  }
+};
+
 struct Input
 {
   nav_msgs::msg::Odometry::ConstSharedPtr current_odom{};
@@ -82,6 +126,8 @@ struct Input
   Trajectory::ConstSharedPtr reference_trajectory{};
   Trajectory::ConstSharedPtr predicted_trajectory{};
   std::vector<std::string> boundary_types_to_detect{};
+  std::vector<geometry_msgs::msg::Point> left_lane_boundary{};
+  std::vector<geometry_msgs::msg::Point> right_lane_boundary{};
 };
 
 struct Output
@@ -95,6 +141,11 @@ struct Output
   TrajectoryPoints resampled_trajectory{};
   std::vector<LinearRing2d> vehicle_footprints{};
   std::vector<LinearRing2d> vehicle_passing_areas{};
+  SegmentPair ego_footprint_side;
+  SegmentPair lane_boundary;
+  ProjectedPair projection_points;
+
+  bool will_leave_drivable_area = false;
 };
 }  // namespace autoware::lane_departure_checker
 
