@@ -14,6 +14,8 @@
 
 #include "autoware/lane_departure_checker/utils.hpp"
 
+#include "autoware/lane_departure_checker/parameters.hpp"
+
 #include <autoware/motion_utils/trajectory/trajectory.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
 
@@ -57,6 +59,8 @@ FootprintMargin calcFootprintMargin(
 
 namespace autoware::lane_departure_checker::utils
 {
+using autoware_utils::Point2d;
+
 TrajectoryPoints cutTrajectory(const TrajectoryPoints & trajectory, const double length)
 {
   if (trajectory.empty()) {
@@ -242,5 +246,107 @@ double calcMaxSearchLengthForBoundaries(
     std::abs(vehicle_info.max_lateral_offset_m), std::abs(vehicle_info.min_lateral_offset_m));
   const double max_ego_search_length = std::hypot(max_ego_lon_length, max_ego_lat_length);
   return autoware::motion_utils::calcArcLength(trajectory.points) + max_ego_search_length;
+}
+
+std::optional<std::vector<Segment2d>> convert_to_segments(
+  const std::vector<Point> & boundary_points, [[maybe_unused]] const Point & target_point)
+{
+  if (boundary_points.size() < 2) {
+    return std::nullopt;
+  }
+
+  std::vector<Segment2d> segments;
+
+  for (size_t i = 0; i < boundary_points.size() - 1; ++i) {
+    const auto & curr = boundary_points[i];
+    const auto & next = boundary_points[i + 1];
+    segments.emplace_back(Point2d(curr.x, curr.y), Point2d(next.x, next.y));
+  }
+  return segments;
+}
+
+// LaneletSegmentPair get_lanelet_bound_segment(
+//   const lanelet::LaneletMap & lanelet_map,
+//   const std::vector<std::string> & boundary_types_to_detect)
+// {
+//   const auto sum_reserve = std::accumulate(
+//     lanelet_map.laneletLayer.begin(), lanelet_map.laneletLayer.end(), 0UL,
+//     [](const size_t sum, const lanelet::ConstLanelet & lane) {
+//       return sum + std::max(
+//                      lane.leftBound2d().basicLineString().size(),
+//                      lane.rightBound2d().basicLineString().size());
+//     });
+
+//   LaneletSegmentPair segments;
+//   segments.left.reserve(sum_reserve);
+//   segments.right.reserve(sum_reserve);
+
+//   const auto has_types =
+//     [](const lanelet::ConstLineString3d & ls, const std::vector<std::string> & types) {
+//       constexpr auto no_type = "";
+//       const auto type = ls.attributeOr(lanelet::AttributeName::Type, no_type);
+//       return (type != no_type && std::find(types.begin(), types.end(), type) != types.end());
+//     };
+
+//   for (const auto & ll : lanelet_map.laneletLayer) {
+//     const auto & left = ll.leftBound3d().basicLineString();
+//     const auto is_left_crossable = !has_types(ll.leftBound3d(), boundary_types_to_detect);
+//     for (size_t i = 0; i < left.size() - 1; ++i) {
+//       Point2d p1 = {left[i].x(), left[i].y()};
+//       Point2d p2 = {left[i + 1].x(), left[i + 1].y()};
+//       segments.left.emplace_back(p1, p2, is_left_crossable);
+//     }
+
+//     const auto & right = ll.rightBound3d().basicLineString();
+//     const auto is_right_crossable = !has_types(ll.rightBound3d(), boundary_types_to_detect);
+//     for (size_t i = 0; i < right.size() - 1; ++i) {
+//       Point2d p1 = {right[i].x(), right[i].y()};
+//       Point2d p2 = {right[i + 1].x(), right[i + 1].y()};
+//       segments.right.emplace_back(p1, p2, is_right_crossable);
+//     }
+//   }
+//   return segments;
+// }
+
+SegmentNodeRtreePair extract_uncrossable_boundaries(
+  const lanelet::LaneletMap & lanelet_map,
+  const std::vector<std::string> & boundary_types_to_detect)
+{
+  const auto has_types =
+    [](const lanelet::ConstLineString3d & ls, const std::vector<std::string> & types) {
+      constexpr auto no_type = "";
+      const auto type = ls.attributeOr(lanelet::AttributeName::Type, no_type);
+      return (type != no_type && std::find(types.begin(), types.end(), type) != types.end());
+    };
+
+  const auto to_segment = [](const auto & curr, const auto & next) -> Segment2d {
+    const Point2d p1 = {curr.x(), curr.y()};
+    const Point2d p2 = {next.x(), next.y()};
+    return {p1, p2};
+  };
+
+  SegmentNodePair segments;
+  for (const auto & ll : lanelet_map.laneletLayer) {
+    if (has_types(ll.leftBound3d(), boundary_types_to_detect)) {
+      const auto & left = ll.leftBound3d().basicLineString();
+      for (size_t i = 0; i < left.size() - 1; ++i) {
+        const auto segment = to_segment(left[i], left[i + 1]);
+        segments.left.emplace_back(bg::return_envelope<Segment2d>(segment), ll.id());
+      }
+    }
+
+    if (has_types(ll.rightBound3d(), boundary_types_to_detect)) {
+      const auto & right = ll.rightBound3d().basicLineString();
+      for (size_t i = 0; i < right.size() - 1; ++i) {
+        const auto segment = to_segment(right[i], right[i + 1]);
+        segments.right.emplace_back(bg::return_envelope<Segment2d>(segment), ll.id());
+      }
+    }
+  }
+
+  SegmentNodeRtreePair rtree;
+  rtree.left = {segments.left.begin(), segments.left.end()};
+  rtree.right = {segments.right.begin(), segments.right.end()};
+  return rtree;
 }
 }  // namespace autoware::lane_departure_checker::utils

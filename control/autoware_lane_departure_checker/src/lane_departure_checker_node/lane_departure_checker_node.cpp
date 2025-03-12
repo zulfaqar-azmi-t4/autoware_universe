@@ -243,6 +243,7 @@ void LaneDepartureCheckerNode::onTimer()
   predicted_trajectory_ = sub_predicted_trajectory_.take_data();
   operation_mode_ = sub_operation_mode_.take_data();
   control_mode_ = sub_control_mode_.take_data();
+  path_with_lane_boundary_ = sub_path_with_lane_boundary_.take_data();
 
   const auto lanelet_map_bin_msg = sub_lanelet_map_bin_.take_data();
   if (lanelet_map_bin_msg) {
@@ -273,12 +274,12 @@ void LaneDepartureCheckerNode::onTimer()
   if (last_route_ != route_ && !route_->segments.empty()) {
     std::map<lanelet::Id, lanelet::ConstLanelet>::iterator itr;
 
-    auto map_route_lanelets_ =
+    auto map_route_lanelets =
       getRouteLanelets(lanelet_map_, routing_graph_, route_, vehicle_length_m_);
 
     lanelet::ConstLanelets shared_lanelets_tmp;
 
-    for (itr = map_route_lanelets_.begin(); itr != map_route_lanelets_.end(); ++itr) {
+    for (itr = map_route_lanelets.begin(); itr != map_route_lanelets.end(); ++itr) {
       const auto shared_lanelet = getAllSharedLineStringLanelets(
         itr->second, node_param_.include_right_lanes, node_param_.include_left_lanes,
         node_param_.include_opposite_lanes, node_param_.include_conflicting_lanes, true);
@@ -286,10 +287,10 @@ void LaneDepartureCheckerNode::onTimer()
         shared_lanelets_tmp.end(), shared_lanelet.begin(), shared_lanelet.end());
     }
     for (const auto & lanelet : shared_lanelets_tmp) {
-      map_route_lanelets_[lanelet.id()] = lanelet;
+      map_route_lanelets[lanelet.id()] = lanelet;
     }
     route_lanelets_.clear();
-    for (itr = map_route_lanelets_.begin(); itr != map_route_lanelets_.end(); ++itr) {
+    for (itr = map_route_lanelets.begin(); itr != map_route_lanelets.end(); ++itr) {
       route_lanelets_.push_back(itr->second);
     }
     last_route_ = route_;
@@ -298,12 +299,14 @@ void LaneDepartureCheckerNode::onTimer()
 
   input_.current_odom = current_odom_;
   input_.lanelet_map = lanelet_map_;
-  input_.route = route_;
   input_.route_lanelets = route_lanelets_;
   input_.shoulder_lanelets = shoulder_lanelets_;
   input_.reference_trajectory = reference_trajectory_;
   input_.predicted_trajectory = predicted_trajectory_;
   input_.boundary_types_to_detect = node_param_.boundary_types_to_detect;
+  input_.left_lane_boundary = path_with_lane_boundary_->left_bound;
+  input_.right_lane_boundary = path_with_lane_boundary_->right_bound;
+
   processing_time_map["Node: setInputData"] = stop_watch.toc(true);
 
   output_ = lane_departure_checker_->update(input_);
@@ -561,10 +564,116 @@ visualization_msgs::msg::MarkerArray LaneDepartureCheckerNode::createMarkerArray
         marker.points.push_back(autoware_utils::to_msg(p2.to_3d(base_link_z)));
       }
     }
-
     marker_array.markers.push_back(marker);
   }
 
+  // drivable areas
+  {
+    const auto color = create_marker_color(1.0, 0.0, 0.0, 0.5);
+
+    auto left_marker = create_default_marker(
+      "map", this->now(), "left_boundary", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      create_marker_scale(0.1, 0, 0), color);
+
+    const auto & left_bound = input_.left_lane_boundary;
+    left_marker.points.reserve(left_bound.size() * 2UL);
+    for (size_t i = 0; i < left_bound.size() - 1; ++i) {
+      left_marker.points.push_back(left_bound[i]);
+      left_marker.points.push_back(left_bound[i + 1]);
+    }
+
+    marker_array.markers.push_back(left_marker);
+    auto right_marker = create_default_marker(
+      "map", this->now(), "right_boundary", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      create_marker_scale(0.05, 0, 0), color);
+
+    const auto & right_bound = input_.right_lane_boundary;
+    right_marker.points.reserve(right_bound.size() * 2UL);
+    for (size_t i = 0; i < right_bound.size() - 1; ++i) {
+      right_marker.points.push_back(right_bound[i]);
+      right_marker.points.push_back(right_bound[i + 1]);
+    }
+
+    marker_array.markers.push_back(right_marker);
+  }
+  // Vehicle left
+  {
+    const auto color_ok = create_marker_color(0.0, 1.0, 0.0, 0.5);
+    const auto color_will_leave_lane = create_marker_color(0.5, 0.5, 0.0, 0.5);
+
+    auto color = color_ok;
+    if (output_.will_leave_drivable_area) {
+      color = color_will_leave_lane;
+    }
+
+    auto marker = create_default_marker(
+      "map", this->now(), "vehicle_left_side", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      create_marker_scale(0.05, 0, 0), color);
+
+    for (const auto & left : output_.ego_footprint_side.left) {
+      const auto p1 = autoware_utils::to_msg(left.first.to_3d(base_link_z));
+      const auto p2 = autoware_utils::to_msg(left.second.to_3d(base_link_z));
+
+      marker.points.push_back(p1);
+      marker.points.push_back(p2);
+    }
+    marker_array.markers.push_back(marker);
+  }
+
+  // Vehicle right
+  {
+    const auto color_ok = create_marker_color(0.0, 1.0, 0.0, 0.5);
+    const auto color_will_leave_lane = create_marker_color(0.5, 0.5, 0.0, 0.5);
+
+    auto color = color_ok;
+    if (output_.will_leave_drivable_area) {
+      color = color_will_leave_lane;
+    }
+
+    auto marker = create_default_marker(
+      "map", this->now(), "vehicle_right_side", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      create_marker_scale(0.05, 0, 0), color);
+
+    for (const auto & right : output_.ego_footprint_side.right) {
+      const auto p1 = autoware_utils::to_msg(right.first.to_3d(base_link_z));
+      const auto p2 = autoware_utils::to_msg(right.second.to_3d(base_link_z));
+
+      marker.points.push_back(p1);
+      marker.points.push_back(p2);
+    }
+    marker_array.markers.push_back(marker);
+  }
+
+  {
+    const auto color_ok = create_marker_color(0.4, 0.4, 0.9, 0.5);
+
+    auto color = color_ok;
+
+    auto marker = create_default_marker(
+      "map", this->now(), "right_proj", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      create_marker_scale(0.05, 0, 0), color);
+
+    for (const auto & right : output_.projection_points.right) {
+      const auto p1 = autoware_utils::to_msg(right.first.to_3d(base_link_z));
+      const auto p2 = autoware_utils::to_msg(right.second.to_3d(base_link_z));
+
+      marker.points.push_back(p1);
+      marker.points.push_back(p2);
+    }
+    marker_array.markers.push_back(marker);
+    auto marker2 = create_default_marker(
+      "map", this->now(), "left_proj", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      create_marker_scale(0.05, 0, 0), color);
+
+    for (const auto & left : output_.projection_points.left) {
+      const auto p1 = autoware_utils::to_msg(left.first.to_3d(base_link_z));
+      const auto p2 = autoware_utils::to_msg(left.second.to_3d(base_link_z));
+
+      marker2.points.push_back(p1);
+      marker2.points.push_back(p2);
+    }
+    marker_array.markers.push_back(marker2);
+  }
   return marker_array;
 }
 

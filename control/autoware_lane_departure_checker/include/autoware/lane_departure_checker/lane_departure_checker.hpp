@@ -27,6 +27,7 @@
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 
+#include <boost/functional/hash.hpp>
 #include <boost/geometry/algorithms/envelope.hpp>
 #include <boost/geometry/algorithms/union.hpp>
 #include <boost/geometry/index/rtree.hpp>
@@ -122,6 +123,8 @@ private:
   autoware_utils::Polygon2d toPolygon2D(const lanelet::BasicPolygon2d & poly) const;
 
   mutable std::shared_ptr<autoware_utils::TimeKeeper> time_keeper_;
+
+  std::vector<LaneDeparturePointCandidate> lane_departure_point_candidates_;
 };
 }  // namespace autoware::lane_departure_checker
 

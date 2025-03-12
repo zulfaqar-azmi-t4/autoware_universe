@@ -16,17 +16,27 @@
 
 #include "autoware/lane_departure_checker/utils.hpp"
 
+#include <autoware_utils/geometry/geometry.hpp>
 #include <autoware_utils/math/normalization.hpp>
 #include <autoware_utils/math/unit_conversion.hpp>
 #include <autoware_utils/system/stop_watch.hpp>
 
 #include <boost/geometry.hpp>
 
+#include <fmt/format.h>
 #include <lanelet2_core/geometry/Polygon.h>
 #include <tf2/utils.h>
+// for writing the svg file
+#include <fstream>
+// for the geometry types
+// for the svg mapper
+#include <boost/geometry/io/svg/svg_mapper.hpp>
+#include <boost/geometry/io/svg/write.hpp>
 
 #include <algorithm>
+#include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using autoware_utils::LinearRing2d;
@@ -40,7 +50,16 @@ namespace
 using autoware_planning_msgs::msg::Trajectory;
 using autoware_planning_msgs::msg::TrajectoryPoint;
 using TrajectoryPoints = std::vector<TrajectoryPoint>;
+
+namespace bg = boost::geometry;
+namespace bgi = bg::index;
+using autoware_utils::Box2d;
+using autoware_utils::Point2d;
+using autoware_utils::Segment2d;
 using geometry_msgs::msg::Point;
+// R-Tree stores bounding boxes with an index reference to segments
+using SegmentWithIdx = std::pair<Segment2d, size_t>;
+using SegmentRtree = bgi::rtree<SegmentWithIdx, bgi::rstar<16>>;  // Use R* tree
 
 double calcBrakingDistance(
   const double abs_velocity, const double max_deceleration, const double delay_time)
@@ -55,10 +74,83 @@ bool isInAnyLane(const lanelet::ConstLanelets & candidate_lanelets, const Point2
       return true;
     }
   }
-
   return false;
 }
 
+std::optional<SegmentRtree> build_rtree(const std::vector<Segment2d> & boundary_segments)
+{
+  std::vector<SegmentWithIdx> boxes_with_idx;
+  boxes_with_idx.reserve(boundary_segments.size());
+  for (size_t i = 0; i < boundary_segments.size(); ++i) {
+    Segment2d segment2d;
+    bg::envelope(boundary_segments[i], segment2d);
+    boxes_with_idx.emplace_back(segment2d, i);
+  }
+  return SegmentRtree(boxes_with_idx.begin(), boxes_with_idx.end());
+}
+
+std::pair<Point2d, double> point_to_segment_signed_projection(
+  const Point2d & p, const Segment2d & segment)
+{
+  const auto & p1 = segment.first;
+  const auto & p2 = segment.second;
+
+  const Point2d p2_vec = {p2.x() - p1.x(), p2.y() - p1.y()};
+  const Point2d p_vec = {p.x() - p1.x(), p.y() - p1.y()};
+
+  const auto c1 = boost::geometry::dot_product(p_vec, p2_vec);
+  if (c1 <= 0) return {p1, boost::geometry::distance(p, p1)};
+
+  const auto c2 = boost::geometry::dot_product(p2_vec, p2_vec);
+  if (c2 <= c1) return {p2, boost::geometry::distance(p, p2)};
+
+  const auto projection = p1 + (p2_vec * c1 / c2);
+  const auto projection_point = Point2d{projection.x(), projection.y()};
+  return {projection_point, boost::geometry::distance(p, projection_point)};
+}
+
+std::optional<std::vector<std::pair<Point2d, double>>> predicted_path_to_lane_boundary_dist(
+  const std::vector<Segment2d> & segments1, const std::vector<Segment2d> & segments2)
+{
+  if (segments1.empty() || segments2.empty()) {
+    return std::nullopt;
+  }
+
+  const auto rtree_bbox_opt = build_rtree(segments2);
+  if (!rtree_bbox_opt) {
+    return std::nullopt;
+  }
+  // std::ofstream svg("/home/zulfaqar/Pictures/image.svg");  // /!\ CHANGE PATH
+  // boost::geometry::svg_mapper<Point2d> mapper(svg, 400, 400);
+
+  const auto & rtree_bbox = *rtree_bbox_opt;
+  std::vector<std::pair<Point2d, double>> projections;
+  projections.reserve(segments1.size());
+  for (const auto & seg : segments1) {
+    const auto & p1 = seg.first;
+    constexpr auto num_of_boundary_segment_to_query = 10;
+    std::vector<SegmentWithIdx> nearest_segments;
+    nearest_segments.reserve(num_of_boundary_segment_to_query);  // ✅ Preallocate space
+
+    rtree_bbox.query(
+      bgi::nearest(p1, num_of_boundary_segment_to_query), std::back_inserter(nearest_segments));
+
+    std::pair<Point2d, double> min_projection = {Point2d(), std::numeric_limits<double>::max()};
+    for (const auto & [lane_bbox, idx] : nearest_segments) {
+      const auto curr_projection = point_to_segment_signed_projection(p1, segments2[idx]);
+      if (std::abs(min_projection.second) > std::abs(curr_projection.second)) {
+        // mapper.add(segments2[idx]);
+        // mapper.add(seg);
+        // mapper.map(segments2[idx], "fill-opacity:0.3;fill:red;stroke:red;stroke-width:2");
+        // mapper.map(seg, "fill-opacity:0.3;fill:blue;stroke:blue;stroke-width:2");
+        min_projection = curr_projection;
+      }
+    }
+
+    projections.emplace_back(min_projection);
+  }
+  return projections;
+}
 }  // namespace
 
 namespace autoware::lane_departure_checker
@@ -91,6 +183,55 @@ Output LaneDepartureChecker::update(const Input & input)
   output.vehicle_footprints = utils::createVehicleFootprints(
     input.current_odom->pose, output.resampled_trajectory, *vehicle_info_ptr_,
     param_.footprint_margin_scale);
+
+  stop_watch.tic("find_min_dist");
+  for (const auto & footprint : output.vehicle_footprints) {
+    output.ego_footprint_side.right.emplace_back(
+      Point2d(footprint.at(1)), Point2d(footprint.at(3)));
+    output.ego_footprint_side.left.emplace_back(Point2d(footprint.at(6)), Point2d(footprint.at(4)));
+  }
+
+  if (!output.ego_footprint_side.left.empty()) {
+    const auto back_point = autoware_utils::to_msg(
+      output.ego_footprint_side.left.end()->first.to_3d(input.current_odom->pose.pose.position.z));
+    if (
+      const auto left_lane_segments_opt =
+        utils::convert_to_segments(input.left_lane_boundary, back_point)) {
+      output.lane_boundary.left = *left_lane_segments_opt;
+    }
+  }
+
+  if (!output.ego_footprint_side.right.empty()) {
+    const auto back_point = autoware_utils::to_msg(
+      output.ego_footprint_side.right.end()->first.to_3d(input.current_odom->pose.pose.position.z));
+    if (
+      const auto right_lane_segments_opt =
+        utils::convert_to_segments(input.right_lane_boundary, back_point)) {
+      output.lane_boundary.right = *right_lane_segments_opt;
+    }
+  }
+
+  const auto dist_ego_left_to_boundary =
+    predicted_path_to_lane_boundary_dist(output.ego_footprint_side.left, output.lane_boundary.left);
+  const auto dist_ego_right_to_boundary = predicted_path_to_lane_boundary_dist(
+    output.ego_footprint_side.right, output.lane_boundary.right);
+
+  fmt::print("time taken to find all min distance is {} [s]\n", stop_watch.toc("find_min_dist"));
+  if (dist_ego_left_to_boundary && dist_ego_right_to_boundary) {
+    const auto min_to_print =
+      std::min(dist_ego_left_to_boundary->size(), dist_ego_right_to_boundary->size());
+
+    for (size_t i = 0; i < min_to_print; ++i) {
+      output.projection_points.left.emplace_back(
+        output.ego_footprint_side.left[i].first, dist_ego_left_to_boundary->at(i).first);
+      output.projection_points.right.emplace_back(
+        output.ego_footprint_side.right[i].first, dist_ego_right_to_boundary->at(i).first);
+      fmt::print(
+        "at idx {} left = {} [m], right = {} [m]\n", i, dist_ego_left_to_boundary->at(i).second,
+        dist_ego_right_to_boundary->at(i).second);
+    }
+  }
+
   output.processing_time_map["createVehicleFootprints"] = stop_watch.toc(true);
 
   output.vehicle_passing_areas = utils::createVehiclePassingAreas(output.vehicle_footprints);

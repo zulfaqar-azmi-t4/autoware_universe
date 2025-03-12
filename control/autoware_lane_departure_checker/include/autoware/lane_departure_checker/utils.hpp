@@ -15,6 +15,8 @@
 #ifndef AUTOWARE__LANE_DEPARTURE_CHECKER__UTILS_HPP_
 #define AUTOWARE__LANE_DEPARTURE_CHECKER__UTILS_HPP_
 
+#include "autoware/lane_departure_checker/parameters.hpp"
+
 #include <autoware_utils/geometry/boost_geometry.hpp>
 #include <autoware_utils/geometry/pose_deviation.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info.hpp>
@@ -28,7 +30,9 @@
 #include <lanelet2_core/primitives/Lanelet.h>
 #include <lanelet2_core/primitives/Polygon.h>
 
+#include <optional>
 #include <vector>
+#include <string>
 
 namespace autoware::lane_departure_checker::utils
 {
@@ -39,6 +43,8 @@ using autoware_utils::LinearRing2d;
 using autoware_utils::MultiPoint2d;
 using autoware_utils::PoseDeviation;
 using TrajectoryPoints = std::vector<TrajectoryPoint>;
+using autoware_utils::Segment2d;
+using geometry_msgs::msg::Point;
 
 /**
  * @brief cut trajectory by length
@@ -128,6 +134,14 @@ PoseDeviation calcTrajectoryDeviation(
  */
 double calcMaxSearchLengthForBoundaries(
   const Trajectory & trajectory, const autoware::vehicle_info_utils::VehicleInfo & vehicle_info);
+
+std::optional<std::vector<Segment2d>> convert_to_segments(
+  const std::vector<Point> & boundary_points, const Point & target_point);
+
+LaneletSegmentPair get_lanelet_bound_segment(
+  const lanelet::LaneletMap & lanelet_map,
+  const std::vector<std::string> & boundary_types_to_detect);
+
 }  // namespace autoware::lane_departure_checker::utils
 
 #endif  // AUTOWARE__LANE_DEPARTURE_CHECKER__UTILS_HPP_
