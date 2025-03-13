@@ -60,6 +60,7 @@ using geometry_msgs::msg::Point;
 // R-Tree stores bounding boxes with an index reference to segments
 using SegmentWithIdx = std::pair<Segment2d, size_t>;
 using SegmentRtree = bgi::rtree<SegmentWithIdx, bgi::rstar<16>>;  // Use R* tree
+using autoware::lane_departure_checker::Projection;
 
 double calcBrakingDistance(
   const double abs_velocity, const double max_deceleration, const double delay_time)
@@ -89,8 +90,7 @@ std::optional<SegmentRtree> build_rtree(const std::vector<Segment2d> & boundary_
   return SegmentRtree(boxes_with_idx.begin(), boxes_with_idx.end());
 }
 
-std::pair<Point2d, double> point_to_segment_signed_projection(
-  const Point2d & p, const Segment2d & segment)
+Projection point_to_segment_signed_projection(const Point2d & p, const Segment2d & segment)
 {
   const auto & p1 = segment.first;
   const auto & p2 = segment.second;
@@ -99,18 +99,36 @@ std::pair<Point2d, double> point_to_segment_signed_projection(
   const Point2d p_vec = {p.x() - p1.x(), p.y() - p1.y()};
 
   const auto c1 = boost::geometry::dot_product(p_vec, p2_vec);
-  if (c1 <= 0) return {p1, boost::geometry::distance(p, p1)};
+  if (c1 <= 0) return {p, p1, boost::geometry::distance(p, p1)};
 
   const auto c2 = boost::geometry::dot_product(p2_vec, p2_vec);
-  if (c2 <= c1) return {p2, boost::geometry::distance(p, p2)};
+  if (c2 <= c1) return {p, p2, boost::geometry::distance(p, p2)};
 
   const auto projection = p1 + (p2_vec * c1 / c2);
   const auto projection_point = Point2d{projection.x(), projection.y()};
-  return {projection_point, boost::geometry::distance(p, projection_point)};
+  return {p, projection_point, boost::geometry::distance(p, projection_point)};
 }
 
-std::optional<std::vector<std::pair<Point2d, double>>> predicted_path_to_lane_boundary_dist(
-  const std::vector<Segment2d> & segments1, const std::vector<Segment2d> & segments2)
+Projection segment_to_segment_nearest_projection(
+  const Segment2d & ego_seg, const Segment2d & lane_seg)
+{
+  std::array<Projection, 4> projections;
+  projections[0] = point_to_segment_signed_projection(ego_seg.first, lane_seg);
+  projections[1] = point_to_segment_signed_projection(ego_seg.second, lane_seg);
+  projections[2] = point_to_segment_signed_projection(lane_seg.first, ego_seg);
+  projections[3] = point_to_segment_signed_projection(lane_seg.second, ego_seg);
+
+  const auto min_elem = std::min_element(
+    projections.begin(), projections.end(), [](const Projection & proj1, const Projection & proj2) {
+      return std::abs(proj1.distance) < std::abs(proj2.distance);
+    });
+
+  return *min_elem;
+}
+
+std::optional<std::vector<Projection>> predicted_path_to_lane_boundary_dist(
+  const std::vector<Segment2d> & segments1, const std::vector<Segment2d> & segments2,
+  const autoware::lane_departure_checker::SegmentNodeRtree & route_lanelet_rtree)
 {
   if (segments1.empty() || segments2.empty()) {
     return std::nullopt;
@@ -120,34 +138,65 @@ std::optional<std::vector<std::pair<Point2d, double>>> predicted_path_to_lane_bo
   if (!rtree_bbox_opt) {
     return std::nullopt;
   }
-  // std::ofstream svg("/home/zulfaqar/Pictures/image.svg");  // /!\ CHANGE PATH
-  // boost::geometry::svg_mapper<Point2d> mapper(svg, 400, 400);
 
   const auto & rtree_bbox = *rtree_bbox_opt;
-  std::vector<std::pair<Point2d, double>> projections;
+  std::vector<Projection> projections;
   projections.reserve(segments1.size());
   for (const auto & seg : segments1) {
-    const auto & p1 = seg.first;
-    constexpr auto num_of_boundary_segment_to_query = 10;
+    constexpr auto num_of_boundary_segment_to_query = 1;
     std::vector<SegmentWithIdx> nearest_segments;
     nearest_segments.reserve(num_of_boundary_segment_to_query);  // ✅ Preallocate space
-
     rtree_bbox.query(
-      bgi::nearest(p1, num_of_boundary_segment_to_query), std::back_inserter(nearest_segments));
+      bgi::nearest(seg, num_of_boundary_segment_to_query), std::back_inserter(nearest_segments));
 
-    std::pair<Point2d, double> min_projection = {Point2d(), std::numeric_limits<double>::max()};
+    std::optional<Projection> min_projection_opt;
+    geometry_msgs::msg::Point prev_intersect;
     for (const auto & [lane_bbox, idx] : nearest_segments) {
-      const auto curr_projection = point_to_segment_signed_projection(p1, segments2[idx]);
-      if (std::abs(min_projection.second) > std::abs(curr_projection.second)) {
-        // mapper.add(segments2[idx]);
-        // mapper.add(seg);
-        // mapper.map(segments2[idx], "fill-opacity:0.3;fill:red;stroke:red;stroke-width:2");
-        // mapper.map(seg, "fill-opacity:0.3;fill:blue;stroke:blue;stroke-width:2");
-        min_projection = curr_projection;
+      const auto intersect = autoware_utils::intersect(
+        autoware_utils::to_msg(seg.first.to_3d()), autoware_utils::to_msg(seg.second.to_3d()),
+        autoware_utils::to_msg(segments2[idx].first.to_3d()),
+        autoware_utils::to_msg(segments2[idx].second.to_3d()));
+      if (intersect) {
+        prev_intersect = *intersect;
+        break;
+      }
+      const auto curr_projection = segment_to_segment_nearest_projection(seg, segments2[idx]);
+      if (
+        !min_projection_opt ||
+        std::abs(min_projection_opt->distance) > std::abs(curr_projection.distance)) {
+        min_projection_opt = curr_projection;
       }
     }
 
-    projections.emplace_back(min_projection);
+    if (min_projection_opt) {
+      projections.emplace_back(*min_projection_opt);
+    } else {
+      std::optional<Projection> min_lane_projection_opt;
+      std::vector<SegmentWithIdx> nearest_route_segments;
+      nearest_route_segments.reserve(num_of_boundary_segment_to_query);  // ✅ Preallocate space
+      rtree_bbox.query(
+        bgi::nearest(seg, num_of_boundary_segment_to_query),
+        std::back_inserter(nearest_route_segments));
+      for (const auto & [lane_bbox, idx] : nearest_route_segments) {
+        const auto intersect_with_route = autoware_utils::intersect(
+          autoware_utils::to_msg(seg.first.to_3d()), autoware_utils::to_msg(seg.second.to_3d()),
+          autoware_utils::to_msg(segments2[idx].first.to_3d()),
+          autoware_utils::to_msg(segments2[idx].second.to_3d()));
+        if (intersect_with_route) {
+          if (
+            autoware_utils::calc_distance2d(seg.second, *intersect_with_route) >
+            autoware_utils::calc_distance2d(seg.second, prev_intersect)) {
+            prev_intersect = *intersect_with_route;
+          }
+        }
+        const auto curr_projection = segment_to_segment_nearest_projection(seg, segments2[idx]);
+        if (
+          !min_lane_projection_opt ||
+          std::abs(min_projection_opt->distance) > std::abs(curr_projection.distance)) {
+          min_projection_opt = curr_projection;
+        }
+      }
+    }
   }
   return projections;
 }
@@ -166,20 +215,19 @@ Output LaneDepartureChecker::update(const Input & input)
     param_.ego_nearest_yaw_threshold);
   output.processing_time_map["calcTrajectoryDeviation"] = stop_watch.toc(true);
 
-  {
-    constexpr double min_velocity = 0.01;
-    const auto & raw_abs_velocity = std::abs(input.current_odom->twist.twist.linear.x);
-    const auto abs_velocity = raw_abs_velocity < min_velocity ? 0.0 : raw_abs_velocity;
+  constexpr double min_velocity = 0.01;
+  const auto & raw_abs_velocity = std::abs(input.current_odom->twist.twist.linear.x);
+  const auto abs_velocity = raw_abs_velocity < min_velocity ? 0.0 : raw_abs_velocity;
 
-    const auto braking_distance = std::max(
-      param_.min_braking_distance,
-      calcBrakingDistance(abs_velocity, param_.max_deceleration, param_.delay_time));
+  const auto braking_distance = std::max(
+    param_.min_braking_distance,
+    calcBrakingDistance(abs_velocity, param_.max_deceleration, param_.delay_time));
 
-    output.resampled_trajectory = utils::cutTrajectory(
-      utils::resampleTrajectory(*input.predicted_trajectory, param_.resample_interval),
-      braking_distance);
-    output.processing_time_map["resampleTrajectory"] = stop_watch.toc(true);
-  }
+  output.resampled_trajectory = utils::cutTrajectory(
+    utils::resampleTrajectory(*input.predicted_trajectory, param_.resample_interval),
+    braking_distance);
+  output.processing_time_map["resampleTrajectory"] = stop_watch.toc(true);
+
   output.vehicle_footprints = utils::createVehicleFootprints(
     input.current_odom->pose, output.resampled_trajectory, *vehicle_info_ptr_,
     param_.footprint_margin_scale);
@@ -191,44 +239,37 @@ Output LaneDepartureChecker::update(const Input & input)
     output.ego_footprint_side.left.emplace_back(Point2d(footprint.at(6)), Point2d(footprint.at(4)));
   }
 
-  if (!output.ego_footprint_side.left.empty()) {
-    const auto back_point = autoware_utils::to_msg(
-      output.ego_footprint_side.left.end()->first.to_3d(input.current_odom->pose.pose.position.z));
-    if (
-      const auto left_lane_segments_opt =
-        utils::convert_to_segments(input.left_lane_boundary, back_point)) {
-      output.lane_boundary.left = *left_lane_segments_opt;
-    }
+  const auto ego_length_m = vehicle_info_ptr_->vehicle_length_m;
+  constexpr auto length_buffer = 1.0;
+  constexpr auto search_duration = 10.0;
+  const auto search_length = raw_abs_velocity * search_duration + ego_length_m + length_buffer;
+  if (
+    const auto left_lane_segments_opt = utils::convert_to_segments(
+      input.left_lane_boundary, input.current_odom->pose.pose.position, search_length)) {
+    output.lane_boundary.left = *left_lane_segments_opt;
   }
 
-  if (!output.ego_footprint_side.right.empty()) {
-    const auto back_point = autoware_utils::to_msg(
-      output.ego_footprint_side.right.end()->first.to_3d(input.current_odom->pose.pose.position.z));
-    if (
-      const auto right_lane_segments_opt =
-        utils::convert_to_segments(input.right_lane_boundary, back_point)) {
-      output.lane_boundary.right = *right_lane_segments_opt;
-    }
+  if (
+    const auto right_lane_segments_opt = utils::convert_to_segments(
+      input.right_lane_boundary, input.current_odom->pose.pose.position, search_length)) {
+    output.lane_boundary.right = *right_lane_segments_opt;
   }
 
   const auto dist_ego_left_to_boundary =
     predicted_path_to_lane_boundary_dist(output.ego_footprint_side.left, output.lane_boundary.left);
   const auto dist_ego_right_to_boundary = predicted_path_to_lane_boundary_dist(
     output.ego_footprint_side.right, output.lane_boundary.right);
-
   fmt::print("time taken to find all min distance is {} [s]\n", stop_watch.toc("find_min_dist"));
+
   if (dist_ego_left_to_boundary && dist_ego_right_to_boundary) {
     const auto min_to_print =
       std::min(dist_ego_left_to_boundary->size(), dist_ego_right_to_boundary->size());
 
     for (size_t i = 0; i < min_to_print; ++i) {
       output.projection_points.left.emplace_back(
-        output.ego_footprint_side.left[i].first, dist_ego_left_to_boundary->at(i).first);
+        dist_ego_left_to_boundary->at(i).orig, dist_ego_left_to_boundary->at(i).projected);
       output.projection_points.right.emplace_back(
-        output.ego_footprint_side.right[i].first, dist_ego_right_to_boundary->at(i).first);
-      fmt::print(
-        "at idx {} left = {} [m], right = {} [m]\n", i, dist_ego_left_to_boundary->at(i).second,
-        dist_ego_right_to_boundary->at(i).second);
+        dist_ego_right_to_boundary->at(i).orig, dist_ego_right_to_boundary->at(i).projected);
     }
   }
 

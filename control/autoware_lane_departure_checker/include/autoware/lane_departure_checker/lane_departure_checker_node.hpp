@@ -76,18 +76,20 @@ private:
   // Data Buffer
   nav_msgs::msg::Odometry::ConstSharedPtr current_odom_;
   lanelet::LaneletMapPtr lanelet_map_;
-  lanelet::ConstLanelets shoulder_lanelets_;
+  NeighboringLanelets neighboring_lanelets_;
   lanelet::traffic_rules::TrafficRulesPtr traffic_rules_;
   lanelet::routing::RoutingGraphPtr routing_graph_;
   LaneletRoute::ConstSharedPtr route_;
-  geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr cov_;
-  LaneletRoute::ConstSharedPtr last_route_;
   lanelet::ConstLanelets route_lanelets_;
+  geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr cov_;
   Trajectory::ConstSharedPtr reference_trajectory_;
   Trajectory::ConstSharedPtr predicted_trajectory_;
   autoware_adapi_v1_msgs::msg::OperationModeState::ConstSharedPtr operation_mode_;
   autoware_vehicle_msgs::msg::ControlModeReport::ConstSharedPtr control_mode_;
   autoware_planning_msgs::msg::Path::ConstSharedPtr path_with_lane_boundary_;
+
+  // Values to compare with previous iteration
+  unique_identifier_msgs::msg::UUID prev_route_uuid_;
 
   // Callback
   void onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
@@ -124,7 +126,7 @@ private:
     const std::vector<rclcpp::Parameter> & parameters);
 
   // Core
-  Input input_{};
+  Input input_;
   Output output_{};
   std::unique_ptr<LaneDepartureChecker> lane_departure_checker_;
 
@@ -138,15 +140,15 @@ private:
   visualization_msgs::msg::MarkerArray createMarkerArray() const;
 
   // Lanelet Neighbor Search
-  lanelet::ConstLanelets getAllSharedLineStringLanelets(
+  NeighboringLanelets getAllNeighboringLanelets(
     const lanelet::ConstLanelet & current_lane, const bool is_right, const bool is_left,
     const bool is_opposite, const bool is_conflicting, const bool & invert_opposite);
 
-  lanelet::ConstLanelets getAllRightSharedLinestringLanelets(
+  std::pair<lanelet::ConstLanelets, lanelet::ConstLanelets> getAllRightSharedLinestringLanelets(
     const lanelet::ConstLanelet & lane, const bool & include_opposite,
     const bool & invert_opposite = false);
 
-  lanelet::ConstLanelets getAllLeftSharedLinestringLanelets(
+  std::pair<lanelet::ConstLanelets, lanelet::ConstLanelets> getAllLeftSharedLinestringLanelets(
     const lanelet::ConstLanelet & lane, const bool & include_opposite,
     const bool & invert_opposite = false);
 

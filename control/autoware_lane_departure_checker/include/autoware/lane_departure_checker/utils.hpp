@@ -31,8 +31,8 @@
 #include <lanelet2_core/primitives/Polygon.h>
 
 #include <optional>
-#include <vector>
 #include <string>
+#include <vector>
 
 namespace autoware::lane_departure_checker::utils
 {
@@ -136,12 +136,12 @@ double calcMaxSearchLengthForBoundaries(
   const Trajectory & trajectory, const autoware::vehicle_info_utils::VehicleInfo & vehicle_info);
 
 std::optional<std::vector<Segment2d>> convert_to_segments(
-  const std::vector<Point> & boundary_points, const Point & target_point);
+  const std::vector<Point> & boundary_points, const Point & ego_point, const double search_length);
 
-LaneletSegmentPair get_lanelet_bound_segment(
+SegmentNodeRtreePair get_route_lanelet_bound_segment(const lanelet::ConstLanelets & route_lanelets);
+SegmentNodeRtreePair extract_uncrossable_boundaries(
   const lanelet::LaneletMap & lanelet_map,
   const std::vector<std::string> & boundary_types_to_detect);
-
 }  // namespace autoware::lane_departure_checker::utils
 
 #endif  // AUTOWARE__LANE_DEPARTURE_CHECKER__UTILS_HPP_

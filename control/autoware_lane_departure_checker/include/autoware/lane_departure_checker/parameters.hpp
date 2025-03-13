@@ -82,6 +82,16 @@ struct NodeParam
   std::vector<std::string> boundary_types_to_detect;
 };
 
+struct NeighboringLanelets
+{
+  lanelet::ConstLanelets left;
+  lanelet::ConstLanelets right;
+  lanelet::ConstLanelets left_opposite;
+  lanelet::ConstLanelets right_opposite;
+  lanelet::ConstLanelets conflicting;
+  lanelet::ConstLanelets shoulder;
+};
+
 struct SegmentWithType
 {
   Segment2d segment;
@@ -91,6 +101,13 @@ struct SegmentWithType
   : segment({p1, p2}), is_crossable(is_crossable)
   {
   }
+};
+
+struct Projection
+{
+  Point2d orig;
+  Point2d projected;
+  double distance{std::numeric_limits<double>::max()};
 };
 
 template <typename T>
@@ -109,7 +126,7 @@ using GeomPtLaneBoundPair = DirectionPair<std::vector<geometry_msgs::msg::Point>
 struct LaneDeparturePointCandidate
 {
   boost::uuids::uuid uuid = autoware_utils::to_boost_uuid(autoware_utils::generate_uuid());
-  geometry_msgs::msg::Point point{};
+  geometry_msgs::msg::Point point;
   bool is_active{true};
   std::chrono::time_point<std::chrono::steady_clock> creation_time{
     std::chrono::steady_clock::now()};
@@ -150,6 +167,7 @@ struct Input
   std::vector<std::string> boundary_types_to_detect;
   std::vector<geometry_msgs::msg::Point> left_lane_boundary;
   std::vector<geometry_msgs::msg::Point> right_lane_boundary;
+  SegmentNodeRtreePair route_lanelets_rtree;
 };
 
 struct Output

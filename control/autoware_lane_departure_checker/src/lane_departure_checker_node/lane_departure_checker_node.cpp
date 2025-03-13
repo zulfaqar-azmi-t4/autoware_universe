@@ -14,6 +14,8 @@
 
 #include "autoware/lane_departure_checker/lane_departure_checker_node.hpp"
 
+#include "autoware/lane_departure_checker/utils.hpp"
+
 #include <autoware_lanelet2_extension/utility/message_conversion.hpp>
 #include <autoware_lanelet2_extension/utility/query.hpp>
 #include <autoware_lanelet2_extension/utility/route_checker.hpp>
@@ -24,6 +26,8 @@
 #include <autoware_utils/system/stop_watch.hpp>
 
 #include <autoware_planning_msgs/msg/lanelet_segment.hpp>
+
+#include <fmt/format.h>
 
 #include <map>
 #include <memory>
@@ -53,52 +57,46 @@ std::array<geometry_msgs::msg::Point, 3> triangle2points(
   return points;
 }
 
-std::map<lanelet::Id, lanelet::ConstLanelet> getRouteLanelets(
+std::unordered_set<lanelet::ConstLanelet> getRouteLanelets(
   const lanelet::LaneletMapPtr & lanelet_map,
   const lanelet::routing::RoutingGraphPtr & routing_graph,
   const autoware_planning_msgs::msg::LaneletRoute::ConstSharedPtr & route_ptr,
   const double vehicle_length)
 {
-  std::map<lanelet::Id, lanelet::ConstLanelet> route_lanelets;
+  std::unordered_set<lanelet::ConstLanelet> route_lanelets;
 
   bool is_route_valid = lanelet::utils::route::isRouteValid(*route_ptr, lanelet_map);
   if (!is_route_valid) {
     return route_lanelets;
   }
 
+  const auto extension_length = 2 * vehicle_length;
   // Add preceding lanes of front route_section to prevent detection errors
-  {
-    const auto extension_length = 2 * vehicle_length;
 
-    for (const auto & primitive : route_ptr->segments.front().primitives) {
-      const auto lane_id = primitive.id;
-      for (const auto & lanelet_sequence : lanelet::utils::query::getPrecedingLaneletSequences(
-             routing_graph, lanelet_map->laneletLayer.get(lane_id), extension_length)) {
-        for (const auto & preceding_lanelet : lanelet_sequence) {
-          route_lanelets[preceding_lanelet.id()] = preceding_lanelet;
-        }
+  for (const auto & primitive : route_ptr->segments.front().primitives) {
+    const auto lane_id = primitive.id;
+    for (const auto & lanelet_sequence : lanelet::utils::query::getPrecedingLaneletSequences(
+           routing_graph, lanelet_map->laneletLayer.get(lane_id), extension_length)) {
+      for (const auto & preceding_lanelet : lanelet_sequence) {
+        route_lanelets.insert(preceding_lanelet);
       }
     }
   }
 
   for (const auto & route_section : route_ptr->segments) {
     for (const auto & primitive : route_section.primitives) {
-      const auto lane_id = primitive.id;
-      route_lanelets[lane_id] = lanelet_map->laneletLayer.get(lane_id);
+      route_lanelets.insert(lanelet_map->laneletLayer.get(primitive.id));
     }
   }
 
   // Add succeeding lanes of last route_section to prevent detection errors
-  {
-    const auto extension_length = 2 * vehicle_length;
 
-    for (const auto & primitive : route_ptr->segments.back().primitives) {
-      const auto lane_id = primitive.id;
-      for (const auto & lanelet_sequence : lanelet::utils::query::getSucceedingLaneletSequences(
-             routing_graph, lanelet_map->laneletLayer.get(lane_id), extension_length)) {
-        for (const auto & succeeding_lanelet : lanelet_sequence) {
-          route_lanelets[succeeding_lanelet.id()] = succeeding_lanelet;
-        }
+  for (const auto & primitive : route_ptr->segments.back().primitives) {
+    const auto lane_id = primitive.id;
+    for (const auto & lanelet_sequence : lanelet::utils::query::getSucceedingLaneletSequences(
+           routing_graph, lanelet_map->laneletLayer.get(lane_id), extension_length)) {
+      for (const auto & succeeding_lanelet : lanelet_sequence) {
+        route_lanelets.insert(succeeding_lanelet);
       }
     }
   }
@@ -246,14 +244,13 @@ void LaneDepartureCheckerNode::onTimer()
   path_with_lane_boundary_ = sub_path_with_lane_boundary_.take_data();
 
   const auto lanelet_map_bin_msg = sub_lanelet_map_bin_.take_data();
-  if (lanelet_map_bin_msg) {
+  if (lanelet_map_bin_msg && !lanelet_map_) {
     lanelet_map_ = std::make_shared<lanelet::LaneletMap>();
     lanelet::utils::conversion::fromBinMsg(
       *lanelet_map_bin_msg, lanelet_map_, &traffic_rules_, &routing_graph_);
 
     // get all shoulder lanes
     lanelet::ConstLanelets all_lanelets = lanelet::utils::query::laneletLayer(lanelet_map_);
-    shoulder_lanelets_ = lanelet::utils::query::shoulderLanelets(all_lanelets);
   }
 
   if (!isDataReady()) {
@@ -271,36 +268,55 @@ void LaneDepartureCheckerNode::onTimer()
   processing_time_map["Node: checkData"] = stop_watch.toc(true);
 
   // In order to wait for both of map and route will be ready, write this not in callback but here
-  if (last_route_ != route_ && !route_->segments.empty()) {
-    std::map<lanelet::Id, lanelet::ConstLanelet>::iterator itr;
-
+  if (route_->uuid != prev_route_uuid_ && !route_->segments.empty()) {
+    NeighboringLanelets neighbors;
     auto map_route_lanelets =
       getRouteLanelets(lanelet_map_, routing_graph_, route_, vehicle_length_m_);
-
-    lanelet::ConstLanelets shared_lanelets_tmp;
-
-    for (itr = map_route_lanelets.begin(); itr != map_route_lanelets.end(); ++itr) {
-      const auto shared_lanelet = getAllSharedLineStringLanelets(
-        itr->second, node_param_.include_right_lanes, node_param_.include_left_lanes,
+    route_lanelets_.reserve(map_route_lanelets.size());
+    for (const auto & route_lanelet : map_route_lanelets) {
+      route_lanelets_.push_back(route_lanelet);
+      const auto tmp_neighbor = getAllNeighboringLanelets(
+        route_lanelet, node_param_.include_right_lanes, node_param_.include_left_lanes,
         node_param_.include_opposite_lanes, node_param_.include_conflicting_lanes, true);
-      shared_lanelets_tmp.insert(
-        shared_lanelets_tmp.end(), shared_lanelet.begin(), shared_lanelet.end());
+      neighbors.left.insert(
+        neighbors.left.end(), tmp_neighbor.left.begin(), tmp_neighbor.left.end());
+      neighbors.left_opposite.insert(
+        neighbors.left_opposite.end(), tmp_neighbor.left_opposite.begin(),
+        tmp_neighbor.left_opposite.end());
+      neighbors.right.insert(
+        neighbors.right.end(), tmp_neighbor.right.begin(), tmp_neighbor.right.end());
+      neighbors.right_opposite.insert(
+        neighbors.right_opposite.end(), tmp_neighbor.right_opposite.begin(),
+        tmp_neighbor.right_opposite.end());
+      neighbors.conflicting.insert(
+        neighbors.conflicting.end(), tmp_neighbor.conflicting.begin(),
+        tmp_neighbor.conflicting.end());
     }
-    for (const auto & lanelet : shared_lanelets_tmp) {
-      map_route_lanelets[lanelet.id()] = lanelet;
-    }
-    route_lanelets_.clear();
-    for (itr = map_route_lanelets.begin(); itr != map_route_lanelets.end(); ++itr) {
-      route_lanelets_.push_back(itr->second);
-    }
-    last_route_ = route_;
-  }
-  processing_time_map["Node: getRouteLanelets"] = stop_watch.toc(true);
+    lanelet::ConstLanelets all_lanelets = lanelet::utils::query::laneletLayer(lanelet_map_);
+    neighbors.shoulder = lanelet::utils::query::shoulderLanelets(all_lanelets);
+    neighboring_lanelets_ = neighbors;
 
+    stop_watch.tic("uncrossable_boundaries");
+    [[maybe_unused]] const auto uncrossable_boundaries =
+      utils::extract_uncrossable_boundaries(*lanelet_map_, node_param_.boundary_types_to_detect);
+    fmt::print(
+      "Time taken to generate rtee[uncrossable_boundaries]: {}\n",
+      stop_watch.toc("uncrossable_boundaries"));
+    prev_route_uuid_ = route_->uuid;
+    stop_watch.tic("route_lanelets_bound");
+    route_lanelets_.insert(
+      route_lanelets_.end(), neighbors.shoulder.begin(), neighbors.shoulder.end());
+    input_.route_lanelets_rtree = utils::get_route_lanelet_bound_segment(route_lanelets_);
+    fmt::print(
+      "Time taken to generate rtee[route_lanelets_bound]: {}\n",
+      stop_watch.toc("route_lanelets_bound"));
+  }
+
+  processing_time_map["Node: getRouteLanelets"] = stop_watch.toc(true);
   input_.current_odom = current_odom_;
   input_.lanelet_map = lanelet_map_;
   input_.route_lanelets = route_lanelets_;
-  input_.shoulder_lanelets = shoulder_lanelets_;
+  input_.shoulder_lanelets = neighboring_lanelets_.shoulder;
   input_.reference_trajectory = reference_trajectory_;
   input_.predicted_trajectory = predicted_trajectory_;
   input_.boundary_types_to_detect = node_param_.boundary_types_to_detect;
@@ -677,40 +693,41 @@ visualization_msgs::msg::MarkerArray LaneDepartureCheckerNode::createMarkerArray
   return marker_array;
 }
 
-lanelet::ConstLanelets LaneDepartureCheckerNode::getAllSharedLineStringLanelets(
+NeighboringLanelets LaneDepartureCheckerNode::getAllNeighboringLanelets(
   const lanelet::ConstLanelet & current_lane, const bool is_right, const bool is_left,
   const bool is_opposite, const bool is_conflicting, const bool & invert_opposite)
 {
-  lanelet::ConstLanelets shared{current_lane};
-
+  NeighboringLanelets neighbors;
   if (is_right) {
-    const lanelet::ConstLanelets all_right_lanelets =
+    auto [right, right_opposite] =
       getAllRightSharedLinestringLanelets(current_lane, is_opposite, invert_opposite);
-    shared.insert(shared.end(), all_right_lanelets.begin(), all_right_lanelets.end());
+    neighbors.right = right;
+    neighbors.right_opposite = right_opposite;
   }
 
   if (is_left) {
-    const lanelet::ConstLanelets all_left_lanelets =
+    auto [left, left_opposite] =
       getAllLeftSharedLinestringLanelets(current_lane, is_opposite, invert_opposite);
-    shared.insert(shared.end(), all_left_lanelets.begin(), all_left_lanelets.end());
+    neighbors.left = left;
+    neighbors.left_opposite = left_opposite;
   }
 
   if (is_conflicting) {
-    const auto conflicting_lanelets =
-      lanelet::utils::getConflictingLanelets(routing_graph_, current_lane);
-    shared.insert(shared.end(), conflicting_lanelets.begin(), conflicting_lanelets.end());
+    neighbors.conflicting = lanelet::utils::getConflictingLanelets(routing_graph_, current_lane);
   }
-  return shared;
+
+  return neighbors;
 }
 
-lanelet::ConstLanelets LaneDepartureCheckerNode::getAllRightSharedLinestringLanelets(
+std::pair<lanelet::ConstLanelets, lanelet::ConstLanelets>
+LaneDepartureCheckerNode::getAllRightSharedLinestringLanelets(
   const lanelet::ConstLanelet & lane, const bool & include_opposite, const bool & invert_opposite)
 {
-  lanelet::ConstLanelets linestring_shared;
+  lanelet::ConstLanelets right;
   auto lanelet_at_right = getRightLanelet(lane);
   auto lanelet_at_right_opposite = getRightOppositeLanelets(lane);
   while (lanelet_at_right) {
-    linestring_shared.push_back(lanelet_at_right.get());
+    right.push_back(lanelet_at_right.get());
     lanelet_at_right = getRightLanelet(lanelet_at_right.get());
     if (!lanelet_at_right) {
       break;
@@ -718,33 +735,35 @@ lanelet::ConstLanelets LaneDepartureCheckerNode::getAllRightSharedLinestringLane
     lanelet_at_right_opposite = getRightOppositeLanelets(lanelet_at_right.get());
   }
 
+  lanelet::ConstLanelets right_opposite;
   if (!lanelet_at_right_opposite.empty() && include_opposite) {
     if (invert_opposite) {
-      linestring_shared.push_back(lanelet_at_right_opposite.front().invert());
+      right_opposite.push_back(lanelet_at_right_opposite.front().invert());
     } else {
-      linestring_shared.push_back(lanelet_at_right_opposite.front());
+      right_opposite.push_back(lanelet_at_right_opposite.front());
     }
     auto lanelet_at_left = getLeftLanelet(lanelet_at_right_opposite.front());
     while (lanelet_at_left) {
       if (invert_opposite) {
-        linestring_shared.push_back(lanelet_at_left.get().invert());
+        right_opposite.push_back(lanelet_at_left.get().invert());
       } else {
-        linestring_shared.push_back(lanelet_at_left.get());
+        right_opposite.push_back(lanelet_at_left.get());
       }
       lanelet_at_left = getLeftLanelet(lanelet_at_left.get());
     }
   }
-  return linestring_shared;
+  return {right, right_opposite};
 }
 
-lanelet::ConstLanelets LaneDepartureCheckerNode::getAllLeftSharedLinestringLanelets(
+std::pair<lanelet::ConstLanelets, lanelet::ConstLanelets>
+LaneDepartureCheckerNode::getAllLeftSharedLinestringLanelets(
   const lanelet::ConstLanelet & lane, const bool & include_opposite, const bool & invert_opposite)
 {
-  lanelet::ConstLanelets linestring_shared;
+  lanelet::ConstLanelets left;
   auto lanelet_at_left = getLeftLanelet(lane);
   auto lanelet_at_left_opposite = getLeftOppositeLanelets(lane);
   while (lanelet_at_left) {
-    linestring_shared.push_back(lanelet_at_left.get());
+    left.push_back(lanelet_at_left.get());
     lanelet_at_left = getLeftLanelet(lanelet_at_left.get());
     if (!lanelet_at_left) {
       break;
@@ -752,23 +771,24 @@ lanelet::ConstLanelets LaneDepartureCheckerNode::getAllLeftSharedLinestringLanel
     lanelet_at_left_opposite = getLeftOppositeLanelets(lanelet_at_left.get());
   }
 
+  lanelet::ConstLanelets left_opposite;
   if (!lanelet_at_left_opposite.empty() && include_opposite) {
     if (invert_opposite) {
-      linestring_shared.push_back(lanelet_at_left_opposite.front().invert());
+      left_opposite.push_back(lanelet_at_left_opposite.front().invert());
     } else {
-      linestring_shared.push_back(lanelet_at_left_opposite.front());
+      left_opposite.push_back(lanelet_at_left_opposite.front());
     }
     auto lanelet_at_right = getRightLanelet(lanelet_at_left_opposite.front());
     while (lanelet_at_right) {
       if (invert_opposite) {
-        linestring_shared.push_back(lanelet_at_right.get().invert());
+        left_opposite.push_back(lanelet_at_right.get().invert());
       } else {
-        linestring_shared.push_back(lanelet_at_right.get());
+        left_opposite.push_back(lanelet_at_right.get());
       }
       lanelet_at_right = getRightLanelet(lanelet_at_right.get());
     }
   }
-  return linestring_shared;
+  return {left, left_opposite};
 }
 
 boost::optional<lanelet::ConstLanelet> LaneDepartureCheckerNode::getLeftLanelet(
