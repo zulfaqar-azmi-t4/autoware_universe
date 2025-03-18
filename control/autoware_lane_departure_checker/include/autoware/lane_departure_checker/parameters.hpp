@@ -182,6 +182,7 @@ struct Output
   std::vector<LinearRing2d> vehicle_footprints{};
   std::vector<LinearRing2d> vehicle_passing_areas{};
   SegmentPair ego_footprint_side;
+  std::vector<Point2d> left_traj;
   SegmentPair lane_boundary;
   ProjectedPair projection_points;
 

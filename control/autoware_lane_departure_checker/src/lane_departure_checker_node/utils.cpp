@@ -16,6 +16,7 @@
 
 #include "autoware/lane_departure_checker/parameters.hpp"
 
+#include <autoware/lane_departure_checker/kdtree.hpp>
 #include <autoware/motion_utils/trajectory/trajectory.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
 
@@ -338,5 +339,195 @@ SegmentNodeRtreePair extract_uncrossable_boundaries(
   rtree.left = {segments.left.begin(), segments.left.end()};
   rtree.right = {segments.right.begin(), segments.right.end()};
   return rtree;
+}
+
+// --- Helper Functions ---
+// RemovePoint: removes any point from dataset that is “equal” to currentPoint.
+void RemovePoint(std::vector<Point2d>& dataset, const Point2d& currentPoint)
+{
+  constexpr double threshold = 1e-3;
+  dataset.erase(
+    std::remove_if(
+      dataset.begin(), dataset.end(),
+      [&currentPoint](const Point2d& p) {
+        return (std::abs(p.x() - currentPoint.x()) < threshold) &&
+               (std::abs(p.y() - currentPoint.y()) < threshold);
+      }),
+    dataset.end());
+}
+
+double normalizeAngle(double angle)
+{
+  const double TWO_PI = 2.0 * M_PI;
+  while (angle < 0) angle += TWO_PI;
+  while (angle >= TWO_PI) angle -= TWO_PI;
+  return angle;
+}
+
+double computeCandidateAngle(const Point2d& current, const Point2d& candidate)
+{
+  return std::atan2(candidate.y() - current.y(), candidate.x() - current.x());
+}
+
+// Turning angle = normalized(prevAngle - candidateAngle)
+double computeTurningAngle(double prevAngle, const Point2d& current, const Point2d& candidate)
+{
+  double candidateAngle = computeCandidateAngle(current, candidate);
+  double diff = prevAngle - candidateAngle;
+  return normalizeAngle(diff);
+}
+
+// SortByAngle: returns listOfPoints sorted in descending order of turning angle
+// (largest right-hand turn first). The first element is the best candidate.
+std::vector<Point2d> SortByAngle(
+  const std::vector<Point2d> & listOfPoints, const Point2d & current, double prevAngle)
+{
+  std::vector<Point2d> sorted = listOfPoints;
+
+  std::sort(
+    sorted.begin(), sorted.end(), [current, prevAngle](const Point2d & a, const Point2d & b) {
+      // Filter out self-points or degenerate values
+      if (a.x() == current.x() && a.y() == current.y()) return false;
+      if (b.x() == current.x() && b.y() == current.y()) return true;
+
+      const double angleA = computeTurningAngle(prevAngle, current, a);
+      const double angleB = computeTurningAngle(prevAngle, current, b);
+
+      if (!std::isfinite(angleA)) return false;
+      if (!std::isfinite(angleB)) return true;
+
+      return angleA > angleB;  // descending order
+    });
+
+  return sorted;
+}
+
+// allPointsInsidePolygon: returns true if every point in dataset is within the polygon defined by hull.
+bool allPointsInsidePolygon(const std::vector<Point2d>& dataset, const std::vector<Point2d>& hull)
+{
+    typedef bg::model::polygon<Point2d> Polygon;
+    Polygon poly;
+    for (const auto &p : hull)
+    {
+        bg::append(poly.outer(), p);
+    }
+    if (!hull.empty() &&
+        (std::abs(hull.front().x() - hull.back().x()) > 1e-9 ||
+         std::abs(hull.front().y() - hull.back().y()) > 1e-9))
+    {
+        bg::append(poly.outer(), hull.front());
+    }
+    bg::correct(poly);
+    for (const auto &pt : dataset)
+    {
+        if (!bg::within(pt, poly))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// --- Improved concave_hull function ---
+std::vector<Point2d> concave_hull(
+  const std::vector<Point2d>& point_list, const size_t num_of_neighbor)
+{
+  auto dataset = point_list;
+  if (dataset.size() <= 3) {
+    return dataset;
+  }
+
+  // Sort by y then by x to help in duplicate removal and selecting the lowest point.
+  std::sort(dataset.begin(), dataset.end(), [](const Point2d& a, const Point2d& b) {
+    if (a.y() != b.y()) return a.y() < b.y();
+    return a.x() < b.x();
+  });
+
+  const auto check_if_duplicate = [](const Point2d& p1, const Point2d& p2) {
+    constexpr auto threshold = 1e-3;
+    return (p1 - p2).norm() < threshold;
+  };
+  dataset.erase(std::unique(dataset.begin(), dataset.end(), check_if_duplicate), dataset.end());
+
+  // Ensure k is at least 3 and no larger than dataset.size()-1.
+  const auto kk = std::min(std::max(num_of_neighbor, 3UL), dataset.size() - 1);
+
+  // Initialize hull with the first (lowest) point.
+  auto first_point = dataset.front();
+  std::vector<Point2d> hull{first_point};
+  Point2d current_point = first_point;
+  RemovePoint(dataset, first_point);
+  double prev_angle = 0;
+  size_t step = 2; // Step counter (starting at 2 as in pseudocode)
+
+  // Main loop: continue until current_point equals first_point (closing the polygon) or dataset empties.
+  while (!dataset.empty() && (current_point != first_point || step == 2)) {
+
+    // At step 5, reinsert the first_point (to allow closure).
+    if (step == 5) {
+      dataset.push_back(first_point);
+    }
+
+    // Build a KDTree from the current dataset and get k nearest points.
+    lane_departure_checker::KDTree tree(dataset);
+    auto k_nearest_points = tree.kNearest(current_point, kk);
+
+    // Sort the k-nearest candidate points by descending turning angle.
+    auto c_points = SortByAngle(k_nearest_points, current_point, prev_angle);
+
+    bool candidateFound = false;
+    size_t candidateIndex = 0;
+
+    // Iterate over candidates (starting at index 0).
+    for (size_t i = 0; i < c_points.size(); i++) {
+      bool intersects = false; // Reset intersection flag for this candidate.
+      // Determine if candidate equals the first point.
+      auto last_point = (c_points[i] == first_point) ? 1UL : 0UL;
+
+      // Check if the candidate edge (from last hull vertex to candidate) intersects any existing hull edge.
+      // Start with j = 2 (comparing the newest edge with earlier ones).
+      for (size_t j = 2; j < hull.size() - last_point; j++) {
+        // Create segments: current edge from hull[hull.size()-1] to candidate, and an edge from hull[hull.size()-1-j] to hull[hull.size()-j].
+        auto p1 = autoware_utils::to_msg(hull[hull.size()-1].to_3d());
+        auto p2 = autoware_utils::to_msg(c_points[i].to_3d());
+        auto p3 = autoware_utils::to_msg(hull[hull.size()-1 - j].to_3d());
+        auto p4 = autoware_utils::to_msg(hull[hull.size()-j].to_3d());
+        auto intersect = autoware_utils::intersect(p1, p2, p3, p4);
+        if (intersect.has_value()) {
+          intersects = true;
+          break;
+        }
+      }
+      // If no intersections were found for this candidate, select it.
+      if (!intersects) {
+        candidateFound = true;
+        candidateIndex = i;
+        break;
+      }
+    }
+
+    // If no valid candidate was found among the k-nearest, try with a higher k.
+    if (!candidateFound) {
+      return concave_hull(point_list, kk + 1);
+    }
+
+    // Update current_point with the chosen candidate.
+    current_point = c_points[candidateIndex];
+    hull.push_back(current_point);
+
+    // Update previous angle using the last edge added.
+    // (Using the last two points in hull: hull[hull.size()-2] to hull[hull.size()-1])
+    prev_angle = computeCandidateAngle(hull[hull.size()-2], hull[hull.size()-1]);
+    step++;
+
+    // Remove the chosen candidate from the dataset.
+    RemovePoint(dataset, current_point);
+
+    // Check if all remaining points in dataset are inside the current hull.
+    if (!allPointsInsidePolygon(dataset, hull)) {
+      return concave_hull(point_list, kk + 1);
+    }
+  }
+  return hull;
 }
 }  // namespace autoware::lane_departure_checker::utils

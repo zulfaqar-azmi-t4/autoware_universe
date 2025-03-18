@@ -690,6 +690,26 @@ visualization_msgs::msg::MarkerArray LaneDepartureCheckerNode::createMarkerArray
     }
     marker_array.markers.push_back(marker2);
   }
+
+  {
+    const auto color_ok = create_marker_color(0.4, 0.6, 0.7, 0.8);
+
+    auto color = color_ok;
+
+    auto marker = create_default_marker(
+      "map", this->now(), "left_traj", 0, visualization_msgs::msg::Marker::LINE_LIST,
+      create_marker_scale(0.05, 0, 0), color);
+
+      for (size_t i = 0; i < output_.left_traj.size() - 1; ++i) {
+        const auto p1 = output_.left_traj.at(i);
+        const auto p2 = output_.left_traj.at(i + 1);
+
+        marker.points.push_back(autoware_utils::to_msg(p1.to_3d(base_link_z)));
+        marker.points.push_back(autoware_utils::to_msg(p2.to_3d(base_link_z)));
+      }
+
+    marker_array.markers.push_back(marker);
+  }
   return marker_array;
 }
 

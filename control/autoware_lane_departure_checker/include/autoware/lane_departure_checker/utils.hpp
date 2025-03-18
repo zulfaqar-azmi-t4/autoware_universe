@@ -142,6 +142,8 @@ SegmentNodeRtreePair get_route_lanelet_bound_segment(const lanelet::ConstLanelet
 SegmentNodeRtreePair extract_uncrossable_boundaries(
   const lanelet::LaneletMap & lanelet_map,
   const std::vector<std::string> & boundary_types_to_detect);
+std::vector<Point2d> concave_hull(
+                                  const std::vector<Point2d> & point_list, const size_t num_of_neighbor);
 }  // namespace autoware::lane_departure_checker::utils
 
 #endif  // AUTOWARE__LANE_DEPARTURE_CHECKER__UTILS_HPP_

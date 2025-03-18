@@ -27,95 +27,88 @@
 
 namespace autoware::lane_departure_checker
 {
-// Node structure for the kd-tree.
-struct KDNode
-{
+struct KDNode {
   Point2d point;
-  KDNode * left;
-  KDNode * right;
+  std::unique_ptr<KDNode> left;
+  std::unique_ptr<KDNode> right;
   KDNode(const Point2d & pt) : point(pt), left(nullptr), right(nullptr) {}
 };
 
 // Comparator for the max-heap used in k-nearest search.
-// We store pairs (squared_distance, Point2d) and want the largest distance at the top.
-struct ComparePair
-{
-  bool operator()(const std::pair<double, Point2d> & a, const std::pair<double, Point2d> & b) const
-  {
+struct ComparePair {
+  bool operator()(const std::pair<double, Point2d> & a, const std::pair<double, Point2d> & b) const {
     return a.first < b.first;  // larger squared distance has higher priority
   }
 };
 
-class KDTree
-{
+class KDTree {
 public:
-  // Build the kd-tree from a vector of points.
   KDTree() = default;
-  explicit KDTree(const std::vector<Point2d> & points)
-  {
+  explicit KDTree(const std::vector<Point2d> & points) {
     std::vector<Point2d> pts = points;
-    root = build(pts, 0);
+    root = buildIterative(pts);
   }
 
-  ~KDTree() { freeTree(root); }
-
-  // Return the single nearest neighbor (for backward compatibility).
-  Point2d nearest(const Point2d & target)
-  {
+  Point2d nearest(const Point2d & target) {
     Point2d best;
     double bestDist = std::numeric_limits<double>::max();
-    nearestRec(root, target, 0, best, bestDist);
+    nearestRec(root.get(), target, 0, best, bestDist);
     return best;
   }
 
-  // Return the k nearest neighbors to target.
-  std::vector<Point2d> kNearest(const Point2d & target, size_t k)
-  {
-    // Priority queue (max-heap) storing (squared_distance, point).
+  std::vector<Point2d> kNearest(const Point2d & target, size_t k) {
     std::priority_queue<
-      std::pair<double, Point2d>, std::vector<std::pair<double, Point2d>>, ComparePair>
-      best;
-    kNearestRec(root, target, 0, k, best);
+      std::pair<double, Point2d>,
+      std::vector<std::pair<double, Point2d>>,
+      ComparePair
+    > best;
+
+    kNearestRec(root.get(), target, 0, k, best);
+
     std::vector<Point2d> result;
     while (!best.empty()) {
       result.push_back(best.top().second);
       best.pop();
     }
-    // The results are in reverse order (largest distance first), so reverse them.
     std::reverse(result.begin(), result.end());
     return result;
   }
 
 private:
-  KDNode * root;
+  std::unique_ptr<KDNode> root;
 
-  // Recursively build the kd-tree.
-  KDNode * build(std::vector<Point2d> & pts, int depth)
+  std::unique_ptr<KDNode> build(std::vector<Point2d> & pts, int depth)
   {
     if (pts.empty()) return nullptr;
 
-    int axis = depth % 2;  // 0 for x, 1 for y.
+    if (pts.size() == 1) {
+      return std::make_unique<KDNode>(pts[0]);  // base case
+    }
+
+    int axis = depth % 2;
     auto comparator = [axis](const Point2d & a, const Point2d & b) {
       return (axis == 0) ? (a.x() < b.x()) : (a.y() < b.y());
     };
     std::sort(pts.begin(), pts.end(), comparator);
 
     size_t medianIndex = pts.size() / 2;
-    auto * node = new KDNode(pts[medianIndex]);
+    auto node = std::make_unique<KDNode>(pts[medianIndex]);
 
-    // Build left and right subtrees.
-    std::vector<Point2d> leftPts(pts.begin(), pts.begin() + medianIndex);
-    std::vector<Point2d> rightPts(pts.begin() + medianIndex + 1, pts.end());
-    node->left = build(leftPts, depth + 1);
-    node->right = build(rightPts, depth + 1);
+    // ⚠️ Check that you're not creating empty slices in a loop
+    if (medianIndex > 0) {
+      std::vector<Point2d> leftPts(pts.begin(), pts.begin() + medianIndex);
+      node->left = build(leftPts, depth + 1);
+    }
+
+    if (medianIndex + 1 < pts.size()) {
+      std::vector<Point2d> rightPts(pts.begin() + medianIndex + 1, pts.end());
+      node->right = build(rightPts, depth + 1);
+    }
 
     return node;
   }
 
-  // Recursive nearest neighbor search (for a single nearest neighbor).
-  void nearestRec(
-    KDNode * node, const Point2d & target, int depth, Point2d & best, double & bestDist)
-  {
+  void nearestRec(KDNode * node, const Point2d & target, int depth, Point2d & best, double & bestDist) {
     if (!node) return;
 
     double d = distance(node->point, target);
@@ -127,83 +120,135 @@ private:
     int axis = depth % 2;
     KDNode * nextNode = nullptr;
     KDNode * otherNode = nullptr;
-    if (
-      (axis == 0 && target.x() < node->point.x()) || (axis == 1 && target.y() < node->point.y())) {
-      nextNode = node->left;
-      otherNode = node->right;
+    if ((axis == 0 && target.x() < node->point.x()) || (axis == 1 && target.y() < node->point.y())) {
+      nextNode = node->left.get();
+      otherNode = node->right.get();
     } else {
-      nextNode = node->right;
-      otherNode = node->left;
+      nextNode = node->right.get();
+      otherNode = node->left.get();
     }
 
     nearestRec(nextNode, target, depth + 1, best, bestDist);
 
-    double diff =
-      (axis == 0) ? std::abs(target.x() - node->point.x()) : std::abs(target.y() - node->point.y());
+    double diff = (axis == 0) ? std::abs(target.x() - node->point.x()) : std::abs(target.y() - node->point.y());
     if (diff < bestDist) {
       nearestRec(otherNode, target, depth + 1, best, bestDist);
     }
   }
+std::unique_ptr<KDNode> buildIterative(std::vector<Point2d> & pts) {
+  if (pts.empty()) return nullptr;
 
-  // Recursive k-nearest neighbor search.
+  struct WorkItem {
+    std::vector<Point2d> points;
+    int depth;
+    KDNode * parent;
+    bool isLeftChild;
+  };
+
+auto root = std::make_unique<KDNode>(Point2d{});  // dummy root
+
+std::queue<WorkItem> queue;
+queue.push({pts, 0, root.get(), false});
+
+while (!queue.empty()) {
+  auto [points, depth, parent, isLeft] = queue.front();
+  queue.pop();
+
+  if (points.empty()) continue;
+
+  int axis = depth % 2;
+  auto comparator = [axis](const Point2d & a, const Point2d & b) {
+    return (axis == 0) ? (a.x() < b.x()) : (a.y() < b.y());
+  };
+  std::sort(points.begin(), points.end(), comparator);
+  size_t medianIndex = points.size() / 2;
+
+  auto node = std::make_unique<KDNode>(points[medianIndex]);
+  KDNode * nodeRawPtr = node.get();
+
+  // ✅ Instead of *parent = *node
+  if (parent == root.get()) {
+    root->point = node->point;
+    root->left = std::move(node->left);
+    root->right = std::move(node->right);
+    nodeRawPtr = root.get();
+  } else {
+    if (isLeft) {
+      parent->left = std::move(node);
+    } else {
+      parent->right = std::move(node);
+    }
+  }
+
+  if (medianIndex > 0) {
+    std::vector<Point2d> leftPts(points.begin(), points.begin() + medianIndex);
+    queue.push({leftPts, depth + 1, nodeRawPtr, true});
+  }
+
+  if (medianIndex + 1 < points.size()) {
+    std::vector<Point2d> rightPts(points.begin() + medianIndex + 1, points.end());
+    queue.push({rightPts, depth + 1, nodeRawPtr, false});
+  }
+}
+
+  return root;
+}
+
   void kNearestRec(
     KDNode * node, const Point2d & target, int depth, size_t k,
     std::priority_queue<
-      std::pair<double, Point2d>, std::vector<std::pair<double, Point2d>>, ComparePair> & best)
+      std::pair<double, Point2d>,
+      std::vector<std::pair<double, Point2d>>,
+      ComparePair> & best)
   {
     if (!node) return;
 
-    double d2 = squaredDistance(node->point, target);
-    // If we haven't found k points yet, push the current point.
-    if (best.size() < static_cast<size_t>(k)) {
-      best.emplace(d2, node->point);
-    }
-    // Otherwise, if the current point is closer than the worst in the heap, replace it.
-    else if (d2 < best.top().first) {
-      best.pop();
-      best.emplace(d2, node->point);
+    const double d2 = squaredDistance(node->point, target);
+
+    if (!std::isfinite(d2) || !std::isfinite(node->point.x()) || !std::isfinite(node->point.y())) {
+      return;
     }
 
-    int axis = depth % 2;
+    const std::pair<double, Point2d> candidate(d2, node->point);
+
+    if (best.size() < k) {
+      best.push(candidate);
+    } else if (d2 < best.top().first) {
+      best.pop();
+      best.push(candidate);
+    }
+
+    const int axis = depth % 2;
     KDNode * nextNode = nullptr;
     KDNode * otherNode = nullptr;
-    if (
-      (axis == 0 && target.x() < node->point.x()) || (axis == 1 && target.y() < node->point.y())) {
-      nextNode = node->left;
-      otherNode = node->right;
+
+    if ((axis == 0 && target.x() < node->point.x()) || (axis == 1 && target.y() < node->point.y())) {
+      nextNode = node->left.get();
+      otherNode = node->right.get();
     } else {
-      nextNode = node->right;
-      otherNode = node->left;
+      nextNode = node->right.get();
+      otherNode = node->left.get();
     }
 
     kNearestRec(nextNode, target, depth + 1, k, best);
 
-    double diff =
-      (axis == 0) ? std::abs(target.x() - node->point.x()) : std::abs(target.y() - node->point.y());
-    // Check if it's possible that the other side of the split contains a closer point.
+    const double diff = (axis == 0)
+      ? std::abs(target.x() - node->point.x())
+      : std::abs(target.y() - node->point.y());
+
     if (best.size() < k || (diff * diff) < best.top().first) {
       kNearestRec(otherNode, target, depth + 1, k, best);
     }
   }
 
-  // Compute Euclidean distance.
-  double distance(const Point2d & a, const Point2d & b) { return std::sqrt(squaredDistance(a, b)); }
+  double distance(const Point2d & a, const Point2d & b) {
+    return std::sqrt(squaredDistance(a, b));
+  }
 
-  // Compute squared Euclidean distance.
-  double squaredDistance(const Point2d & a, const Point2d & b)
-  {
+  double squaredDistance(const Point2d & a, const Point2d & b) {
     double dx = a.x() - b.x();
     double dy = a.y() - b.y();
     return dx * dx + dy * dy;
-  }
-
-  // Recursively free the kd-tree.
-  void freeTree(KDNode * node)
-  {
-    if (!node) return;
-    freeTree(node->left);
-    freeTree(node->right);
-    delete node;
   }
 };
 }  // namespace autoware::lane_departure_checker
