@@ -16,6 +16,7 @@
 
 #include "autoware/lane_departure_checker/utils.hpp"
 
+#include <autoware/lane_departure_checker/kdtree.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
 #include <autoware_utils/math/normalization.hpp>
 #include <autoware_utils/math/unit_conversion.hpp>
@@ -127,8 +128,7 @@ Projection segment_to_segment_nearest_projection(
 }
 
 std::optional<std::vector<Projection>> predicted_path_to_lane_boundary_dist(
-  const std::vector<Segment2d> & segments1, const std::vector<Segment2d> & segments2,
-  const autoware::lane_departure_checker::SegmentNodeRtree & route_lanelet_rtree)
+  const std::vector<Segment2d> & segments1, const std::vector<Segment2d> & segments2)
 {
   if (segments1.empty() || segments2.empty()) {
     return std::nullopt;
@@ -184,8 +184,10 @@ std::optional<std::vector<Projection>> predicted_path_to_lane_boundary_dist(
           autoware_utils::to_msg(segments2[idx].second.to_3d()));
         if (intersect_with_route) {
           if (
-            autoware_utils::calc_distance2d(seg.second, *intersect_with_route) >
-            autoware_utils::calc_distance2d(seg.second, prev_intersect)) {
+            autoware_utils::calc_distance2d(
+              autoware_utils::to_msg(seg.second.to_3d()), *intersect_with_route) >
+            autoware_utils::calc_distance2d(
+              autoware_utils::to_msg(seg.second.to_3d()), prev_intersect)) {
             prev_intersect = *intersect_with_route;
           }
         }
@@ -583,5 +585,152 @@ autoware_utils::Polygon2d LaneDepartureChecker::toPolygon2D(
   boost::geometry::correct(polygon);
   return polygon;
 }
+void RemovePoint(std::vector<Point2d> & dataset, const Point2d & currentPoint)
+{
+  constexpr double threshold = 1e-3;
+  dataset.erase(
+    std::remove_if(
+      dataset.begin(), dataset.end(),
+      [&currentPoint](const Point2d & p) {
+        return (std::abs(p.x() - currentPoint.x()) < threshold) &&
+               (std::abs(p.y() - currentPoint.y()) < threshold);
+      }),
+    dataset.end());
+}
 
+double normalizeAngle(double angle)
+{
+  const double TWO_PI = 2.0 * M_PI;
+  while (angle < 0) angle += TWO_PI;
+  while (angle >= TWO_PI) angle -= TWO_PI;
+  return angle;
+}
+double computeCandidateAngle(const Point2d & current, const Point2d & candidate)
+{
+  return std::atan2(candidate.y() - current.y(), candidate.x() - current.x());
+}
+double computeTurningAngle(double prevAngle, const Point2d & current, const Point2d & candidate)
+{
+  double candidateAngle = computeCandidateAngle(current, candidate);
+  double diff = prevAngle - candidateAngle;
+  return normalizeAngle(diff);
+}
+
+// SortByAngle: returns the given listOfPoints sorted in descending order of turning angle (largest
+// right-hand turn first).
+std::vector<Point2d> SortByAngle(
+  const std::vector<Point2d> & listOfPoints, const Point2d & current, double prevAngle)
+{
+  std::vector<Point2d> sorted = listOfPoints;
+  std::sort(
+    sorted.begin(), sorted.end(), [current, prevAngle](const Point2d & a, const Point2d & b) {
+      return computeTurningAngle(prevAngle, current, a) >
+             computeTurningAngle(prevAngle, current, b);
+    });
+  return sorted;
+}
+bool allPointsInsidePolygon(const std::vector<Point2d>& dataset, const std::vector<Point2d>& hull)
+{
+    // Define a Boost.Geometry polygon type using Point2d.
+    typedef bg::model::polygon<Point2d> Polygon;
+
+    // Create a polygon from the hull.
+    Polygon poly;
+    // Append all points from the hull into the polygon's outer boundary.
+    for (const auto &p : hull) {
+        bg::append(poly.outer(), p);
+    }
+    // Ensure the polygon is closed: if the first and last points differ, add the first point at the end.
+    if (!hull.empty() &&
+        (std::abs(hull.front().x() - hull.back().x()) > 1e-9 ||
+         std::abs(hull.front().y() - hull.back().y()) > 1e-9))
+    {
+        bg::append(poly.outer(), hull.front());
+    }
+    // Correct the polygon (optional, but ensures validity).
+    bg::correct(poly);
+
+    // Check every point in the dataset.
+    for (const auto &pt : dataset)
+    {
+        if (!bg::within(pt, poly))
+        {
+            return false;  // At least one point is outside.
+        }
+    }
+    return true;  // All points are inside.
+}
+
+std::vector<Point2d> concave_hull(
+  const std::vector<Point2d> & point_list, const size_t num_of_neighbor)
+{
+  auto dataset = point_list;
+  if (dataset.size() <= 3) {
+    return dataset;
+  }
+
+  std::sort(dataset.begin(), dataset.end(), [](const Point2d & a, const Point2d & b) {
+    if (a.y() != b.y()) return a.y() < b.y();
+    return a.x() < b.x();
+  });
+
+  const auto check_if_duplicate = [](const Point2d & p1, const Point2d & p2) {
+    constexpr auto threshold = 1e-3;
+    return (p1 - p2).norm() < threshold;
+  };
+
+  dataset.erase(std::unique(dataset.begin(), dataset.end(), check_if_duplicate), dataset.end());
+  const auto kk = std::min(std::max(num_of_neighbor, 3UL), dataset.size() - 1);
+
+  auto first_point = dataset.front();
+  std::vector<Point2d> hull{first_point};
+  [[maybe_unused]] auto currrent_point = first_point;
+  RemovePoint(dataset, first_point);
+  [[maybe_unused]] double prev_angle = 0;
+  [[maybe_unused]] size_t step = 2;
+
+  auto itr = dataset.begin();
+  while ((itr != dataset.begin() || step == 2UL) && itr != dataset.end()) {
+    if (step == 5UL) {
+      dataset.push_back(first_point);
+    }
+    lane_departure_checker::KDTree tree(dataset);
+    auto k_nearest_points = tree.kNearest(currrent_point, kk);
+
+    auto c_points = SortByAngle(k_nearest_points, currrent_point, prev_angle);
+    bool its{true};
+    size_t i = 0;
+
+    while (its && i < c_points.size()) {
+      ++i;
+      auto last_point = (c_points[i] == first_point) ? 1UL : 0UL;
+      size_t j = 2;
+      while (!its && j < hull.size() - last_point) {
+        auto p1 = autoware_utils::to_msg(hull[step - 1].to_3d());
+        auto p2 = autoware_utils::to_msg(c_points[i].to_3d());
+        auto p3 = autoware_utils::to_msg(hull[step - 1 - j].to_3d());
+        auto p4 = autoware_utils::to_msg(hull[step - j].to_3d());
+        auto intersect = autoware_utils::intersect(p1, p2, p3, p4);
+        its = intersect.has_value();
+        ++j;
+      }
+      if (its) {
+        return concave_hull(point_list, kk + 1);
+      }
+      currrent_point = c_points[i];
+      hull.push_back(currrent_point);
+      prev_angle = computeCandidateAngle(hull[step], hull[step - 1]);
+      step++;
+    }
+    bool all_inside = true;
+    if(all_inside && i > 0){
+      all_inside = allPointsInsidePolygon(dataset, hull);
+      --i;
+    }
+    if(!all_inside){
+      return concave_hull(point_list, kk+1);
+    }
+  }
+  return hull;
+}
 }  // namespace autoware::lane_departure_checker
