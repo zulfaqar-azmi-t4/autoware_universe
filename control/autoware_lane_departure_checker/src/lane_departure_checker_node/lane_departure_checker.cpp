@@ -88,9 +88,17 @@ Output LaneDepartureChecker::update(const Input & input)
       braking_distance);
     output.processing_time_map["resampleTrajectory"] = stop_watch.toc(true);
   }
-  output.vehicle_footprints = utils::createVehicleFootprints(
+  const auto footprints_with_pose = utils::createVehicleFootprints(
     input.current_odom->pose, output.resampled_trajectory, *vehicle_info_ptr_,
     param_.footprint_margin_scale);
+  output.vehicle_footprints = std::invoke([&](){
+    std::vector<LinearRing2d> footprints;
+    footprints.reserve(footprints_with_pose.size());
+    for(const auto & [footprint, pose]:footprints_with_pose){
+      footprints.push_back(footprint);
+    }
+    return footprints;
+  });
   output.processing_time_map["createVehicleFootprints"] = stop_watch.toc(true);
 
   output.vehicle_passing_areas = utils::createVehiclePassingAreas(output.vehicle_footprints);

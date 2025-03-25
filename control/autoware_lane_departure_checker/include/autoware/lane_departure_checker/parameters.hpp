@@ -38,6 +38,7 @@ using autoware_planning_msgs::msg::TrajectoryPoint;
 using autoware_utils::PoseDeviation;
 using TrajectoryPoints = std::vector<TrajectoryPoint>;
 using autoware_utils::LinearRing2d;
+using autoware_utils::Point2d;
 
 struct Param
 {
@@ -96,6 +97,21 @@ struct Output
   std::vector<LinearRing2d> vehicle_footprints{};
   std::vector<LinearRing2d> vehicle_passing_areas{};
 };
+
+struct Projection
+{
+  Point2d orig;
+  Point2d projected;
+  double distance{std::numeric_limits<double>::max()};
+};
+
+template <typename T>
+struct Sides
+{
+  T left;
+  T right;
+};
+
 }  // namespace autoware::lane_departure_checker
 
 #endif  // AUTOWARE__LANE_DEPARTURE_CHECKER__PARAMETERS_HPP_

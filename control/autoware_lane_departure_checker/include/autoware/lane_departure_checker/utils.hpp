@@ -39,6 +39,7 @@ using autoware_utils::LinearRing2d;
 using autoware_utils::MultiPoint2d;
 using autoware_utils::PoseDeviation;
 using TrajectoryPoints = std::vector<TrajectoryPoint>;
+using geometry_msgs::msg::Pose;
 
 /**
  * @brief cut trajectory by length
@@ -65,7 +66,7 @@ TrajectoryPoints resampleTrajectory(const Trajectory & trajectory, const double 
  * @param footprint_margin_scale scale of the footprint margin
  * @return vehicle footprints along the trajectory
  */
-std::vector<LinearRing2d> createVehicleFootprints(
+std::vector<std::pair<LinearRing2d, Pose>> createVehicleFootprints(
   const geometry_msgs::msg::PoseWithCovariance & covariance, const TrajectoryPoints & trajectory,
   const autoware::vehicle_info_utils::VehicleInfo & vehicle_info,
   const double footprint_margin_scale);
