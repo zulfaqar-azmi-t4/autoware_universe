@@ -55,7 +55,6 @@ double calc_distance_to_line(
  * @return true if the ego vehicle is on the left side of the lanelet line, false otherwise
  **/
 bool is_point_left_of_line(const Point & point, const std::vector<Point> & line);
-
 }  // namespace utils
 }  // namespace metrics
 }  // namespace control_diagnostics

@@ -182,7 +182,7 @@ Float64Stamped create_float64_stamped(const rclcpp::Time & now, const float & da
   msg.stamp = now;
   msg.data = data;
   return msg;
-}
+}  // namespace
 }  // namespace
 
 void ObstacleSlowDownModule::init(rclcpp::Node & node, const std::string & module_name)
@@ -689,7 +689,7 @@ std::vector<SlowdownInterval> ObstacleSlowDownModule::plan_slow_down(
     const auto & obstacle = obstacles.at(i);
     const auto prev_output = get_object_from_uuid(prev_slow_down_output_, obstacle.uuid);
 
-    const bool is_obstacle_moving = [&]() -> bool {
+    const bool is_obstacle_moving = std::invoke([&]() -> bool {
       const auto & p = slow_down_planning_param_;
       const auto object_vel_norm = std::hypot(obstacle.velocity, obstacle.lat_velocity);
       if (!prev_output) {
@@ -699,7 +699,7 @@ std::vector<SlowdownInterval> ObstacleSlowDownModule::plan_slow_down(
         return object_vel_norm > p.moving_object_speed_threshold - p.moving_object_hysteresis_range;
       }
       return object_vel_norm > p.moving_object_speed_threshold + p.moving_object_hysteresis_range;
-    }();
+    });
 
     // calculate slow down start distance, and insert slow down velocity
     const auto dist_vec_to_slow_down = calculate_distance_to_slow_down_with_constraints(

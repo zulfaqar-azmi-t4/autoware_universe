@@ -15,7 +15,7 @@
 #ifndef AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__UTILS_HPP_
 #define AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__UTILS_HPP_
 
-#include "autoware/boundary_departure_checker/type_alias.hpp"
+#include "autoware/boundary_departure_checker/parameters.hpp"
 
 #include <geometry_msgs/msg/pose_with_covariance.hpp>
 
@@ -23,10 +23,35 @@
 #include <lanelet2_core/primitives/Lanelet.h>
 #include <lanelet2_core/primitives/Polygon.h>
 
+#include <string>
 #include <vector>
 
 namespace autoware::boundary_departure_checker::utils
 {
+double calc_dist_on_traj(
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const Point2d & point);
+Point2d to_point2d(const Eigen::Matrix<double, 3, 1> & ll_pt);
+
+Segment2d to_segment2d(
+  const Eigen::Matrix<double, 3, 1> & ll_pt1, const Eigen::Matrix<double, 3, 1> & ll_pt2);
+
+DepartureType check_departure_type(
+  const double lateral_dist_m, const Param & param, const SideKey side_key);
+
+std::vector<LinearRing2d> create_vehicle_footprints(
+  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
+  const SteeringReport & current_steering);
+std::vector<LinearRing2d> create_vehicle_footprints(
+  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
+  const FootprintMargin & uncertainty_fp_margin, const LongitudinalConfig & longitudinal_config);
+std::vector<LinearRing2d> create_vehicle_footprints(
+  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
+  const FootprintMargin & margin = {0.0, 0.0});
+
+std::vector<LinearRing2d> create_ego_footprints(
+  const AbnormalityType abnormality_type, const FootprintMargin & uncertainty_fp_margin,
+  const TrajectoryPoints & ego_pred_traj, const SteeringReport & current_steering,
+  const VehicleInfo & vehicle_info, const Param & param);
 /**
  * @brief cut trajectory by length
  * @param trajectory input trajectory
@@ -52,7 +77,7 @@ TrajectoryPoints resampleTrajectory(const Trajectory & trajectory, const double 
  * @param footprint_margin_scale scale of the footprint margin
  * @return vehicle footprints along the trajectory
  */
-std::vector<LinearRing2d> createVehicleFootprints(
+std::vector<std::pair<LinearRing2d, Pose>> createVehicleFootprints(
   const geometry_msgs::msg::PoseWithCovariance & covariance, const TrajectoryPoints & trajectory,
   const VehicleInfo & vehicle_info, const double footprint_margin_scale);
 
@@ -102,6 +127,45 @@ std::vector<LinearRing2d> createVehiclePassingAreas(
  */
 double calcMaxSearchLengthForBoundaries(
   const Trajectory & trajectory, const VehicleInfo & vehicle_info);
+
+UncrossableBoundRTree build_uncrossable_boundaries_rtree(
+  const lanelet::LaneletMap & lanelet_map,
+  const std::vector<std::string> & boundary_types_to_detect);
+
+ProjectionsToBound get_closest_boundary_segments_from_side(
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
+  const BoundarySideWithIdx & boundaries, const EgoSides & ego_sides_from_footprints);
+
+lanelet::BasicPolygon2d toBasicPolygon2D(const LinearRing2d & footprint_hull);
+
+Side<Segment2d> get_footprint_sides(
+  const LinearRing2d & footprint, const bool use_center_right, const bool use_center_left);
+
+LineString2d to_linestring_2d(const Segment2d & segment);
+
+double cross_2d(const Point2d & point, const Segment2d & seg);
+
+bool is_point_left_of_line(const Point2d & point, const Segment2d & seg);
+
+std::vector<lanelet::ConstLineString3d> get_linestrings_near_footprint(
+  const lanelet::LineStringLayer & linestring_layer, const Pose & ego_pose,
+  const double search_distance,
+  const std::vector<std::string> uncrossable_boundary_types = {"road_border"});
+
+FootprintMargin calc_margin_from_covariance(
+  const geometry_msgs::msg::PoseWithCovariance & covariance, const double scale);
+
+EgoSide get_ego_side_from_footprint(
+  const Footprint & footprint, const bool use_center_right = true,
+  const bool use_center_left = true);
+
+EgoSides get_sides_from_footprints(
+  const Footprints & footprints, const bool use_center_right = false,
+  const bool use_center_left = false);
+
+double compute_braking_distance(
+  const double v_init, const double v_end, const double acc, const double jerk,
+  double t_braking_delay);
 }  // namespace autoware::boundary_departure_checker::utils
 
 #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__UTILS_HPP_

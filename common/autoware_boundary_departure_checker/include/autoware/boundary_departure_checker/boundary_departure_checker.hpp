@@ -20,6 +20,7 @@
 #include <autoware_utils/system/time_keeper.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info_utils.hpp>
 #include <rosidl_runtime_cpp/message_initialization.hpp>
+#include <tl_expected/expected.hpp>
 
 #include <autoware_internal_planning_msgs/msg/path_with_lane_id.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -53,7 +54,7 @@ public:
   explicit BoundaryDepartureChecker(
     std::shared_ptr<autoware_utils::TimeKeeper> time_keeper =
       std::make_shared<autoware_utils::TimeKeeper>())
-  : time_keeper_(time_keeper)
+  : time_keeper_(std::move(time_keeper))
   {
   }
 
@@ -63,12 +64,34 @@ public:
       std::make_shared<autoware_utils::TimeKeeper>())
   : param_(param),
     vehicle_info_ptr_(std::make_shared<autoware::vehicle_info_utils::VehicleInfo>(vehicle_info)),
-    time_keeper_(time_keeper)
+    time_keeper_(std::move(time_keeper))
   {
   }
-  Output update(const Input & input);
 
-  void setParam(const Param & param) { param_ = param; }
+  BoundaryDepartureChecker(
+    lanelet::LaneletMapPtr lanelet_map_ptr, const VehicleInfo & vehicle_info,
+    const Param & param = Param{},
+    std::shared_ptr<autoware_utils::TimeKeeper> time_keeper =
+      std::make_shared<autoware_utils::TimeKeeper>());
+
+  tl::expected<AbnormalitiesData, std::string> get_abnormalities_data(
+    const TrajectoryPoints & predicted_traj,
+    const trajectory::Trajectory<TrajectoryPoint> & aw_raw_traj,
+    const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov,
+    const SteeringReport & current_steering);
+
+  tl::expected<BoundarySideWithIdx, std::string> get_boundary_segments_from_side(
+    const EgoSides & ego_sides_from_footprints);
+
+  tl::expected<UncrossableBoundRTree, std::string> build_uncrossable_boundaries_tree(
+    const lanelet::LaneletMapPtr & lanelet_map_ptr);
+
+  tl::expected<std::vector<ProjectionToBound>, std::string> get_closest_projections_to_boundaries(
+    const Abnormalities<ProjectionsToBound> & projections_to_bound, const SideKey side_key);
+
+  tl::expected<Side<std::vector<ProjectionToBound>>, std::string>
+  get_closest_projections_to_boundaries(
+    const Abnormalities<ProjectionsToBound> & projections_to_bound);
 
   bool checkPathWillLeaveLane(
     const lanelet::ConstLanelets & lanelets, const PathWithLaneId & path) const;
@@ -102,7 +125,10 @@ public:
 
 private:
   Param param_;
-  std::shared_ptr<autoware::vehicle_info_utils::VehicleInfo> vehicle_info_ptr_;
+  lanelet::LaneletMapPtr lanelet_map_ptr_;
+  std::unique_ptr<Param> param_ptr_;
+  std::shared_ptr<VehicleInfo> vehicle_info_ptr_;
+  std::unique_ptr<UncrossableBoundRTree> uncrossable_boundaries_rtree_ptr_;
 
   bool willLeaveLane(
     const lanelet::ConstLanelets & candidate_lanelets,
@@ -112,14 +138,12 @@ private:
     const lanelet::LaneletMap & lanelet_map, const geometry_msgs::msg::Point & ego_point,
     const double max_search_length, const std::vector<std::string> & boundary_types_to_detect);
 
-  bool willCrossBoundary(
-    const std::vector<LinearRing2d> & vehicle_footprints,
-    const SegmentRtree & uncrossable_segments) const;
-
-  lanelet::BasicPolygon2d toBasicPolygon2D(const LinearRing2d & footprint_hull) const;
   autoware_utils::Polygon2d toPolygon2D(const lanelet::BasicPolygon2d & poly) const;
 
   mutable std::shared_ptr<autoware_utils::TimeKeeper> time_keeper_;
+
+  Footprint get_ego_footprints(
+    const AbnormalityType abnormality_type, const FootprintMargin uncertainty_fp_margin);
 };
 }  // namespace autoware::boundary_departure_checker
 

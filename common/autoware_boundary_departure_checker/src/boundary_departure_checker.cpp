@@ -16,17 +16,25 @@
 
 #include "autoware/boundary_departure_checker/utils.hpp"
 
+#include <autoware/trajectory/trajectory_point.hpp>
+#include <autoware/trajectory/utils/closest.hpp>
 #include <autoware_utils/math/normalization.hpp>
 #include <autoware_utils/math/unit_conversion.hpp>
 #include <autoware_utils/system/stop_watch.hpp>
+#include <range/v3/algorithm.hpp>
+#include <range/v3/view.hpp>
+#include <tl_expected/expected.hpp>
 
 #include <boost/geometry.hpp>
 
+#include <fmt/format.h>
 #include <lanelet2_core/geometry/Polygon.h>
 #include <tf2/utils.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -37,81 +45,298 @@ using TrajectoryPoints = std::vector<TrajectoryPoint>;
 using autoware_utils::Point2d;
 using geometry_msgs::msg::Point;
 
-double calcBrakingDistance(
-  const double abs_velocity, const double max_deceleration, const double delay_time)
-{
-  return (abs_velocity * abs_velocity) / (2.0 * max_deceleration) + delay_time * abs_velocity;
-}
-
 bool isInAnyLane(const lanelet::ConstLanelets & candidate_lanelets, const Point2d & point)
 {
-  for (const auto & ll : candidate_lanelets) {
-    if (boost::geometry::within(point, ll.polygon2d().basicPolygon())) {
-      return true;
-    }
-  }
-
-  return false;
+  return std::any_of(
+    candidate_lanelets.begin(), candidate_lanelets.end(), [&](const lanelet::ConstLanelet & ll) {
+      return boost::geometry::within(point, ll.polygon2d().basicPolygon());
+    });
 }
 
 }  // namespace
 
 namespace autoware::boundary_departure_checker
 {
-Output BoundaryDepartureChecker::update(const Input & input)
+BoundaryDepartureChecker::BoundaryDepartureChecker(
+  lanelet::LaneletMapPtr lanelet_map_ptr, const VehicleInfo & vehicle_info, const Param & param,
+  std::shared_ptr<autoware_utils::TimeKeeper> time_keeper)
+: lanelet_map_ptr_(lanelet_map_ptr),
+  param_ptr_(std::make_unique<Param>(param)),
+  vehicle_info_ptr_(std::make_shared<VehicleInfo>(vehicle_info)),
+  time_keeper_(std::move(time_keeper))
 {
-  Output output{};
+  auto try_uncrossable_boundaries_rtree = build_uncrossable_boundaries_tree(lanelet_map_ptr);
 
-  autoware_utils::StopWatch<std::chrono::milliseconds> stop_watch;
-
-  {
-    constexpr double min_velocity = 0.01;
-    const auto & raw_abs_velocity = std::abs(input.current_odom->twist.twist.linear.x);
-    const auto abs_velocity = raw_abs_velocity < min_velocity ? 0.0 : raw_abs_velocity;
-
-    const auto braking_distance = std::max(
-      param_.min_braking_distance,
-      calcBrakingDistance(abs_velocity, param_.max_deceleration, param_.delay_time));
-
-    output.resampled_trajectory = utils::cutTrajectory(
-      utils::resampleTrajectory(*input.predicted_trajectory, param_.resample_interval),
-      braking_distance);
-    output.processing_time_map["resampleTrajectory"] = stop_watch.toc(true);
+  if (!try_uncrossable_boundaries_rtree) {
+    throw std::runtime_error(try_uncrossable_boundaries_rtree.error());
   }
-  output.vehicle_footprints = utils::createVehicleFootprints(
-    input.current_odom->pose, output.resampled_trajectory, *vehicle_info_ptr_,
-    param_.footprint_margin_scale);
-  output.processing_time_map["createVehicleFootprints"] = stop_watch.toc(true);
 
-  output.vehicle_passing_areas = utils::createVehiclePassingAreas(output.vehicle_footprints);
-  output.processing_time_map["createVehiclePassingAreas"] = stop_watch.toc(true);
+  uncrossable_boundaries_rtree_ptr_ =
+    std::make_unique<UncrossableBoundRTree>(*try_uncrossable_boundaries_rtree);
+}
 
-  const auto candidate_road_lanelets =
-    utils::getCandidateLanelets(input.route_lanelets, output.vehicle_footprints);
-  const auto candidate_shoulder_lanelets =
-    utils::getCandidateLanelets(input.shoulder_lanelets, output.vehicle_footprints);
-  output.candidate_lanelets = candidate_road_lanelets;
-  output.candidate_lanelets.insert(
-    output.candidate_lanelets.end(), candidate_shoulder_lanelets.begin(),
-    candidate_shoulder_lanelets.end());
+tl::expected<AbnormalitiesData, std::string> BoundaryDepartureChecker::get_abnormalities_data(
+  const TrajectoryPoints & predicted_traj,
+  const trajectory::Trajectory<TrajectoryPoint> & aw_raw_traj,
+  const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov,
+  const SteeringReport & current_steering)
+{
+  if (predicted_traj.empty()) {
+    return tl::make_unexpected("Ego predicted trajectory is empty");
+  }
 
-  output.processing_time_map["getCandidateLanelets"] = stop_watch.toc(true);
+  const auto underlying_bases = aw_raw_traj.get_underlying_bases();
+  if (underlying_bases.size() < 4) {
+    return tl::make_unexpected("trajectory too short");
+  }
 
-  output.will_leave_lane = willLeaveLane(output.candidate_lanelets, output.vehicle_footprints);
-  output.processing_time_map["willLeaveLane"] = stop_watch.toc(true);
+  const auto uncertainty_fp_margin =
+    utils::calc_margin_from_covariance(curr_pose_with_cov, param_ptr_->footprint_extra_margin);
 
-  output.is_out_of_lane = isOutOfLane(output.candidate_lanelets, output.vehicle_footprints.front());
-  output.processing_time_map["isOutOfLane"] = stop_watch.toc(true);
+  AbnormalitiesData abnormalities_data;
+  for (const auto abnormality_type : param_ptr_->abnormality_types_to_compensate) {
+    auto & fps = abnormalities_data.footprints[abnormality_type];
+    fps = utils::create_ego_footprints(
+      abnormality_type, uncertainty_fp_margin, predicted_traj, current_steering, *vehicle_info_ptr_,
+      *param_ptr_);
 
-  const double max_search_length_for_boundaries =
-    utils::calcMaxSearchLengthForBoundaries(*input.predicted_trajectory, *vehicle_info_ptr_);
-  const auto uncrossable_boundaries = extractUncrossableBoundaries(
-    *input.lanelet_map, input.predicted_trajectory->points.front().pose.position,
-    max_search_length_for_boundaries, input.boundary_types_to_detect);
-  output.will_cross_boundary = willCrossBoundary(output.vehicle_footprints, uncrossable_boundaries);
-  output.processing_time_map["willCrossBoundary"] = stop_watch.toc(true);
+    abnormalities_data.footprints_sides[abnormality_type] = utils::get_sides_from_footprints(fps);
+    fmt::print(
+      "Footprints for abnormality type {} fps size {}\n", magic_enum::enum_name(abnormality_type),
+      fps.size());
+  }
 
-  return output;
+  const auto & normal_footprints = abnormalities_data.footprints_sides[AbnormalityType::NORMAL];
+
+  const auto boundary_segments_opt = get_boundary_segments_from_side(normal_footprints);
+
+  if (!boundary_segments_opt) {
+    return tl::make_unexpected(boundary_segments_opt.error());
+  }
+  abnormalities_data.boundary_segments = *boundary_segments_opt;
+
+  const auto is_between_bound_th = [this](const double lat_dist, const SideKey side_key) {
+    return lat_dist >= param_ptr_->th_trigger.th_dist_to_boundary_m[side_key].min &&
+           lat_dist <= param_ptr_->th_trigger.th_dist_to_boundary_m[side_key].max;
+  };
+
+  const auto func_name = __func__;
+  for (const auto abnormality_type : param_ptr_->abnormality_types_to_compensate) {
+    auto & proj_to_bound = abnormalities_data.projections_to_bound[abnormality_type];
+    proj_to_bound = utils::get_closest_boundary_segments_from_side(
+      aw_raw_traj, abnormalities_data.boundary_segments,
+      abnormalities_data.footprints_sides[abnormality_type]);
+    for (const auto side_key : g_side_keys) {
+      fmt::print(
+        "Projection to bound for abnormality type {} side {} size is {}\n",
+        magic_enum::enum_name(abnormality_type), magic_enum::enum_name(side_key),
+        proj_to_bound[side_key].size());
+      const auto itr_critical = std::find_if(
+        proj_to_bound[side_key].begin(), proj_to_bound[side_key].end(),
+        [](const ProjectionToBound & pt) {
+          return pt.departure_type == DepartureType::CRITICAL_DEPARTURE;
+        });
+      if (itr_critical == proj_to_bound[side_key].end()) {
+        std::for_each(
+          proj_to_bound[side_key].begin(), proj_to_bound[side_key].end(),
+          [&](ProjectionToBound & proj) {
+            if (is_between_bound_th(proj.lat_dist, side_key)) {
+              proj.departure_type = DepartureType::NEAR_BOUNDARY;
+              fmt::print("In {}, found near boundary\n", func_name);
+              proj.lon_dist_on_ref_traj = utils::calc_dist_on_traj(aw_raw_traj, proj.pt_on_ego);
+            }
+          });
+        continue;
+      }
+      fmt::print("In {}, found critical departure\n", __func__);
+      std::for_each(proj_to_bound[side_key].begin(), itr_critical, [&](ProjectionToBound & proj) {
+        const auto dist_to_crit = itr_critical->lon_dist_on_ref_traj;
+        proj.lon_dist_on_ref_traj = utils::calc_dist_on_traj(aw_raw_traj, proj.pt_on_ego);
+        const auto braking_dist = utils::compute_braking_distance(
+          param_ptr_->th_trigger.max_slow_down_vel_mps, 0.0, param_ptr_->th_trigger.th_acc_mps2.max,
+          param_ptr_->th_trigger.th_jerk_mps3.max, param_ptr_->th_trigger.brake_delay_s);
+        const auto dist_to_start_braking = dist_to_crit - braking_dist;
+
+        if (proj.lon_dist_on_ref_traj < dist_to_start_braking) {
+          proj.departure_type = DepartureType::APPROACHING_DEPARTURE;
+          fmt::print("In {}, found approaching departure\n", func_name);
+        } else if (is_between_bound_th(proj.lat_dist, side_key)) {
+          proj.departure_type = DepartureType::NEAR_BOUNDARY;
+          fmt::print("In {}, found near boundary\n", func_name);
+        }
+      });
+    }
+  }
+  return abnormalities_data;
+}
+
+tl::expected<BoundarySideWithIdx, std::string>
+BoundaryDepartureChecker::get_boundary_segments_from_side(
+  const EgoSides & ego_sides_from_footprints)
+{
+  if (!lanelet_map_ptr_) {
+    return tl::make_unexpected(std::string(__func__) + ": invalid lanelet_map_ptr");
+  }
+
+  if (!uncrossable_boundaries_rtree_ptr_) {
+    return tl::make_unexpected(std::string(__func__) + ": invalid uncrossable boundaries rtree");
+  }
+
+  if (!param_ptr_) {
+    return tl::make_unexpected(std::string(__func__) + ": invalid param_ptr");
+  }
+
+  const auto max_lat_query_num = param_ptr_->th_max_lateral_query_num;
+
+  const auto & rtree = *uncrossable_boundaries_rtree_ptr_;
+  const auto & linestring_layer = lanelet_map_ptr_->lineStringLayer;
+
+  const auto closest_segment =
+    [&](const auto & ego_seg, const auto & compare_seg, auto & output_side) {
+      std::vector<SegmentWithIdx> nearest_raw;
+
+      const lanelet::BasicPoint2d ego_start{ego_seg.first.x(), ego_seg.first.y()};
+      rtree.query(bgi::nearest(ego_start, max_lat_query_num), std::back_inserter(nearest_raw));
+
+      for (const auto & nearest : nearest_raw) {
+        const auto ll_id = std::get<1>(nearest);
+        const auto basic_ls = linestring_layer.get(ll_id).basicLineString();
+
+        const auto idx_curr = std::get<2>(nearest);
+        const auto idx_next = std::get<3>(nearest);
+        const auto seg = utils::to_segment2d(basic_ls.at(idx_curr), basic_ls.at(idx_next));
+
+        const auto dist_from_curr_side = bg::comparable_distance(ego_seg, seg);
+        const auto dist_from_compare_side = bg::comparable_distance(compare_seg, seg);
+
+        if (dist_from_compare_side < dist_from_curr_side) {
+          continue;
+        }
+
+        const auto found = [&](const SegmentWithIdx & output_seg) {
+          const auto & [out_seg, out_ll_id, out_ls_idx_curr, out_ls_idx_next] = output_seg;
+          return out_ll_id == ll_id && out_ls_idx_curr == idx_curr;
+        };
+
+        if (!std::any_of(output_side.begin(), output_side.end(), found)) {
+          output_side.push_back(std::make_tuple(seg, ll_id, idx_curr, idx_next));
+        }
+      }
+    };
+
+  BoundarySideWithIdx boundary_sides_with_idx;
+  for (const auto & fp : ego_sides_from_footprints) {
+    closest_segment(fp.left, fp.right, boundary_sides_with_idx.left);   // Left side
+    closest_segment(fp.right, fp.left, boundary_sides_with_idx.right);  // Right side
+  }
+
+  return boundary_sides_with_idx;
+}
+
+tl::expected<std::vector<ProjectionToBound>, std::string>
+BoundaryDepartureChecker::get_closest_projections_to_boundaries(
+  const Abnormalities<ProjectionsToBound> & projections_to_bound, const SideKey side_key)
+{
+  const auto & abnormality_to_check = param_ptr_->abnormality_types_to_compensate;
+
+  if (abnormality_to_check.empty()) {
+    return tl::make_unexpected(std::string(__func__) + ": Nothing to check.");
+  }
+
+  const auto is_empty = std::any_of(
+    abnormality_to_check.begin(), abnormality_to_check.end(),
+    [&projections_to_bound, &side_key](const auto abnormality_type) {
+      return projections_to_bound[abnormality_type][side_key].empty();
+    });
+
+  if (is_empty) {
+    return tl::make_unexpected(std::string(__func__) + ": projections to bound is empty.");
+  }
+
+  if (abnormality_to_check.size() == 1) {
+    return projections_to_bound[abnormality_to_check.front()][side_key];
+  }
+
+  const auto & fr_proj_to_bound = projections_to_bound[abnormality_to_check.front()][side_key];
+
+  const auto check_size = [&](const auto abnormality_type) {
+    return fr_proj_to_bound.size() != projections_to_bound[abnormality_type][side_key].size();
+  };
+
+  const auto has_size_diff =
+    std::any_of(std::next(abnormality_to_check.begin()), abnormality_to_check.end(), check_size);
+
+  if (has_size_diff) {
+    return tl::make_unexpected(
+      std::string(__func__) + ": Some abnormality type has incorrect size.");
+  }
+
+  std::vector<ProjectionToBound> min_to_bound;
+
+  const auto fp_size = projections_to_bound[abnormality_to_check.front()][side_key].size();
+  min_to_bound.reserve(fp_size);
+  for (size_t idx = 0; idx < fp_size; ++idx) {
+    std::unique_ptr<ProjectionToBound> min_pt;
+    for (const auto abnormality_type : abnormality_to_check) {
+      const auto pt = projections_to_bound[abnormality_type][side_key][idx];
+      if (pt.ego_sides_idx != idx) {
+        continue;
+      }
+
+      if (pt.departure_type == DepartureType::NONE || pt.departure_type == DepartureType::UNKNOWN) {
+        continue;
+      }
+
+      if (!min_pt || pt.lat_dist < min_pt->lat_dist) {
+        min_pt = std::make_unique<ProjectionToBound>(pt);
+      }
+    }
+    if (!min_pt) {
+      continue;
+    }
+    min_to_bound.push_back(*min_pt);
+    if (min_pt->departure_type == DepartureType::CRITICAL_DEPARTURE) {
+      break;
+    }
+  }
+
+  return min_to_bound;
+}
+
+tl::expected<Side<std::vector<ProjectionToBound>>, std::string>
+BoundaryDepartureChecker::get_closest_projections_to_boundaries(
+  const Abnormalities<ProjectionsToBound> & projections_to_bound)
+{
+  Side<std::vector<ProjectionToBound>> min_to_bound;
+
+  for (const auto side_key : g_side_keys) {
+    const auto min_to_bound_opt =
+      get_closest_projections_to_boundaries(projections_to_bound, side_key);
+
+    if (!min_to_bound_opt) {
+      return tl::make_unexpected(min_to_bound_opt.error());
+    }
+    min_to_bound[side_key] = *min_to_bound_opt;
+  }
+
+  return min_to_bound;
+}
+
+tl::expected<UncrossableBoundRTree, std::string>
+BoundaryDepartureChecker::build_uncrossable_boundaries_tree(
+  const lanelet::LaneletMapPtr & lanelet_map_ptr)
+{
+  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
+  if (!lanelet_map_ptr) {
+    return tl::unexpected(std::string("lanelet_map_ptr is null"));
+  }
+
+  if (!param_ptr_) {
+    return tl::unexpected(std::string("param_ptr is null"));
+  }
+
+  return utils::build_uncrossable_boundaries_rtree(
+    *lanelet_map_ptr, param_ptr_->boundary_types_to_detect);
 }
 
 bool BoundaryDepartureChecker::checkPathWillLeaveLane(
@@ -151,7 +376,7 @@ std::vector<std::pair<double, lanelet::Lanelet>> BoundaryDepartureChecker::getLa
     utils::createVehicleFootprints(path, *vehicle_info_ptr_, param_.footprint_extra_margin);
   LinearRing2d footprint_hull = utils::createHullFromFootprints(vehicle_footprints);
 
-  lanelet::BasicPolygon2d footprint_hull_basic_polygon = toBasicPolygon2D(footprint_hull);
+  lanelet::BasicPolygon2d footprint_hull_basic_polygon = utils::toBasicPolygon2D(footprint_hull);
 
   // Find all lanelets that intersect the footprint hull
   return lanelet::geometry::findWithin2d(
@@ -350,34 +575,6 @@ SegmentRtree BoundaryDepartureChecker::extractUncrossableBoundaries(
   return uncrossable_segments_in_range;
 }
 
-bool BoundaryDepartureChecker::willCrossBoundary(
-  const std::vector<LinearRing2d> & vehicle_footprints,
-  const SegmentRtree & uncrossable_segments) const
-{
-  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
-
-  for (const auto & footprint : vehicle_footprints) {
-    std::vector<Segment2d> intersection_result;
-    uncrossable_segments.query(
-      boost::geometry::index::intersects(footprint), std::back_inserter(intersection_result));
-    if (!intersection_result.empty()) {
-      return true;
-    }
-  }
-  return false;
-}
-
-lanelet::BasicPolygon2d BoundaryDepartureChecker::toBasicPolygon2D(
-  const LinearRing2d & footprint_hull) const
-{
-  lanelet::BasicPolygon2d basic_polygon;
-  for (const auto & point : footprint_hull) {
-    Eigen::Vector2d p(point.x(), point.y());
-    basic_polygon.push_back(p);
-  }
-  return basic_polygon;
-}
-
 autoware_utils::Polygon2d BoundaryDepartureChecker::toPolygon2D(
   const lanelet::BasicPolygon2d & poly) const
 {
@@ -391,5 +588,4 @@ autoware_utils::Polygon2d BoundaryDepartureChecker::toPolygon2D(
   boost::geometry::correct(polygon);
   return polygon;
 }
-
 }  // namespace autoware::boundary_departure_checker
