@@ -18,18 +18,97 @@
 #include "autoware/boundary_departure_checker/type_alias.hpp"
 
 #include <autoware_utils/geometry/boost_geometry.hpp>
+#include <autoware_utils/geometry/geometry.hpp>
 #include <autoware_utils/geometry/pose_deviation.hpp>
+#include <autoware_utils/ros/uuid_helper.hpp>
+#include <autoware_utils/system/stop_watch.hpp>
 
 #include <nav_msgs/msg/odometry.hpp>
+
+#include <boost/geometry/geometry.hpp>
 
 #include <lanelet2_core/LaneletMap.h>
 
 #include <map>
+#include <optional>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace autoware::boundary_departure_checker
 {
+struct Projection
+{
+  Point2d orig;
+  Point2d proj;
+  double dist{std::numeric_limits<double>::max()};
+};
+
+template <typename T>
+struct Side
+{
+  T left;
+  T right;
+};
+
+template <typename T>
+struct SideExt : Side<T>
+{
+  Pose pose;
+  double dist_from_start{0.0};
+};
+
+struct ProjectionWithSegment
+{
+  Projection projection;
+  Segment2d nearest_segment;
+  size_t idx_from_ego_sides_from_footprints{0};
+  ProjectionWithSegment() = default;
+  ProjectionWithSegment(Projection proj, Segment2d seg, size_t idx)
+  : projection(std::move(proj)),
+    nearest_segment(std::move(seg)),
+    idx_from_ego_sides_from_footprints(idx)
+  {
+  }
+};
+
+enum class DepartureType {
+  NONE = 0,
+  NEAR_BOUNDARY,
+  APPROACHING_DEPARTURE,
+  CRITICAL_DEPARTURE,
+  UNKNOWN
+};
+using SideProjOpt = Side<std::optional<Projection>>;
+using BoundarySide = Side<std::vector<Segment2d>>;
+using BoundarySideWithIdx = Side<std::vector<SegmentWithIdx>>;
+using SideToBoundPojections = Side<std::vector<ProjectionWithSegment>>;
+using EgoSide = SideExt<Segment2d>;
+using EgoSides = std::vector<EgoSide>;
+
+struct DeparturePoint
+{
+  DepartureType type = DepartureType::NONE;
+  double velocity{0.0};
+  double lifetime{0.0};
+  double th_dist_hysteresis{2.0};
+  double th_lifetime{1.0};
+  Point2d point;
+
+  [[nodiscard]] bool is_nearby(const Pose & pose) const { return is_nearby(pose.position); }
+
+  [[nodiscard]] bool is_nearby(const Point & point) const { return is_nearby({point.x, point.y}); }
+
+  [[nodiscard]] bool is_nearby(const Point2d & candidate_point) const
+  {
+    const auto diff = boost::geometry::distance(point, candidate_point);
+    return diff < th_dist_hysteresis;
+  }
+
+  [[nodiscard]] bool is_alive() const { return lifetime <= th_lifetime; }
+};
+using DeparturePoints = std::unordered_map<std::string, DeparturePoint>;
 struct Param
 {
   double footprint_margin_scale{};
@@ -53,18 +132,6 @@ struct Input
   Trajectory::ConstSharedPtr reference_trajectory;
   Trajectory::ConstSharedPtr predicted_trajectory;
   std::vector<std::string> boundary_types_to_detect;
-};
-
-struct Output
-{
-  std::map<std::string, double> processing_time_map;
-  bool will_leave_lane{};
-  bool is_out_of_lane{};
-  bool will_cross_boundary{};
-  lanelet::ConstLanelets candidate_lanelets;
-  TrajectoryPoints resampled_trajectory;
-  std::vector<LinearRing2d> vehicle_footprints;
-  std::vector<LinearRing2d> vehicle_passing_areas;
 };
 }  // namespace autoware::boundary_departure_checker
 
