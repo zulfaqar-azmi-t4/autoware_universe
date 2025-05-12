@@ -66,20 +66,12 @@ struct PredictedPathFootprint
   double resample_interval_m{0.3};
 };
 
-struct FootprintMargin
-{
-  double lon;
-  double lat;
-};
-
 using DepartureTypeIdx = std::pair<DepartureType, size_t>;
 using DepartureTypeesIdx = Side<std::vector<DepartureTypeIdx>>;
-using FootprintWithPose = std::vector<std::pair<LinearRing2d, Pose>>;
 
 struct Output
 {
   std::unordered_map<std::string, double> processing_time_map;
-  FootprintWithPose fp_with_pose;
   EgoSides ego_sides_from_footprints;
   BoundarySideWithIdx boundary_segments;
   SideToBoundPojections side_to_bound_projections;

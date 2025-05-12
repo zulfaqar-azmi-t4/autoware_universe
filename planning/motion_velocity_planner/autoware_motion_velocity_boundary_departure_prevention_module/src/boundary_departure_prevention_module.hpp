@@ -24,6 +24,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <tl_expected/expected.hpp>
 
 namespace autoware::motion_velocity_planner
 {
@@ -41,7 +42,7 @@ public:
 private:
   void subscribe_topics(rclcpp::Node & node);
   void publish_topics(rclcpp::Node & node);
-  std::optional<param::Output> plan(
+  tl::expected<param::Output, std::string> plan(
     const PoseWithCovariance & pose_with_covariance, const double abs_velocity,
     const TrajectoryPoints & ego_pred_traj, const vehicle_info_utils::VehicleInfo & vehicle_info,
     const double footprint_margin_scale, const lanelet::LineStringLayer & ls_layer);
@@ -76,7 +77,6 @@ private:
   rclcpp::Subscription<Trajectory>::SharedPtr sub_ego_pred_traj_;
   rclcpp::Subscription<OperationModeState>::SharedPtr sub_op_mode_state_;
   std::unique_ptr<BoundaryDepartureChecker> boundary_departure_checker_ptr_;
-  std::unique_ptr<UncrossableBoundRTree> uncrossable_boundaries_rtree_ptr_;
 
   std::unique_ptr<diagnostic_updater::Updater> updater_ptr_;
 };

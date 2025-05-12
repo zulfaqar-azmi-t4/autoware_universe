@@ -17,6 +17,7 @@
 
 #include <autoware/boundary_departure_checker/boundary_departure_checker.hpp>
 #include <autoware/boundary_departure_checker/parameters.hpp>
+#include <autoware/boundary_departure_checker/utils.hpp>
 #include <autoware/motion_utils/marker/virtual_wall_marker_creator.hpp>
 #include <autoware/trajectory/trajectory_point.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
@@ -78,9 +79,10 @@ using boundary_departure_checker::ProjectionWithSegment;  // NOLINT
 using boundary_departure_checker::UncrossableBoundRTree;  // NOLINT
 using vehicle_info_utils::VehicleInfo;                    // NOLINT
 
-using boundary_departure_checker::DepartureType;                                    // NOLINT
-using boundary_departure_checker::Side;                                             // NOLINT
-using BoundaryDepartureChecker = boundary_departure_checker::LaneDepartureChecker;  // NOLINT
+using boundary_departure_checker::DepartureType;                                        // NOLINT
+using boundary_departure_checker::Side;                                                 // NOLINT
+using BoundaryDepartureChecker = boundary_departure_checker::BoundaryDepartureChecker;  // NOLINT
+namespace bdc_utils = boundary_departure_checker::utils;                                // NOLINT
 }  // namespace autoware::motion_velocity_planner
 
 #endif  // TYPE_ALIAS_HPP_

@@ -29,6 +29,10 @@
 
 namespace autoware::boundary_departure_checker::utils
 {
+
+std::vector<LinearRing2d> create_vehicle_footprints(
+  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
+  const FootprintMargin & margin);
 /**
  * @brief cut trajectory by length
  * @param trajectory input trajectory
@@ -131,6 +135,11 @@ std::vector<lanelet::ConstLineString3d> get_linestrings_near_footprint(
   const lanelet::LineStringLayer & linestring_layer, const Pose & ego_pose,
   const double search_distance,
   const std::vector<std::string> uncrossable_boundary_types = {"road_border"});
+
+FootprintMargin calc_extra_margin_from_pose_covariance(
+  const geometry_msgs::msg::PoseWithCovariance & covariance, const double scale);
+
+EgoSides get_ego_sides_from_footprints(const FootprintWithPose & footprints_with_pose);
 }  // namespace autoware::boundary_departure_checker::utils
 
 #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__UTILS_HPP_

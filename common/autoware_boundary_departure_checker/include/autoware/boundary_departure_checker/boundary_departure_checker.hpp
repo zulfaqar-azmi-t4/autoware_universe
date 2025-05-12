@@ -20,6 +20,7 @@
 #include <autoware_utils/system/time_keeper.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info_utils.hpp>
 #include <rosidl_runtime_cpp/message_initialization.hpp>
+#include <tl_expected/expected.hpp>
 
 #include <autoware_internal_planning_msgs/msg/path_with_lane_id.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -67,15 +68,19 @@ public:
   {
   }
 
-  LaneDepartureChecker(
-    const std::vector<std::string> & uncrossable_boundary_types,
-    const lanelet::LaneletMapPtr & lanelet_map_ptr, const VehicleInfo & vehicle_info,
-    std::unique_ptr<Param> param_ptr = std::make_unique<Param>(),
+  BoundaryDepartureChecker(
+    std::vector<std::string> uncrossable_boundary_types, lanelet::LaneletMapPtr lanelet_map_ptr,
+    const VehicleInfo & vehicle_info, std::unique_ptr<Param> param_ptr = std::make_unique<Param>(),
     std::shared_ptr<autoware_utils::TimeKeeper> time_keeper =
       std::make_shared<autoware_utils::TimeKeeper>());
 
-  [[nodiscard]] bool build_uncrossable_boundaries_tree(
+  tl::expected<UncrossableBoundRTree, std::string> build_uncrossable_boundaries_tree(
     const lanelet::LaneletMapPtr & lanelet_map_ptr);
+
+  tl::expected<BDCData, std::string> get_projections_to_closest_uncrossable_boundaries(
+    const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov,
+    const TrajectoryPoints & ego_pred_traj, const double uncertainty_fp_margin_scale,
+    const int max_nearest_boundary_query_num);
 
   void setParam(const Param & param) { param_ = param; }
 
@@ -111,10 +116,12 @@ public:
 
 private:
   Param param_;
+  lanelet::LaneletMapPtr lanelet_map_ptr_;
   std::unique_ptr<Param> param_ptr_;
   std::shared_ptr<VehicleInfo> vehicle_info_ptr_;
   std::vector<std::string> uncrossable_boundary_types_;
   std::unique_ptr<UncrossableBoundRTree> uncrossable_boundaries_rtree_ptr_;
+  BDCData bdc_data_;
 
   bool willLeaveLane(
     const lanelet::ConstLanelets & candidate_lanelets,

@@ -21,7 +21,7 @@
 
 namespace autoware::motion_velocity_planner::utils
 {
-param::FootprintWithPose create_vehicle_footprints(
+std::vector<LinearRing2d> create_vehicle_footprints(
   const geometry_msgs::msg::PoseWithCovariance & covariance, const TrajectoryPoints & trajectory,
   const VehicleInfo & vehicle_info, const double footprint_margin_scale);
 

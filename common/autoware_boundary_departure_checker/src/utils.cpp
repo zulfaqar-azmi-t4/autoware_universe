@@ -27,35 +27,6 @@
 
 namespace
 {
-struct FootprintMargin
-{
-  double lon;
-  double lat;
-};
-
-FootprintMargin calcFootprintMargin(
-  const geometry_msgs::msg::PoseWithCovariance & covariance, const double scale)
-{
-  const auto cov_in_map = covariance.covariance;
-  Eigen::Matrix2d cov_xy_map;
-  cov_xy_map << cov_in_map[0 * 6 + 0], cov_in_map[0 * 6 + 1], cov_in_map[1 * 6 + 0],
-    cov_in_map[1 * 6 + 1];
-
-  const double yaw_vehicle = tf2::getYaw(covariance.pose.orientation);
-
-  // To get a position in a transformed coordinate, rotate the inverse direction
-  Eigen::Matrix2d r_map2vehicle;
-  r_map2vehicle << std::cos(-yaw_vehicle), -std::sin(-yaw_vehicle), std::sin(-yaw_vehicle),
-    std::cos(-yaw_vehicle);
-  // Rotate covariance E((X, Y)^t*(X, Y)) = E(R*(x,y)*(x,y)^t*R^t)
-  // when Rotate point (X, Y)^t= R*(x, y)^t.
-  const Eigen::Matrix2d cov_xy_vehicle = r_map2vehicle * cov_xy_map * r_map2vehicle.transpose();
-
-  // The longitudinal/lateral length is represented
-  // in cov_xy_vehicle(0,0), cov_xy_vehicle(1,1) respectively.
-  return FootprintMargin{cov_xy_vehicle(0, 0) * scale, cov_xy_vehicle(1, 1) * scale};
-}
-
 bool is_uncrossable_type(
   std::vector<std::string> boundary_types_to_detect, const lanelet::ConstLineString3d & ls)
 {
@@ -83,6 +54,27 @@ Segment2d to_segment2d(
   return {to_point2d(ll_pt1), to_point2d(ll_pt2)};
 }
 
+std::vector<LinearRing2d> create_vehicle_footprints(
+  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
+  const FootprintMargin & margin)
+{
+  // Create vehicle footprint in base_link coordinate
+  const auto local_vehicle_footprint =
+    vehicle_info.createFootprint(margin.lat, margin.lat, margin.lon);
+
+  std::vector<LinearRing2d> vehicle_footprints;
+  vehicle_footprints.reserve(trajectory.size());
+  std::transform(
+    trajectory.begin(), trajectory.end(), std::back_inserter(vehicle_footprints),
+    [&](const auto & p) -> LinearRing2d {
+      using autoware_utils::transform_vector;
+      using autoware_utils::pose2transform;
+      return transform_vector(local_vehicle_footprint, pose2transform(p.pose));
+    });
+
+  return vehicle_footprints;
+}
+
 TrajectoryPoints cutTrajectory(const TrajectoryPoints & trajectory, const double length)
 {
   if (trajectory.empty()) {
@@ -106,7 +98,6 @@ TrajectoryPoints cutTrajectory(const TrajectoryPoints & trajectory, const double
     const auto new_point = autoware_utils::from_msg(new_pose.position);
     const auto points_distance = boost::geometry::distance(last_point.to_2d(), new_point.to_2d());
 
-    // Require interpolation
     if (remain_distance <= points_distance) {
       const Eigen::Vector3d p_interpolated =
         last_point + remain_distance * (new_point - last_point).normalized();
@@ -160,7 +151,8 @@ std::vector<std::pair<LinearRing2d, Pose>> createVehicleFootprints(
   const double footprint_margin_scale)
 {
   // Calculate longitudinal and lateral margin based on covariance
-  const auto margin = calcFootprintMargin(covariance, footprint_margin_scale);
+  const auto margin =
+    utils::calc_extra_margin_from_pose_covariance(covariance, footprint_margin_scale);
 
   // Create vehicle footprint in base_link coordinate
   const auto local_vehicle_footprint = vehicle_info.createFootprint(margin.lat, margin.lon);
@@ -525,4 +517,69 @@ std::vector<lanelet::ConstLineString3d> get_linestrings_near_footprint(
 
   return nearby_linestrings;
 }
+
+FootprintMargin calc_extra_margin_from_pose_covariance(
+  const geometry_msgs::msg::PoseWithCovariance & covariance, const double scale)
+{
+  const auto cov_in_map = covariance.covariance;
+  Eigen::Matrix2d cov_xy_map;
+  cov_xy_map << cov_in_map[0 * 6 + 0], cov_in_map[0 * 6 + 1], cov_in_map[1 * 6 + 0],
+    cov_in_map[1 * 6 + 1];
+
+  const double yaw_vehicle = tf2::getYaw(covariance.pose.orientation);
+
+  // To get a position in a transformed coordinate, rotate the inverse direction
+  Eigen::Matrix2d r_map2vehicle;
+  r_map2vehicle << std::cos(-yaw_vehicle), -std::sin(-yaw_vehicle), std::sin(-yaw_vehicle),
+    std::cos(-yaw_vehicle);
+  // Rotate covariance E((X, Y)^t*(X, Y)) = E(R*(x,y)*(x,y)^t*R^t)
+  // when Rotate point (X, Y)^t= R*(x, y)^t.
+  const Eigen::Matrix2d cov_xy_vehicle = r_map2vehicle * cov_xy_map * r_map2vehicle.transpose();
+
+  // The longitudinal/lateral length is represented
+  // in cov_xy_vehicle(0,0), cov_xy_vehicle(1,1) respectively.
+  return FootprintMargin{cov_xy_vehicle(0, 0) * scale, cov_xy_vehicle(1, 1) * scale};
+}
+
+EgoSides get_ego_sides_from_footprints(const FootprintWithPose & footprints_with_pose)
+{
+  if (footprints_with_pose.empty()) {
+    fmt::print("empty footprint\n");
+    return {};
+  }
+
+  fmt::print("non empty footprint\n");
+  EgoSides footprints_sides;
+  footprints_sides.reserve(footprints_with_pose.size());
+  constexpr bool use_center_right = true;
+  constexpr bool use_center_left = true;
+
+  {
+    const auto & [fp, pose] = footprints_with_pose.front();
+
+    auto fp_side = get_footprint_sides(fp, use_center_right, use_center_left);
+    EgoSide ego_side;
+    ego_side.left = std::move(fp_side.left);
+    ego_side.right = std::move(fp_side.right);
+    footprints_sides.push_back(ego_side);
+  }
+
+  for (size_t i = 1; i < footprints_with_pose.size(); ++i) {
+    const auto & [fp, pose] = footprints_with_pose.at(i);
+    const auto & [prev_fp, prev_pose] = footprints_with_pose.at(i - 1);
+
+    auto fp_side = get_footprint_sides(fp, use_center_right, use_center_left);
+
+    EgoSide ego_side;
+    ego_side.left = std::move(fp_side.left);
+    ego_side.right = std::move(fp_side.right);
+    ego_side.dist_from_start +=
+      footprints_sides.back().dist_from_start + autoware_utils::calc_distance2d(prev_pose, pose);
+    ego_side.pose = pose;
+    footprints_sides.push_back(ego_side);
+  }
+
+  return footprints_sides;
+}
+
 }  // namespace autoware::boundary_departure_checker::utils
