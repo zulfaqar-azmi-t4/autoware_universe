@@ -160,17 +160,17 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
   const auto & raw_abs_velocity = std::abs(curr_twist.linear.x);
   const auto abs_velocity = raw_abs_velocity < min_velocity ? 0.0 : raw_abs_velocity;
 
-  const auto & ll_map_ptr = *planner_data->route_handler->getLaneletMapPtr();
-  if (!uncrossable_boundaries_rtree_ptr_) {
-    uncrossable_boundaries_rtree_ptr_ = std::make_unique<UncrossableBoundRTree>(
-      boundary_departure_checker::utils::build_uncrossable_boundaries_rtree(
-        ll_map_ptr, node_param_.boundary_types_to_detect));
+  const auto & ll_map_ptr = planner_data->route_handler->getLaneletMapPtr();
+  if (!boundary_departure_checker_ptr_) {
+    boundary_departure_checker_ptr_ = std::make_unique<BoundaryDepartureChecker>(
+      node_param_.boundary_types_to_detect, ll_map_ptr, vehicle_info);
   }
 
   const auto output_opt = plan(
     curr_pose, abs_velocity, ego_pred_traj_ptr_->points, vehicle_info,
-    node_param_.pred_path_footprint.scale, ll_map_ptr.lineStringLayer);
+    node_param_.pred_path_footprint.scale, ll_map_ptr->lineStringLayer);
   if (!output_opt) {
+    fmt::print("failed reason({}): {}",__func__, output_opt.error());
     return {};
   }
 
@@ -274,27 +274,28 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
   return {};
 }
 
-std::optional<param::Output> BoundaryDeparturePreventionModule::plan(
+tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan(
   const PoseWithCovariance & pose_with_covariance, const double abs_velocity,
-  const TrajectoryPoints & ego_pred_traj, const VehicleInfo & vehicle_info,
-  const double footprint_margin_scale, const lanelet::LineStringLayer & ls_layer)
+  const TrajectoryPoints & ego_pred_traj, [[maybe_unused]] const VehicleInfo & vehicle_info,
+  const double footprint_margin_scale, [[maybe_unused]] const lanelet::LineStringLayer & ls_layer)
 {
   autoware_utils::StopWatch<std::chrono::milliseconds> stop_watch;
-  output_.fp_with_pose = utils::create_vehicle_footprints(
-    pose_with_covariance, ego_pred_traj, vehicle_info, footprint_margin_scale);
-  output_.processing_time_map["create_vehicle_footprint"] = stop_watch.toc(true);
+  const auto bdc_results =
+    boundary_departure_checker_ptr_->get_projections_to_closest_uncrossable_boundaries(
+      pose_with_covariance, ego_pred_traj, footprint_margin_scale,
+      node_param_.th_max_lateral_query_num);
 
-  output_.ego_sides_from_footprints = utils::get_ego_sides_from_footprints(output_.fp_with_pose);
-  output_.processing_time_map["get_ego_sides_from_footprints"] = stop_watch.toc(true);
+  if (!bdc_results) {
+    fmt::print("Failed reason({}): {}.\n", __func__, bdc_results.error());
+    return tl::unexpected<std::string>(bdc_results.error());
+  }
 
-  output_.boundary_segments = boundary_departure_checker::utils::get_boundary_segments_from_side(
-    *uncrossable_boundaries_rtree_ptr_, ls_layer, output_.ego_sides_from_footprints,
-    node_param_.th_max_lateral_query_num);
-  output_.processing_time_map["get_boundary_segments_from_side"] = stop_watch.toc(true);
+  output_.ego_sides_from_footprints = bdc_results->ego_sides_from_footprints;
+  output_.boundary_segments = bdc_results->boundary_segments;
+  output_.side_to_bound_projections = bdc_results->side_to_bound_projections;
 
-  output_.side_to_bound_projections =
-    boundary_departure_checker::utils::get_closest_boundary_segments_from_side(
-      output_.boundary_segments, output_.ego_sides_from_footprints);
+  fmt::print("side to fp size: {}, side to bound proj: left-{} right-{}\n", output_.ego_sides_from_footprints.size(), output_.side_to_bound_projections.left.size(), output_.side_to_bound_projections.right.size());
+
   output_.processing_time_map["get_closest_boundary_segments_from_side;"] = stop_watch.toc(true);
 
   output_.departure_statuses =

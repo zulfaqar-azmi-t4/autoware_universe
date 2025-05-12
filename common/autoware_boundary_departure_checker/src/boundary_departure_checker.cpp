@@ -19,6 +19,7 @@
 #include <autoware_utils/math/normalization.hpp>
 #include <autoware_utils/math/unit_conversion.hpp>
 #include <autoware_utils/system/stop_watch.hpp>
+#include <tl_expected/expected.hpp>
 
 #include <boost/geometry.hpp>
 
@@ -55,32 +56,83 @@ bool isInAnyLane(const lanelet::ConstLanelets & candidate_lanelets, const Point2
 
 namespace autoware::boundary_departure_checker
 {
-LaneDepartureChecker::LaneDepartureChecker(
-  const std::vector<std::string> & uncrossable_boundary_types,
-  const lanelet::LaneletMapPtr & lanelet_map_ptr, const VehicleInfo & vehicle_info,
-  std::unique_ptr<Param> param_ptr, std::shared_ptr<autoware_utils::TimeKeeper> time_keeper)
-: param_ptr_(std::move(param_ptr)),
+BoundaryDepartureChecker::BoundaryDepartureChecker(
+  std::vector<std::string> uncrossable_boundary_types, lanelet::LaneletMapPtr lanelet_map_ptr,
+  const VehicleInfo & vehicle_info, std::unique_ptr<Param> param_ptr,
+  std::shared_ptr<autoware_utils::TimeKeeper> time_keeper)
+: lanelet_map_ptr_(lanelet_map_ptr),
+  param_ptr_(std::move(param_ptr)),
   vehicle_info_ptr_(std::make_shared<VehicleInfo>(vehicle_info)),
-  uncrossable_boundary_types_(uncrossable_boundary_types),
+  uncrossable_boundary_types_(std::move(uncrossable_boundary_types)),
   time_keeper_(std::move(time_keeper))
 {
-  if (!build_uncrossable_boundaries_tree(lanelet_map_ptr)) {
-    throw std::runtime_error("Failed to build uncrossable boundaries tree");
+  auto try_uncrossable_boundaries_rtree = build_uncrossable_boundaries_tree(lanelet_map_ptr);
+
+  if (!try_uncrossable_boundaries_rtree) {
+    throw std::runtime_error(try_uncrossable_boundaries_rtree.error());
   }
+
+  uncrossable_boundaries_rtree_ptr_ =
+    std::make_unique<UncrossableBoundRTree>(*try_uncrossable_boundaries_rtree);
 }
 
-bool LaneDepartureChecker::build_uncrossable_boundaries_tree(
+tl::expected<BDCData, std::string>
+BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
+  const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov,
+  const TrajectoryPoints & ego_pred_traj, const double uncertainty_fp_margin_scale,
+  const int max_nearest_boundary_query_num)
+{
+  BDCData bdc_data;
+  const auto uncertainty_fp_margin =
+    utils::calc_extra_margin_from_pose_covariance(curr_pose_with_cov, uncertainty_fp_margin_scale);
+  const auto footprints =
+    utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, uncertainty_fp_margin);
+
+  if (footprints.size() != ego_pred_traj.size()) {
+    return tl::unexpected<std::string>("Mismatch footprint and predicted trajectory size.");
+  }
+
+  FootprintWithPose fp_with_pose;
+  fp_with_pose.reserve(footprints.size());
+  for (size_t i = 0; i < footprints.size(); ++i) {
+    fp_with_pose.emplace_back(footprints[i], ego_pred_traj[i].pose);
+  }
+
+  bdc_data.fp_with_pose = std::move(fp_with_pose);
+
+  if (!uncrossable_boundaries_rtree_ptr_) {
+    return tl::unexpected<std::string>("No rtree available.");
+  }
+
+  if (!lanelet_map_ptr_) {
+    return tl::unexpected<std::string>("lanelet_map_ptr is null");
+  }
+
+  bdc_data.ego_sides_from_footprints = utils::get_ego_sides_from_footprints(bdc_data.fp_with_pose);
+  fmt::print("{} {}\n", bdc_data.fp_with_pose.size(), bdc_data.ego_sides_from_footprints.size());
+  const auto & linestring_layer = lanelet_map_ptr_->lineStringLayer;
+  bdc_data.boundary_segments = utils::get_boundary_segments_from_side(
+    *uncrossable_boundaries_rtree_ptr_, linestring_layer, bdc_data.ego_sides_from_footprints,
+    max_nearest_boundary_query_num);
+  bdc_data.side_to_bound_projections = utils::get_closest_boundary_segments_from_side(
+    bdc_data.boundary_segments, bdc_data.ego_sides_from_footprints);
+  return bdc_data;
+}
+
+tl::expected<UncrossableBoundRTree, std::string>
+BoundaryDepartureChecker::build_uncrossable_boundaries_tree(
   const lanelet::LaneletMapPtr & lanelet_map_ptr)
 {
   autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
-  constexpr auto success{true};
-  if (!lanelet_map_ptr || !param_ptr_) {
-    return !success;
+  if (!lanelet_map_ptr) {
+    return tl::unexpected(std::string("lanelet_map_ptr is null"));
   }
 
-  uncrossable_boundaries_rtree_ptr_ = std::make_unique<UncrossableBoundRTree>(
-    utils::build_uncrossable_boundaries_rtree(*lanelet_map_ptr, uncrossable_boundary_types_));
-  return success;
+  if (!param_ptr_) {
+    return tl::unexpected(std::string("param_ptr is null"));
+  }
+
+  return utils::build_uncrossable_boundaries_rtree(*lanelet_map_ptr, uncrossable_boundary_types_);
 }
 
 bool BoundaryDepartureChecker::checkPathWillLeaveLane(
@@ -334,17 +386,6 @@ bool BoundaryDepartureChecker::willCrossBoundary(
     }
   }
   return false;
-}
-
-lanelet::BasicPolygon2d BoundaryDepartureChecker::toBasicPolygon2D(
-  const LinearRing2d & footprint_hull) const
-{
-  lanelet::BasicPolygon2d basic_polygon;
-  for (const auto & point : footprint_hull) {
-    Eigen::Vector2d p(point.x(), point.y());
-    basic_polygon.push_back(p);
-  }
-  return basic_polygon;
 }
 
 autoware_utils::Polygon2d BoundaryDepartureChecker::toPolygon2D(

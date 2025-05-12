@@ -38,11 +38,18 @@
 
 namespace autoware::boundary_departure_checker
 {
-struct Projection
+enum class DepartureType {
+  NONE = 0,
+  NEAR_BOUNDARY,
+  APPROACHING_DEPARTURE,
+  CRITICAL_DEPARTURE,
+  UNKNOWN
+};
+
+struct FootprintMargin
 {
-  Point2d orig;
-  Point2d proj;
-  double dist{std::numeric_limits<double>::max()};
+  double lon;
+  double lat;
 };
 
 template <typename T>
@@ -59,6 +66,13 @@ struct SideExt : Side<T>
   double dist_from_start{0.0};
 };
 
+struct Projection
+{
+  Point2d orig;
+  Point2d proj;
+  double dist{std::numeric_limits<double>::max()};
+};
+
 struct ProjectionWithSegment
 {
   Projection projection;
@@ -73,13 +87,6 @@ struct ProjectionWithSegment
   }
 };
 
-enum class DepartureType {
-  NONE = 0,
-  NEAR_BOUNDARY,
-  APPROACHING_DEPARTURE,
-  CRITICAL_DEPARTURE,
-  UNKNOWN
-};
 using SideProjOpt = Side<std::optional<Projection>>;
 using BoundarySide = Side<std::vector<Segment2d>>;
 using BoundarySideWithIdx = Side<std::vector<SegmentWithIdx>>;
@@ -132,6 +139,16 @@ struct Input
   Trajectory::ConstSharedPtr reference_trajectory;
   Trajectory::ConstSharedPtr predicted_trajectory;
   std::vector<std::string> boundary_types_to_detect;
+};
+
+using FootprintWithPose = std::vector<std::pair<LinearRing2d, Pose>>;
+
+struct BDCData
+{
+  FootprintWithPose fp_with_pose;
+  EgoSides ego_sides_from_footprints;
+  BoundarySideWithIdx boundary_segments;
+  SideToBoundPojections side_to_bound_projections;
 };
 }  // namespace autoware::boundary_departure_checker
 
