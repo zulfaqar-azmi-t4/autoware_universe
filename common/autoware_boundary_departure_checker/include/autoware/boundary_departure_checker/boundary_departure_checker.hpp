@@ -69,8 +69,8 @@ public:
   }
 
   BoundaryDepartureChecker(
-    std::vector<std::string> uncrossable_boundary_types, lanelet::LaneletMapPtr lanelet_map_ptr,
-    const VehicleInfo & vehicle_info, std::unique_ptr<Param> param_ptr = std::make_unique<Param>(),
+    lanelet::LaneletMapPtr lanelet_map_ptr, const VehicleInfo & vehicle_info,
+    const Param & param = Param{},
     std::shared_ptr<autoware_utils::TimeKeeper> time_keeper =
       std::make_shared<autoware_utils::TimeKeeper>());
 
@@ -78,11 +78,8 @@ public:
     const lanelet::LaneletMapPtr & lanelet_map_ptr);
 
   tl::expected<BDCData, std::string> get_projections_to_closest_uncrossable_boundaries(
-    const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov,
-    const TrajectoryPoints & ego_pred_traj, const double uncertainty_fp_margin_scale,
-    const int max_nearest_boundary_query_num);
-
-  void setParam(const Param & param) { param_ = param; }
+    const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov, const double curr_vel,
+    const TrajectoryPoints & ego_pred_traj, const double uncertainty_fp_margin_scale);
 
   bool checkPathWillLeaveLane(
     const lanelet::ConstLanelets & lanelets, const PathWithLaneId & path) const;
@@ -119,7 +116,6 @@ private:
   lanelet::LaneletMapPtr lanelet_map_ptr_;
   std::unique_ptr<Param> param_ptr_;
   std::shared_ptr<VehicleInfo> vehicle_info_ptr_;
-  std::vector<std::string> uncrossable_boundary_types_;
   std::unique_ptr<UncrossableBoundRTree> uncrossable_boundaries_rtree_ptr_;
   BDCData bdc_data_;
 
@@ -130,10 +126,6 @@ private:
   static SegmentRtree extractUncrossableBoundaries(
     const lanelet::LaneletMap & lanelet_map, const geometry_msgs::msg::Point & ego_point,
     const double max_search_length, const std::vector<std::string> & boundary_types_to_detect);
-
-  bool willCrossBoundary(
-    const std::vector<LinearRing2d> & vehicle_footprints,
-    const SegmentRtree & uncrossable_segments) const;
 
   autoware_utils::Polygon2d toPolygon2D(const lanelet::BasicPolygon2d & poly) const;
 

@@ -69,8 +69,10 @@ void BoundaryDeparturePreventionModule::update_parameters(
 
   const std::string module_name{"boundary_departure_prevention."};
   update_param(parameters, module_name + "th_data_timeout_s", pp.th_data_timeout_s);
-  update_param(parameters, module_name + "boundary_types_to_detect", pp.boundary_types_to_detect);
-  update_param(parameters, module_name + "th_max_lateral_query_num", pp.th_max_lateral_query_num);
+  update_param(
+    parameters, module_name + "boundary_types_to_detect", pp.bdc_param.boundary_types_to_detect);
+  update_param(
+    parameters, module_name + "th_max_lateral_query_num", pp.bdc_param.th_max_lateral_query_num);
 
   auto boundary_behaviour_trigger_param = [&module_name,
                                            &parameters](const std::string & trigger_type_str) {
@@ -156,21 +158,19 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
     return {};
   }
 
+  const auto & ll_map_ptr = planner_data->route_handler->getLaneletMapPtr();
+  if (!boundary_departure_checker_ptr_) {
+    boundary_departure_checker_ptr_ =
+      std::make_unique<BoundaryDepartureChecker>(ll_map_ptr, vehicle_info, node_param_.bdc_param);
+  }
+
   constexpr double min_velocity = 0.01;
   const auto & raw_abs_velocity = std::abs(curr_twist.linear.x);
   const auto abs_velocity = raw_abs_velocity < min_velocity ? 0.0 : raw_abs_velocity;
-
-  const auto & ll_map_ptr = planner_data->route_handler->getLaneletMapPtr();
-  if (!boundary_departure_checker_ptr_) {
-    boundary_departure_checker_ptr_ = std::make_unique<BoundaryDepartureChecker>(
-      node_param_.boundary_types_to_detect, ll_map_ptr, vehicle_info);
-  }
-
   const auto output_opt = plan(
-    curr_pose, abs_velocity, ego_pred_traj_ptr_->points, vehicle_info,
-    node_param_.pred_path_footprint.scale, ll_map_ptr->lineStringLayer);
+    curr_pose, abs_velocity, ego_pred_traj_ptr_->points, node_param_.pred_path_footprint.scale);
   if (!output_opt) {
-    fmt::print("failed reason({}): {}",__func__, output_opt.error());
+    fmt::print("failed reason({}): {}", __func__, output_opt.error());
     return {};
   }
 
@@ -276,25 +276,29 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
 
 tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan(
   const PoseWithCovariance & pose_with_covariance, const double abs_velocity,
-  const TrajectoryPoints & ego_pred_traj, [[maybe_unused]] const VehicleInfo & vehicle_info,
-  const double footprint_margin_scale, [[maybe_unused]] const lanelet::LineStringLayer & ls_layer)
+  const TrajectoryPoints & ego_pred_traj, const double footprint_margin_scale)
 {
   autoware_utils::StopWatch<std::chrono::milliseconds> stop_watch;
   const auto bdc_results =
     boundary_departure_checker_ptr_->get_projections_to_closest_uncrossable_boundaries(
-      pose_with_covariance, ego_pred_traj, footprint_margin_scale,
-      node_param_.th_max_lateral_query_num);
+      pose_with_covariance, abs_velocity, ego_pred_traj, footprint_margin_scale);
 
   if (!bdc_results) {
     fmt::print("Failed reason({}): {}.\n", __func__, bdc_results.error());
     return tl::unexpected<std::string>(bdc_results.error());
   }
 
+  output_.ab_enveloped_fp = bdc_results->ab_enveloped_fp;
+  output_.ab_lon_tracking_fp = bdc_results->ab_lon_tracking_fp;
   output_.ego_sides_from_footprints = bdc_results->ego_sides_from_footprints;
   output_.boundary_segments = bdc_results->boundary_segments;
   output_.side_to_bound_projections = bdc_results->side_to_bound_projections;
+  output_.ab_steering_fp = bdc_results->ab_steering_fp;
 
-  fmt::print("side to fp size: {}, side to bound proj: left-{} right-{}\n", output_.ego_sides_from_footprints.size(), output_.side_to_bound_projections.left.size(), output_.side_to_bound_projections.right.size());
+  fmt::print(
+    "side to fp size: {}, side to bound proj: left-{} right-{}\n",
+    output_.ego_sides_from_footprints.size(), output_.side_to_bound_projections.left.size(),
+    output_.side_to_bound_projections.right.size());
 
   output_.processing_time_map["get_closest_boundary_segments_from_side;"] = stop_watch.toc(true);
 

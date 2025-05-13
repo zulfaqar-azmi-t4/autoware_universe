@@ -72,6 +72,9 @@ using DepartureTypeesIdx = Side<std::vector<DepartureTypeIdx>>;
 struct Output
 {
   std::unordered_map<std::string, double> processing_time_map;
+  boundary_departure_checker::FootprintWithPose ab_enveloped_fp;
+  boundary_departure_checker::FootprintWithPose ab_lon_tracking_fp;
+  boundary_departure_checker::FootprintWithPose ab_steering_fp;
   EgoSides ego_sides_from_footprints;
   BoundarySideWithIdx boundary_segments;
   SideToBoundPojections side_to_bound_projections;
@@ -84,8 +87,8 @@ struct Output
 struct NodeParam
 {
   double th_data_timeout_s{1.0};
-  std::vector<std::string> boundary_types_to_detect;
-  int th_max_lateral_query_num{5};
+  BDCParam bdc_param;
+
   double th_departure_point_lifetime_s{1.0};
   double th_dist_hysteresis_m{2.0};
 
@@ -100,9 +103,9 @@ struct NodeParam
   {
     const std::string module_name{"boundary_departure_prevention."};
     th_data_timeout_s = get_or_declare_parameter<double>(node, module_name + "th_data_timeout_s");
-    boundary_types_to_detect = get_or_declare_parameter<std::vector<std::string>>(
+    bdc_param.boundary_types_to_detect = get_or_declare_parameter<std::vector<std::string>>(
       node, module_name + "boundary_types_to_detect");
-    th_max_lateral_query_num =
+    bdc_param.th_max_lateral_query_num =
       get_or_declare_parameter<int>(node, module_name + "th_max_lateral_query_num");
 
     auto boundary_behaviour_trigger_param = [&node,
@@ -153,6 +156,18 @@ struct NodeParam
         get_or_declare_parameter<double>(node, ns + "resample_interval_m");
       return param;
     });
+
+    const std::string ns_fp_envelop{module_name + "footprint_envelop."};
+    bdc_param.footprint_envelop.lon_m =
+      get_or_declare_parameter<double>(node, ns_fp_envelop + "lon_m");
+    bdc_param.footprint_envelop.lat_m =
+      get_or_declare_parameter<double>(node, ns_fp_envelop + "lat_m");
+
+    const std::string ns_lon_tracking{module_name + "lon_tracking."};
+    bdc_param.lon_tracking.scale =
+      get_or_declare_parameter<double>(node, ns_lon_tracking + "scale");
+    bdc_param.lon_tracking.extra_margin_m =
+      get_or_declare_parameter<double>(node, ns_lon_tracking + "extra_margin_m");
   }
 };
 }  // namespace autoware::motion_velocity_planner::param
