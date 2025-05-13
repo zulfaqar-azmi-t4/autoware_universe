@@ -83,6 +83,8 @@ using boundary_departure_checker::DepartureType;                                
 using boundary_departure_checker::Side;                                                 // NOLINT
 using BoundaryDepartureChecker = boundary_departure_checker::BoundaryDepartureChecker;  // NOLINT
 namespace bdc_utils = boundary_departure_checker::utils;                                // NOLINT
+using boundary_departure_checker::FootprintMargin;
+using BDCParam = boundary_departure_checker::Param;
 }  // namespace autoware::motion_velocity_planner
 
 #endif  // TYPE_ALIAS_HPP_

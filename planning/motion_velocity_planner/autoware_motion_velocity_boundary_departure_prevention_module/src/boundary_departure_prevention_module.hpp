@@ -18,13 +18,13 @@
 #include "parameters.hpp"
 
 #include <autoware/motion_velocity_planner_common/plugin_module_interface.hpp>
+#include <tl_expected/expected.hpp>
 
 #include <fmt/format.h>
 
 #include <memory>
 #include <string>
 #include <vector>
-#include <tl_expected/expected.hpp>
 
 namespace autoware::motion_velocity_planner
 {
@@ -44,8 +44,7 @@ private:
   void publish_topics(rclcpp::Node & node);
   tl::expected<param::Output, std::string> plan(
     const PoseWithCovariance & pose_with_covariance, const double abs_velocity,
-    const TrajectoryPoints & ego_pred_traj, const vehicle_info_utils::VehicleInfo & vehicle_info,
-    const double footprint_margin_scale, const lanelet::LineStringLayer & ls_layer);
+    const TrajectoryPoints & ego_pred_traj, const double footprint_margin_scale);
   [[nodiscard]] bool is_data_ready(std::unordered_map<std::string, double> & processing_times);
   [[nodiscard]] bool is_data_valid() const;
   [[nodiscard]] bool is_data_timeout(const Odometry & odom) const;

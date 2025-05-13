@@ -48,8 +48,19 @@ enum class DepartureType {
 
 struct FootprintMargin
 {
-  double lon;
-  double lat;
+  double lon_m{0.0};
+  double lat_m{0.0};
+
+  FootprintMargin operator+(const FootprintMargin & other) const
+  {
+    return FootprintMargin{lon_m + other.lon_m, lat_m + other.lat_m};
+  }
+};
+
+struct LonTracking
+{
+  double scale{1.0};
+  double extra_margin_m{0.25};
 };
 
 template <typename T>
@@ -116,17 +127,14 @@ struct DeparturePoint
   [[nodiscard]] bool is_alive() const { return lifetime <= th_lifetime; }
 };
 using DeparturePoints = std::unordered_map<std::string, DeparturePoint>;
+
 struct Param
 {
-  double footprint_margin_scale{};
+  int th_max_lateral_query_num{5};
   double footprint_extra_margin{};
-  double resample_interval{};
-  double max_deceleration{};
-  double delay_time{};
-  double min_braking_distance{};
-  // nearest search to ego
-  double ego_nearest_dist_threshold{};
-  double ego_nearest_yaw_threshold{};
+  FootprintMargin footprint_envelop;
+  std::vector<std::string> boundary_types_to_detect;
+  LonTracking lon_tracking;
 };
 
 struct Input
@@ -145,7 +153,9 @@ using FootprintWithPose = std::vector<std::pair<LinearRing2d, Pose>>;
 
 struct BDCData
 {
-  FootprintWithPose fp_with_pose;
+  FootprintWithPose ab_enveloped_fp;
+  FootprintWithPose ab_lon_tracking_fp;
+  FootprintWithPose ab_steering_fp;
   EgoSides ego_sides_from_footprints;
   BoundarySideWithIdx boundary_segments;
   SideToBoundPojections side_to_bound_projections;
