@@ -68,6 +68,19 @@ struct Side
 {
   T left;
   T right;
+  T & operator[](const std::string_view key)
+  {
+    if (key == "left") return left;
+    if (key == "right") return right;
+    throw std::out_of_range(std::string("Invalid key: ") + std::string(key));
+  }
+
+  const T & operator[](const std::string_view key) const
+  {
+    if (key == "left") return left;
+    if (key == "right") return right;
+    throw std::out_of_range(std::string("Invalid key: ") + std::string(key));
+  }
 };
 
 template <typename T>

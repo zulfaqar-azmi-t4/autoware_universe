@@ -16,6 +16,7 @@
 
 #include "autoware/motion_utils/marker/marker_helper.hpp"
 #include "debug.hpp"
+#include "str_map.hpp"
 #include "utils.hpp"
 
 #include <autoware/boundary_departure_checker/utils.hpp>
@@ -131,6 +132,10 @@ void BoundaryDeparturePreventionModule::subscribe_topics(rclcpp::Node & node)
     "/control/trajectory_follower/lateral/predicted_trajectory", rclcpp::QoS{1},
     [&](const Trajectory::ConstSharedPtr msg) { ego_pred_traj_ptr_ = msg; });
 
+  sub_control_cmd_ = node.create_subscription<Control>(
+    "/control/command/control_cmd", rclcpp::QoS{1},
+    [&](const Control::ConstSharedPtr msg) { control_cmd_ptr_ = msg; });
+
   sub_op_mode_state_ = node.create_subscription<OperationModeState>(
     "~/api/operation_mode/state", rclcpp::QoS{1},
     [this](const OperationModeState::ConstSharedPtr msg) { op_mode_state_ptr_ = msg; });
@@ -148,33 +153,36 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
   [[maybe_unused]] const TrajectoryPoints & smoothed_trajectory_points,
   const std::shared_ptr<const PlannerData> planner_data)
 {
-  // fmt::print("Running Boundary Departure Prevention Module is running\n");
-
-  const auto & curr_pose = planner_data->current_odometry.pose;
-  const auto & curr_twist = planner_data->current_odometry.twist.twist;
+  StopWatch<std::chrono::milliseconds> stopwatch_ms;
   const auto & vehicle_info = planner_data->vehicle_info_;
+  const auto & ll_map_ptr = planner_data->route_handler->getLaneletMapPtr();
+
+  if (!boundary_departure_checker_ptr_) {
+    stopwatch_ms.tic(init_bdc_ptr);
+    boundary_departure_checker_ptr_ =
+      std::make_unique<BoundaryDepartureChecker>(ll_map_ptr, vehicle_info, node_param_.bdc_param);
+    processing_times_ms_[init_bdc_ptr] = stopwatch_ms.toc(init_bdc_ptr);
+  }
 
   if (!ego_pred_traj_ptr_) {
     return {};
   }
 
-  const auto & ll_map_ptr = planner_data->route_handler->getLaneletMapPtr();
-  if (!boundary_departure_checker_ptr_) {
-    boundary_departure_checker_ptr_ =
-      std::make_unique<BoundaryDepartureChecker>(ll_map_ptr, vehicle_info, node_param_.bdc_param);
-  }
-
+  const auto & curr_odom = planner_data->current_odometry;
+  const auto & curr_pose = curr_odom.pose;
+  const auto & curr_twist = curr_odom.twist.twist;
   constexpr double min_velocity = 0.01;
-  const auto & raw_abs_velocity = std::abs(curr_twist.linear.x);
+  const auto raw_abs_velocity = std::abs(curr_twist.linear.x);
   const auto abs_velocity = raw_abs_velocity < min_velocity ? 0.0 : raw_abs_velocity;
+
+  stopwatch_ms.tic(find_slow_down_points);
   const auto output_opt = plan(
     curr_pose, abs_velocity, ego_pred_traj_ptr_->points, node_param_.pred_path_footprint.scale);
   if (!output_opt) {
     fmt::print("failed reason({}): {}", __func__, output_opt.error());
     return {};
   }
-
-  check_departure_points();
+  processing_times_ms_[find_slow_down_points] = stopwatch_ms.toc(find_slow_down_points);
 
   if (debug_publisher_) {
     slow_down_wall_marker_.markers.clear();
@@ -204,29 +212,22 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
     return std::nullopt;
   };
 
-  const auto & [left_dpt_stat, right_dpt_stat] = output_opt->departure_statuses;
-  [[maybe_unused]] const auto is_critical_departing_from_left =
-    std::any_of(left_dpt_stat.begin(), left_dpt_stat.end(), [](const auto & stat) {
-      const auto & [status, idx] = stat;
-      return status == DepartureType::CRITICAL_DEPARTURE;
-    });
+  std::vector<std::pair<size_t, size_t>> slow_down_candidate_idx;
+  for (const auto & [uuid, departure_point] : output_.departure_points) {
+    const auto & status = departure_point.type;
+    if(status != DepartureType::CRITICAL_DEPARTURE){
+      continue;
+    }
 
-  [[maybe_unused]] const auto is_critical_departing_from_right =
-    std::any_of(right_dpt_stat.begin(), right_dpt_stat.end(), [](const auto & stat) {
-      const auto & [status, idx] = stat;
-      return status == DepartureType::CRITICAL_DEPARTURE;
-    });
+    auto slow_down_candidates = utils::get_traj_indices_candidates(
+      statuses, output_.ego_sides_from_footprints, vehicle_info.vehicle_length_m);
+    std::move(
+      slow_down_candidates.begin(), slow_down_candidates.end(),
+      std::back_inserter(slow_down_candidate_idx));
+  }
   output_.is_critical_departing = false;
-  // is_critical_departing_from_left || is_critical_departing_from_right;
 
   updater_ptr_->force_update();
-
-  auto slow_down_candidate_idx = utils::get_traj_indices_candidates(
-    left_dpt_stat, output_.ego_sides_from_footprints, vehicle_info.vehicle_length_m);
-  const auto right_candidates = utils::get_traj_indices_candidates(
-    right_dpt_stat, output_.ego_sides_from_footprints, vehicle_info.vehicle_length_m);
-  slow_down_candidate_idx.insert(
-    slow_down_candidate_idx.end(), right_candidates.begin(), right_candidates.end());
 
   return {};
   std::vector<SlowdownInterval> slowdown_intervals;
@@ -295,53 +296,13 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
   output_.side_to_bound_projections = bdc_results->side_to_bound_projections;
   output_.ab_steering_fp = bdc_results->ab_steering_fp;
 
-  fmt::print(
-    "side to fp size: {}, side to bound proj: left-{} right-{}\n",
-    output_.ego_sides_from_footprints.size(), output_.side_to_bound_projections.left.size(),
-    output_.side_to_bound_projections.right.size());
-
   output_.processing_time_map["get_closest_boundary_segments_from_side;"] = stop_watch.toc(true);
 
-  output_.departure_statuses =
-    utils::check_departure_status(output_.side_to_bound_projections, node_param_);
+  output_.departure_statuses = utils::check_departure_status(
+    output_.ego_sides_from_footprints, output_.side_to_bound_projections, node_param_,
+    abs_velocity);
 
-  check_departure_points();
-
-  const auto is_far = [&](const auto & param, const auto dist_to_start) {
-    const auto braking_dist = utils::calc_braking_distance(
-      abs_velocity, param.th_trigger.decel_mp2, param.th_trigger.brake_delay_s,
-      param.th_trigger.dist_error_m);
-    return (braking_dist > dist_to_start);
-  };
-
-  const auto cond = [&](const param::DepartureTypeIdx & side) {
-    const auto [status, idx] = side;
-    const auto dist_to_start = output_.ego_sides_from_footprints.at(idx).dist_from_start;
-    if (status == DepartureType::CRITICAL_DEPARTURE) {
-      return is_far(node_param_.stop_before_departure, dist_to_start);
-    }
-
-    if (status == DepartureType::APPROACHING_DEPARTURE) {
-      return is_far(node_param_.slow_down_before_departure, dist_to_start);
-    }
-
-    if (status == DepartureType::NEAR_BOUNDARY) {
-      return is_far(node_param_.slow_down_near_boundary, dist_to_start);
-    }
-    return true;
-  };
-
-  output_.departure_statuses.left.erase(
-    std::remove_if(
-      output_.departure_statuses.left.begin(), output_.departure_statuses.left.end(), cond),
-    output_.departure_statuses.left.end());
-
-  output_.departure_statuses.right.erase(
-    std::remove_if(
-      output_.departure_statuses.right.begin(), output_.departure_statuses.right.end(), cond),
-    output_.departure_statuses.right.end());
-  output_.departure_points = output_.departure_points;
-
+  check_departure_points_lifetime();
   return output_;
 }
 
@@ -387,7 +348,7 @@ bool BoundaryDeparturePreventionModule::is_data_timeout(const Odometry & odom) c
   return false;
 }
 
-bool BoundaryDeparturePreventionModule::check_nearby_points(
+bool BoundaryDeparturePreventionModule::found_nearby_points(
   const Point2d & candidate_point, DeparturePoints & curr_departure_points)
 {
   constexpr auto found_nearby{true};
@@ -396,64 +357,59 @@ bool BoundaryDeparturePreventionModule::check_nearby_points(
       point.lifetime = departure_points_lifetime_watch_.toc(uuid, true);
       return found_nearby;
     }
-    point.lifetime = departure_points_lifetime_watch_.toc(uuid);
   }
 
   return !found_nearby;
 }
 
-std::optional<std::pair<std::string, DeparturePoint>>
-BoundaryDeparturePreventionModule::check_departure_point(
-  DeparturePoints & curr_departure_points, StopWatch<std::chrono::milliseconds> & lifetime_watch,
-  const Point2d & candidate_point, const DepartureType & departure_type,
-  const param::NodeParam & node_param)
+void BoundaryDeparturePreventionModule::remove_exist_point(
+  [[maybe_unused]] const std::vector<ProjectionWithSegment> & projections,
+  [[maybe_unused]] DeparturePoints & departure_points,
+  std::vector<param::DepartureTypeIdx> & statuses)
 {
-  if (check_nearby_points(candidate_point, curr_departure_points)) {
-    return std::nullopt;
+  [[maybe_unused]] auto & departures = statuses;
+
+  if (departures.empty()) {
+    for (auto & [uuid, point] : departure_points) {
+      point.lifetime = departure_points_lifetime_watch_.toc(uuid);
+    }
   }
 
-  DeparturePoint point;
-  auto uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
-  lifetime_watch.tic(uuid);
-  point.point = candidate_point;
-  point.th_lifetime = node_param.th_departure_point_lifetime_s;
-  point.th_dist_hysteresis = node_param.th_dist_hysteresis_m;
-  point.type = departure_type;
-  return std::make_pair(uuid, point);
+  auto remove_itr =
+    std::remove_if(departures.begin(), departures.end(), [&](const auto & departure) {
+      const auto & [status, idx] = departure;
+      auto side_to_bound_proj = projections[idx];
+      auto proj = side_to_bound_proj.projection.proj;
+      return found_nearby_points(proj, departure_points);
+    });
+
+  statuses.erase(remove_itr, statuses.end());
 }
 
-void BoundaryDeparturePreventionModule::check_departure_points()
+void BoundaryDeparturePreventionModule::check_departure_points_lifetime()
 {
-  for (const auto & [status, idx] : output_.departure_statuses.left) {
-    auto side_to_bound_proj = output_.side_to_bound_projections.left[idx];
-    auto proj = side_to_bound_proj.projection.proj;
-    if (
-      const auto found_new_point_opt = check_departure_point(
-        output_.departure_points, departure_points_lifetime_watch_, proj, status, node_param_)) {
-      output_.departure_points.insert(*found_new_point_opt);
-    }
-  }
+  const auto & side_to_bound = output_.side_to_bound_projections;
+  auto & departure_statuses = output_.departure_statuses;
 
-  for (const auto & [status, idx] : output_.departure_statuses.right) {
-    auto side_to_bound_proj = output_.side_to_bound_projections.right[idx];
-    auto proj = side_to_bound_proj.projection.proj;
-    if (
-      const auto found_new_point_opt = check_departure_point(
-        output_.departure_points, departure_points_lifetime_watch_, proj, status, node_param_)) {
-      output_.departure_points.insert(*found_new_point_opt);
+  for (const auto side_key : side_keys) {
+    remove_exist_point(
+      side_to_bound[side_key], output_.departure_points, departure_statuses[side_key]);
+    auto & departure_points = output_.departure_points;
+    for (auto it = departure_points.begin(); it != departure_points.end();) {
+      if (!it->second.is_alive()) {
+        it = departure_points.erase(it);
+      } else {
+        ++it;
+      }
     }
-  }
-
-  auto & departure_points = output_.departure_points;
-  for (auto it = departure_points.begin(); it != departure_points.end();) {
-    if (!it->second.is_alive()) {
-      it = departure_points.erase(it);
-    } else {
-      ++it;
+    for (const auto & [status, idx] : output_.departure_statuses[side_key]) {
+      const auto & proj = side_to_bound[side_key][idx].projection.proj;
+      auto departure_point = utils::create_departure_point(proj, status, node_param_);
+      output_.departure_points.insert(departure_point);
+      departure_points_lifetime_watch_.tic(departure_point.first);
     }
   }
 }
-
 }  // namespace autoware::motion_velocity_planner
 
 #include <pluginlib/class_list_macros.hpp>

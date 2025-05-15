@@ -31,6 +31,7 @@
 #include <diagnostic_updater/diagnostic_updater.hpp>
 
 #include <autoware_adapi_v1_msgs/msg/operation_mode_state.hpp>
+#include <autoware_control_msgs/msg/control.hpp>
 #include <autoware_map_msgs/msg/lanelet_map_bin.hpp>
 #include <autoware_planning_msgs/msg/trajectory.hpp>
 #include <autoware_planning_msgs/msg/trajectory_point.hpp>
@@ -51,6 +52,7 @@ using nav_msgs::msg::Odometry;
 using TrajectoryPoints = std::vector<TrajectoryPoint>;
 using autoware_adapi_v1_msgs::msg::OperationModeState;
 using BoundaryThreshold = boundary_departure_checker::Side<double>;
+using autoware_control_msgs::msg::Control;
 using autoware_utils_geometry::LinearRing2d;
 using autoware_utils_geometry::Segment2d;
 using boundary_departure_checker::BoundarySideWithIdx;
@@ -83,7 +85,7 @@ using boundary_departure_checker::DepartureType;                                
 using boundary_departure_checker::Side;                                                 // NOLINT
 using BoundaryDepartureChecker = boundary_departure_checker::BoundaryDepartureChecker;  // NOLINT
 namespace bdc_utils = boundary_departure_checker::utils;                                // NOLINT
-using boundary_departure_checker::FootprintMargin;
+using boundary_departure_checker::FootprintMargin;                                      // NOLINT
 using BDCParam = boundary_departure_checker::Param;
 }  // namespace autoware::motion_velocity_planner
 

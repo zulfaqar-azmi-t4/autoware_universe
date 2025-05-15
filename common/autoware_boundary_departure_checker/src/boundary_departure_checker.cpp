@@ -82,7 +82,6 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
   const auto ab_enveloped_footprints = utils::create_vehicle_footprints(
     ego_pred_traj, *vehicle_info_ptr_, uncertainty_fp_margin + param_ptr_->footprint_envelop);
 
-
   FootprintMargin lon_tracking_margin = uncertainty_fp_margin;
   lon_tracking_margin.lon_m = lon_tracking_margin.lon_m +
                               (curr_vel * param_ptr_->lon_tracking.scale) +
@@ -90,7 +89,8 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
 
   auto ab_lon_tracking =
     utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, lon_tracking_margin);
-  const auto ab_steering_footprints = utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_);
+  const auto ab_steering_footprints =
+    utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_);
   if (ab_enveloped_footprints.size() != ego_pred_traj.size()) {
     return tl::unexpected<std::string>("Mismatch footprint and predicted trajectory size.");
   }
@@ -120,12 +120,16 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
 
   bdc_data.ego_sides_from_footprints =
     utils::get_ego_sides_from_footprints(bdc_data.ab_enveloped_fp);
+
   const auto & linestring_layer = lanelet_map_ptr_->lineStringLayer;
+
   bdc_data.boundary_segments = utils::get_boundary_segments_from_side(
     *uncrossable_boundaries_rtree_ptr_, linestring_layer, bdc_data.ego_sides_from_footprints,
     param_ptr_->th_max_lateral_query_num);
+
   bdc_data.side_to_bound_projections = utils::get_closest_boundary_segments_from_side(
     bdc_data.boundary_segments, bdc_data.ego_sides_from_footprints);
+
   return bdc_data;
 }
 

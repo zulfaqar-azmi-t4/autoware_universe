@@ -17,19 +17,18 @@
 
 #include "parameters.hpp"
 
+#include <string>
 #include <vector>
 
 namespace autoware::motion_velocity_planner::utils
 {
-std::vector<LinearRing2d> create_vehicle_footprints(
-  const geometry_msgs::msg::PoseWithCovariance & covariance, const TrajectoryPoints & trajectory,
-  const VehicleInfo & vehicle_info, const double footprint_margin_scale);
-
-EgoSides get_ego_sides_from_footprints(
-  const std::vector<std::pair<LinearRing2d, Pose>> & footprints_with_pose);
+std::pair<std::string, DeparturePoint> create_departure_point(
+  const Point2d & candidate_point, const DepartureType & departure_type,
+  const param::NodeParam & node_param);
 
 param::DepartureTypeesIdx check_departure_status(
-  const SideToBoundPojections & side_to_bound_projections, const param::NodeParam & param);
+  const EgoSides & ego_sides, const SideToBoundPojections & side_to_bound_projections,
+  const param::NodeParam & param, const double curr_vel);
 
 double calc_braking_distance(
   const double abs_velocity, const double max_deceleration, const double delay_time,
