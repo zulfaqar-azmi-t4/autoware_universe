@@ -24,6 +24,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace autoware::motion_velocity_planner
@@ -49,15 +50,14 @@ private:
   [[nodiscard]] bool is_data_valid() const;
   [[nodiscard]] bool is_data_timeout(const Odometry & odom) const;
 
-  bool check_nearby_points(
+  bool found_nearby_points(
     const Point2d & candidate_point, DeparturePoints & curr_departure_points);
 
-  std::optional<std::pair<std::string, DeparturePoint>> check_departure_point(
-    DeparturePoints & curr_departure_points, StopWatch<std::chrono::milliseconds> & lifetime_watch,
-    const Point2d & candidate_point, const DepartureType & departure_type,
-    const param::NodeParam & node_param);
+  void remove_exist_point(
+    const std::vector<ProjectionWithSegment> & projections, DeparturePoints & departure_points,
+    std::vector<param::DepartureTypeIdx> & statuses);
 
-  void check_departure_points();
+  void check_departure_points_lifetime();
 
   bool is_critical_departing_{false};
   std::string module_name_;
@@ -71,9 +71,12 @@ private:
   StopWatch<std::chrono::milliseconds> departure_points_lifetime_watch_;
 
   Trajectory::ConstSharedPtr ego_pred_traj_ptr_;
+  Control::ConstSharedPtr control_cmd_ptr_;
   OperationModeState::ConstSharedPtr op_mode_state_ptr_;
+  std::unordered_map<std::string, double> processing_times_ms_;
 
   rclcpp::Subscription<Trajectory>::SharedPtr sub_ego_pred_traj_;
+  rclcpp::Subscription<Control>::SharedPtr sub_control_cmd_;
   rclcpp::Subscription<OperationModeState>::SharedPtr sub_op_mode_state_;
   std::unique_ptr<BoundaryDepartureChecker> boundary_departure_checker_ptr_;
 

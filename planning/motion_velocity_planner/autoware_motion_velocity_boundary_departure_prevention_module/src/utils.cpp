@@ -15,46 +15,91 @@
 #include "utils.hpp"
 
 #include "fmt/format.h"
+#include "str_map.hpp"
 
+#include <string>
 #include <utility>
 #include <vector>
 
 namespace autoware::motion_velocity_planner::utils
 {
+std::pair<std::string, DeparturePoint> create_departure_point(
+  const Point2d & candidate_point, const DepartureType & departure_type,
+  const param::NodeParam & node_param)
+{
+  DeparturePoint point;
+  auto uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
+  point.point = candidate_point;
+  point.th_lifetime = node_param.th_departure_point_lifetime_s;
+  point.th_dist_hysteresis = node_param.th_dist_hysteresis_m;
+  point.type = departure_type;
+  return std::make_pair(uuid, point);
+}
+
 param::DepartureTypeesIdx check_departure_status(
-  const SideToBoundPojections & side_to_bound_projections, const param::NodeParam & param)
+  const EgoSides & ego_sides, const SideToBoundPojections & side_to_bound_projections,
+  const param::NodeParam & param, const double curr_vel)
 {
   param::DepartureTypeesIdx stats;
-  for (const auto & left : side_to_bound_projections.left) {
-    const auto & [projection, departed_segment, idx_from_orig] = left;
-    const auto & [p_orig, p_proj, dist] = projection;
-    if (std::abs(dist) < param.stop_before_departure.th_dist_to_boundary_m.left) {
-      stats.left.emplace_back(DepartureType::CRITICAL_DEPARTURE, idx_from_orig);
+  const auto assign_status =
+    [](const double lat_dist_m, const auto & param, const auto & side_key) -> DepartureType {
+    const auto stop_before_dpt = param.stop_before_departure.th_dist_to_boundary_m[side_key];
+    const auto slow_before_dpt = param.slow_down_before_departure.th_dist_to_boundary_m[side_key];
+    const auto slow_near_bound = param.slow_down_near_boundary.th_dist_to_boundary_m[side_key];
+
+    if (std::abs(lat_dist_m) < stop_before_dpt) {
+      return DepartureType::CRITICAL_DEPARTURE;
     }
 
-    if (std::abs(dist) < param.slow_down_before_departure.th_dist_to_boundary_m.left) {
-      stats.left.emplace_back(DepartureType::APPROACHING_DEPARTURE, idx_from_orig);
+    if (std::abs(lat_dist_m) < slow_before_dpt) {
+      return DepartureType::APPROACHING_DEPARTURE;
     }
 
-    if (std::abs(dist) < param.slow_down_near_boundary.th_dist_to_boundary_m.left) {
-      stats.left.emplace_back(DepartureType::NEAR_BOUNDARY, idx_from_orig);
+    if (std::abs(lat_dist_m) < slow_near_bound) {
+      return DepartureType::NEAR_BOUNDARY;
+    }
+
+    return DepartureType::NONE;
+  };
+
+  for (const auto side_key : side_keys) {
+    for (const auto & [projection, departed_segment, idx_from_orig] :
+         side_to_bound_projections[side_key]) {
+      const auto & [p_orig, p_proj, lat_dist_m] = projection;
+      const auto status = assign_status(lat_dist_m, param, side_key);
+      if (status != DepartureType::NONE && status != DepartureType::UNKNOWN) {
+        stats[side_key].emplace_back(status, idx_from_orig);
+      }
     }
   }
 
-  for (const auto & right : side_to_bound_projections.right) {
-    const auto & [projection, departed_segment, idx_from_orig] = right;
-    const auto & [p_orig, p_proj, dist] = projection;
-    if (std::abs(dist) < param.stop_before_departure.th_dist_to_boundary_m.right) {
-      stats.right.emplace_back(DepartureType::CRITICAL_DEPARTURE, idx_from_orig);
+  const auto is_far = [&](const auto & param, const auto dist_to_start) {
+    const auto braking_dist = utils::calc_braking_distance(
+      std::clamp(curr_vel, 5.0 / 3.6, 35.0 / 3.6), param.th_trigger.decel_mp2,
+      param.th_trigger.brake_delay_s, param.th_trigger.dist_error_m);
+    return (braking_dist > dist_to_start);
+  };
+
+  const auto cond = [&](const param::DepartureTypeIdx & side) {
+    const auto [status, idx] = side;
+    const auto dist_to_start = ego_sides.at(idx).dist_from_start;
+    if (status == DepartureType::CRITICAL_DEPARTURE) {
+      return is_far(param.stop_before_departure, dist_to_start);
     }
 
-    if (std::abs(dist) < param.slow_down_before_departure.th_dist_to_boundary_m.right) {
-      stats.right.emplace_back(DepartureType::APPROACHING_DEPARTURE, idx_from_orig);
+    if (status == DepartureType::APPROACHING_DEPARTURE) {
+      return is_far(param.slow_down_before_departure, dist_to_start);
     }
 
-    if (std::abs(dist) < param.slow_down_near_boundary.th_dist_to_boundary_m.right) {
-      stats.right.emplace_back(DepartureType::NEAR_BOUNDARY, idx_from_orig);
+    if (status == DepartureType::NEAR_BOUNDARY) {
+      return is_far(param.slow_down_near_boundary, dist_to_start);
     }
+    return true;
+  };
+
+  for (const auto side_key : side_keys) {
+    auto remove_itr = std::remove_if(stats[side_key].begin(), stats[side_key].end(), cond);
+    stats[side_key].erase(remove_itr, stats[side_key].end());
   }
 
   return stats;

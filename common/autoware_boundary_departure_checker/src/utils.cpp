@@ -76,7 +76,6 @@ std::vector<LinearRing2d> create_vehicle_footprints(
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info)
 {
-
   constexpr auto steering_rate_gain = 1.0;
   constexpr auto steering_rate_rad_per_s = 0.4;
 
@@ -87,8 +86,9 @@ std::vector<LinearRing2d> create_vehicle_footprints(
     [&](const TrajectoryPoint & p) -> LinearRing2d {
       using autoware_utils::transform_vector;
       using autoware_utils::pose2transform;
-      const double raw_angle = p.front_wheel_angle_rad + (steering_rate_rad_per_s * rclcpp::Duration(p.time_from_start).seconds());
-      fmt::print("{}\t", p.front_wheel_angle_rad);
+      const double raw_angle =
+        p.front_wheel_angle_rad +
+        (steering_rate_rad_per_s * rclcpp::Duration(p.time_from_start).seconds());
       const double turning_radius =
         (std::abs(raw_angle) > 1e-3) ? (vehicle_info.wheel_base_m / std::tan(raw_angle)) : 0.0;
 
@@ -97,7 +97,6 @@ std::vector<LinearRing2d> create_vehicle_footprints(
       return transform_vector(local_vehicle_footprint, pose2transform(p.pose));
     });
 
-  fmt::print("\n");
   return vehicle_footprints;
 }
 
@@ -574,7 +573,6 @@ EgoSides get_ego_sides_from_footprints(const FootprintWithPose & footprints_with
     return {};
   }
 
-  fmt::print("non empty footprint\n");
   EgoSides footprints_sides;
   footprints_sides.reserve(footprints_with_pose.size());
   constexpr bool use_center_right = true;

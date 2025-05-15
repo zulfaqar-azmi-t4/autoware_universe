@@ -207,14 +207,14 @@ MarkerArray create_debug_marker_array(
   marker_array.markers.push_back(create_boundary_segments_marker(
     output.boundary_segments, marker, "boundary_segments", base_link_z));
   autoware_utils::append_marker_array(
-                                      create_footprint_with_pose_marker(output.ab_enveloped_fp, curr_time, "envelop",base_link_z),
-    &marker_array);
-  autoware_utils::append_marker_array(
-                                      create_footprint_with_pose_marker(output.ab_lon_tracking_fp, curr_time, "lon_tracking", base_link_z),
+    create_footprint_with_pose_marker(output.ab_enveloped_fp, curr_time, "envelop", base_link_z),
     &marker_array);
   autoware_utils::append_marker_array(
     create_footprint_with_pose_marker(
-      output.ab_steering_fp, curr_time, "steering", base_link_z),
+      output.ab_lon_tracking_fp, curr_time, "lon_tracking", base_link_z),
+    &marker_array);
+  autoware_utils::append_marker_array(
+    create_footprint_with_pose_marker(output.ab_steering_fp, curr_time, "steering", base_link_z),
     &marker_array);
 
   return marker_array;
