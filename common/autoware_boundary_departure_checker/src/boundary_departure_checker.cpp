@@ -20,6 +20,8 @@
 #include <autoware_utils/math/unit_conversion.hpp>
 #include <autoware_utils/system/stop_watch.hpp>
 #include <tl_expected/expected.hpp>
+#include <autoware/trajectory/trajectory_point.hpp>
+#include <autoware/trajectory/utils/closest.hpp>
 
 #include <boost/geometry.hpp>
 
@@ -76,6 +78,10 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
   const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov, const double curr_vel,
   const TrajectoryPoints & ego_pred_traj, const double uncertainty_fp_margin_scale)
 {
+  if(ego_pred_traj.size() > 1){
+    [[maybe_unused]]auto trajectory = autoware::experimental::trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(ego_pred_traj);
+    [[maybe_unused]] const auto temp = experimental::trajectory::closest(*trajectory, curr_pose_with_cov.pose.position);
+  }
   BDCData bdc_data;
   const auto uncertainty_fp_margin =
     utils::calc_extra_margin_from_pose_covariance(curr_pose_with_cov, uncertainty_fp_margin_scale);

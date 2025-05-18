@@ -19,6 +19,8 @@
 #include "str_map.hpp"
 #include "utils.hpp"
 
+#include <autoware/trajectory/trajectory_point.hpp>
+#include <autoware/trajectory/utils/closest.hpp>
 #include <autoware/boundary_departure_checker/utils.hpp>
 #include <magic_enum.hpp>
 
@@ -164,13 +166,29 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
     processing_times_ms_[init_bdc_ptr] = stopwatch_ms.toc(init_bdc_ptr);
   }
 
-  if (!ego_pred_traj_ptr_) {
+  const auto & curr_odom = planner_data->current_odometry;
+  const auto & curr_pose = curr_odom.pose;
+  if (raw_trajectory_points.size() > 1) {
+    [[maybe_unused]]auto trajectory = autoware::experimental::trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(raw_trajectory_points);
+    // const auto temp = experimental::trajectory::closest(*trajectory, ego_pred_traj_ptr_->points.front().pose);
+
+    auto idx = 0;
+    for(const auto dist : trajectory->get_underlying_bases()){
+      fmt::print("{}: {}\n", ++idx, dist);
+    }
+  }
+
+  if (!ego_pred_traj_ptr_ || raw_trajectory_points.empty()) {
     return {};
   }
 
-  const auto & curr_odom = planner_data->current_odometry;
-  const auto & curr_pose = curr_odom.pose;
   const auto & curr_twist = curr_odom.twist.twist;
+  const auto & goal_pose = raw_trajectory_points.back().pose;
+
+  if(autoware_utils::calc_distance2d(curr_pose.pose.position, goal_pose.position) < 1.0){
+    return {};
+  }
+
   constexpr double min_velocity = 0.01;
   const auto raw_abs_velocity = std::abs(curr_twist.linear.x);
   const auto abs_velocity = raw_abs_velocity < min_velocity ? 0.0 : raw_abs_velocity;
@@ -213,18 +231,18 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
   };
 
   std::vector<std::pair<size_t, size_t>> slow_down_candidate_idx;
-  for (const auto & [uuid, departure_point] : output_.departure_points) {
-    const auto & status = departure_point.type;
-    if(status != DepartureType::CRITICAL_DEPARTURE){
-      continue;
-    }
+  // for (const auto & [uuid, departure_point] : output_.departure_points) {
+  //   const auto & status = departure_point.type;
+  //   if(status != DepartureType::CRITICAL_DEPARTURE){
+  //     continue;
+  //   }
 
-    auto slow_down_candidates = utils::get_traj_indices_candidates(
-      statuses, output_.ego_sides_from_footprints, vehicle_info.vehicle_length_m);
-    std::move(
-      slow_down_candidates.begin(), slow_down_candidates.end(),
-      std::back_inserter(slow_down_candidate_idx));
-  }
+  //   auto slow_down_candidates = utils::get_traj_indices_candidates(
+  //     status, output_.ego_sides_from_footprints, vehicle_info.vehicle_length_m);
+  //   std::move(
+  //     slow_down_candidates.begin(), slow_down_candidates.end(),
+  //     std::back_inserter(slow_down_candidate_idx));
+  // }
   output_.is_critical_departing = false;
 
   updater_ptr_->force_update();
