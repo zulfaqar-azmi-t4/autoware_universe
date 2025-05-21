@@ -79,7 +79,8 @@ public:
 
   tl::expected<BDCData, std::string> get_projections_to_closest_uncrossable_boundaries(
     const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov, const double curr_vel,
-    const TrajectoryPoints & ego_pred_traj, const double uncertainty_fp_margin_scale);
+    const TrajectoryPoints & ego_pred_traj, const double uncertainty_fp_margin_scale,
+    const SteeringReport & current_steering);
 
   bool checkPathWillLeaveLane(
     const lanelet::ConstLanelets & lanelets, const PathWithLaneId & path) const;

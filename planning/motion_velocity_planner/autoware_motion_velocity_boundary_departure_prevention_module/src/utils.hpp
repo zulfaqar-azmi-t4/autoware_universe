@@ -18,13 +18,14 @@
 #include "parameters.hpp"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace autoware::motion_velocity_planner::utils
 {
 std::pair<std::string, DeparturePoint> create_departure_point(
   const Point2d & candidate_point, const DepartureType & departure_type,
-  const param::NodeParam & node_param);
+  const param::NodeParam & node_param, std::string_view direction);
 
 param::DepartureTypeesIdx check_departure_status(
   const EgoSides & ego_sides, const SideToBoundPojections & side_to_bound_projections,

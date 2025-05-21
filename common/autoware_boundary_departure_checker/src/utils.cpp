@@ -16,6 +16,7 @@
 
 #include <autoware/motion_utils/trajectory/trajectory.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
+#include <autoware_utils/math/unit_conversion.hpp>
 
 #include <fmt/format.h>
 #include <lanelet2_core/geometry/LaneletMap.h>
@@ -74,10 +75,11 @@ std::vector<LinearRing2d> create_vehicle_footprints(
 }
 
 std::vector<LinearRing2d> create_vehicle_footprints(
-  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info)
+  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
+  const SteeringReport & current_steering)
 {
   constexpr auto steering_rate_gain = 1.0;
-  constexpr auto steering_rate_rad_per_s = 0.4;
+  constexpr auto steering_rate_rad_per_s = 0.25;
 
   std::vector<LinearRing2d> vehicle_footprints;
   vehicle_footprints.reserve(trajectory.size());
@@ -86,14 +88,16 @@ std::vector<LinearRing2d> create_vehicle_footprints(
     [&](const TrajectoryPoint & p) -> LinearRing2d {
       using autoware_utils::transform_vector;
       using autoware_utils::pose2transform;
-      const double raw_angle =
-        p.front_wheel_angle_rad +
+      const double raw_angle_rad =
+        current_steering.steering_tire_angle +
         (steering_rate_rad_per_s * rclcpp::Duration(p.time_from_start).seconds());
-      const double turning_radius =
-        (std::abs(raw_angle) > 1e-3) ? (vehicle_info.wheel_base_m / std::tan(raw_angle)) : 0.0;
 
-      const auto local_vehicle_footprint =
-        vehicle_info.createFootprint(turning_radius * steering_rate_gain, 0.0, 0.0, 0.0, 0.0, true);
+      constexpr auto min_angle = autoware_utils::deg2rad(-89);
+      constexpr auto max_angle = autoware_utils::deg2rad(89);
+      const double clamped_angle_rad = std::clamp(raw_angle_rad, min_angle, max_angle);
+
+      const auto local_vehicle_footprint = vehicle_info.createFootprint(
+        std::max(std::tan(clamped_angle_rad) * steering_rate_gain, 0.0), 0.0, 0.0, 0.0, 0.0, true);
       return transform_vector(local_vehicle_footprint, pose2transform(p.pose));
     });
 

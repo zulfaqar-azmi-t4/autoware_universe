@@ -66,8 +66,8 @@ struct LonTracking
 template <typename T>
 struct Side
 {
-  T left;
   T right;
+  T left;
   T & operator[](const std::string_view key)
   {
     if (key == "left") return left;
@@ -121,6 +121,8 @@ using EgoSides = std::vector<EgoSide>;
 struct DeparturePoint
 {
   DepartureType type = DepartureType::NONE;
+  std::string_view direction;
+  double dist_on_traj{1000.0};
   double velocity{0.0};
   double lifetime{0.0};
   double th_dist_hysteresis{2.0};
@@ -139,7 +141,7 @@ struct DeparturePoint
 
   [[nodiscard]] bool is_alive() const { return lifetime <= th_lifetime; }
 };
-using DeparturePoints = std::unordered_map<std::string, DeparturePoint>;
+using DeparturePoints = std::map<std::string, DeparturePoint>;
 
 struct Param
 {

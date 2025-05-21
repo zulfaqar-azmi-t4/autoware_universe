@@ -59,6 +59,18 @@ private:
 
   void check_departure_points_lifetime();
 
+  template <typename Container, typename Predicate>
+  void erase_if(Container & container, Predicate pred)
+  {
+    for (auto it = container.begin(); it != container.end();) {
+      if (pred(*it)) {  // For map, *it is a std::pair, so pred should handle pair<Key, Value>
+        it = container.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
   bool is_critical_departing_{false};
   std::string module_name_;
   param::Output output_;
@@ -72,11 +84,14 @@ private:
 
   Trajectory::ConstSharedPtr ego_pred_traj_ptr_;
   Control::ConstSharedPtr control_cmd_ptr_;
+  SteeringReport::ConstSharedPtr steering_angle_ptr_;
   OperationModeState::ConstSharedPtr op_mode_state_ptr_;
   std::unordered_map<std::string, double> processing_times_ms_;
 
   rclcpp::Subscription<Trajectory>::SharedPtr sub_ego_pred_traj_;
   rclcpp::Subscription<Control>::SharedPtr sub_control_cmd_;
+  rclcpp::Subscription<SteeringReport>::SharedPtr sub_steering_angle_;
+
   rclcpp::Subscription<OperationModeState>::SharedPtr sub_op_mode_state_;
   std::unique_ptr<BoundaryDepartureChecker> boundary_departure_checker_ptr_;
 

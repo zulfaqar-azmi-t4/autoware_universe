@@ -79,6 +79,7 @@ struct Output
   BoundarySideWithIdx boundary_segments;
   SideToBoundPojections side_to_bound_projections;
   DepartureTypeesIdx departure_statuses;
+  std::vector<std::pair<geometry_msgs::msg::Point, geometry_msgs::msg::Point>> slow_down_interval;
 
   DeparturePoints departure_points;
   bool is_critical_departing{false};
