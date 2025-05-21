@@ -20,11 +20,12 @@
 
 namespace autoware::motion_velocity_planner
 {
-
 static constexpr const char * init_bdc_ptr = "init_bdc_ptr";
+static constexpr const char * convert_raw_traj_to_aw_traj = "convert_raw_traj_to_aw_traj";
+static constexpr const char * convert_ego_pred_to_aw_traj = "convert_ego_pred_to_aw_traj";
 static constexpr const char * find_slow_down_points = "find_slow_down_points";
+static constexpr const char * find_slow_down_intervals = "find_slow_down_intervals";
 constexpr std::array<std::string_view, 2> side_keys = {"left", "right"};
-
 }  // namespace autoware::motion_velocity_planner
 
 #endif  // STR_MAP_HPP_

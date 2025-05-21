@@ -122,7 +122,7 @@ Marker create_departure_points_marker(
   int32_t id{0};
   auto marker = create_default_marker(
     "map", curr_time, "departure_points", ++id, visualization_msgs::msg::Marker::SPHERE_LIST,
-    create_marker_scale(0.5, 0.5, 1.0), color::yellow());
+    create_marker_scale(0.25, 0.25, 1.0), color::yellow());
   for (const auto & [uuid, point] : departure_points) {
     auto pose = autoware_utils::to_msg(point.point.to_3d(base_link_z));
     marker.points.push_back(pose);
@@ -140,7 +140,7 @@ MarkerArray create_footprint_with_pose_marker(
     create_marker_scale(0.05, 0, 0), color::aqua());
   auto marker_p = create_default_marker(
     "map", curr_time, ns + "_footprint_pose", id, visualization_msgs::msg::Marker::POINTS,
-    create_marker_scale(0.05, 0, 0), color::aqua());
+    create_marker_scale(0.25, 0.25, 1.0), color::aqua());
   if (!fp_with_pose.empty() && !fp_with_pose.front().first.empty()) {
     marker_ll.points.reserve(fp_with_pose.size() * fp_with_pose.front().first.size() - 1);
     marker_p.points.reserve(fp_with_pose.size());
@@ -183,6 +183,30 @@ Marker create_boundary_segments_marker(
   }
   return marker;
 }
+
+MarkerArray create_slow_down_interval(
+  const std::vector<std::pair<geometry_msgs::msg::Point, geometry_msgs::msg::Point>> &
+    slow_down_points,
+  const rclcpp::Time & curr_time)
+{
+  int32_t id{0};
+  auto marker_1 = create_default_marker(
+    "map", curr_time, "start_slow", id, visualization_msgs::msg::Marker::POINTS,
+    create_marker_scale(0.25, 0.25, 1.0), color::light_steel_blue());
+
+  auto marker_2 = create_default_marker(
+    "map", curr_time, "stop_slow", id, visualization_msgs::msg::Marker::POINTS,
+    create_marker_scale(0.25, 0.25, 1.0), color::light_pink());
+  for (const auto & [start, stop] : slow_down_points) {
+    marker_1.points.push_back(start);
+    marker_2.points.push_back(stop);
+  }
+
+  MarkerArray marker_array;
+  marker_array.markers = {marker_1, marker_2};
+  return marker_array;
+}
+
 MarkerArray create_debug_marker_array(
   const param::Output & output, const rclcpp::Clock::SharedPtr & clock_ptr,
   const double base_link_z)
@@ -216,6 +240,8 @@ MarkerArray create_debug_marker_array(
   autoware_utils::append_marker_array(
     create_footprint_with_pose_marker(output.ab_steering_fp, curr_time, "steering", base_link_z),
     &marker_array);
+  autoware_utils::append_marker_array(
+    create_slow_down_interval(output.slow_down_interval, curr_time), &marker_array);
 
   return marker_array;
 }

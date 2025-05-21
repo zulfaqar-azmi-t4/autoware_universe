@@ -35,6 +35,7 @@
 #include <autoware_map_msgs/msg/lanelet_map_bin.hpp>
 #include <autoware_planning_msgs/msg/trajectory.hpp>
 #include <autoware_planning_msgs/msg/trajectory_point.hpp>
+#include <autoware_vehicle_msgs/msg/steering_report.hpp>
 #include <geometry_msgs/msg/pose_with_covariance.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
@@ -55,6 +56,7 @@ using BoundaryThreshold = boundary_departure_checker::Side<double>;
 using autoware_control_msgs::msg::Control;
 using autoware_utils_geometry::LinearRing2d;
 using autoware_utils_geometry::Segment2d;
+using autoware_vehicle_msgs::msg::SteeringReport;
 using boundary_departure_checker::BoundarySideWithIdx;
 using boundary_departure_checker::EgoSide;
 using boundary_departure_checker::EgoSides;

@@ -30,7 +30,8 @@
 namespace autoware::boundary_departure_checker::utils
 {
 std::vector<LinearRing2d> create_vehicle_footprints(
-  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info);
+  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
+  const SteeringReport & current_steering);
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
   const FootprintMargin & margin);
