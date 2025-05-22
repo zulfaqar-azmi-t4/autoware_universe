@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "autoware/tensorrt_plugins/get_indices_pairs_implicit_gemm_plugin_creator.hpp"
+#include "autoware/tensorrt_plugins/get_indices_pairs_plugin_creator.hpp"
 
-#include "autoware/tensorrt_plugins/get_indices_pairs_implicit_gemm_plugin.hpp"
+#include "autoware/tensorrt_plugins//get_indices_pairs_plugin.hpp"
 #include "autoware/tensorrt_plugins/plugin_utils.hpp"
 
 #include <NvInferRuntimePlugin.h>
@@ -23,22 +23,20 @@
 #include <cstring>
 #include <exception>
 #include <iostream>
-#include <mutex>
 #include <sstream>
 #include <string>
 
 namespace nvinfer1::plugin
 {
 
-REGISTER_TENSORRT_PLUGIN(GetIndicesPairsImplicitGemmPluginCreator);
+REGISTER_TENSORRT_PLUGIN(GetIndicesPairsPluginCreator);
 
-GetIndicesPairsImplicitGemmPluginCreator::GetIndicesPairsImplicitGemmPluginCreator()
+GetIndicesPairsPluginCreator::GetIndicesPairsPluginCreator()
 {
   plugin_attributes_.clear();
   plugin_attributes_.emplace_back("algo", nullptr, PluginFieldType::kINT32, 1);
   plugin_attributes_.emplace_back("batch_size", nullptr, PluginFieldType::kINT32, 1);
   plugin_attributes_.emplace_back("dilation", nullptr, PluginFieldType::kINT32, 3);
-  plugin_attributes_.emplace_back("is_train", nullptr, PluginFieldType::kINT32, 1);
   plugin_attributes_.emplace_back("ksize", nullptr, PluginFieldType::kINT32, 3);
   plugin_attributes_.emplace_back("out_padding", nullptr, PluginFieldType::kINT32, 3);
   plugin_attributes_.emplace_back("padding", nullptr, PluginFieldType::kINT32, 3);
@@ -52,14 +50,13 @@ GetIndicesPairsImplicitGemmPluginCreator::GetIndicesPairsImplicitGemmPluginCreat
   fc_.fields = plugin_attributes_.data();
 }
 
-nvinfer1::PluginFieldCollection const *
-GetIndicesPairsImplicitGemmPluginCreator::getFieldNames() noexcept
+nvinfer1::PluginFieldCollection const * GetIndicesPairsPluginCreator::getFieldNames() noexcept
 {
   // This is only used in the build phase.
   return &fc_;
 }
 
-IPluginV3 * GetIndicesPairsImplicitGemmPluginCreator::createPlugin(
+IPluginV3 * GetIndicesPairsPluginCreator::createPlugin(
   char const * name, PluginFieldCollection const * fc, TensorRTPhase phase) noexcept
 {
   // The build phase and the deserialization phase are handled differently.
@@ -69,9 +66,9 @@ IPluginV3 * GetIndicesPairsImplicitGemmPluginCreator::createPlugin(
       nvinfer1::PluginField const * fields{fc->fields};
       std::int32_t num_fields{fc->nbFields};
 
-      PLUGIN_VALIDATE(num_fields == 11);
+      PLUGIN_VALIDATE(num_fields == 10);
 
-      GetIndicesPairsImplicitGemmParameters parameters;
+      GetIndicesPairsParameters parameters;
 
       for (std::int32_t i{0}; i < num_fields; ++i) {
         const std::string attr_name = fields[i].name;
@@ -84,10 +81,6 @@ IPluginV3 * GetIndicesPairsImplicitGemmPluginCreator::createPlugin(
         if (attr_name == "algo") {
           PLUGIN_VALIDATE(type == nvinfer1::PluginFieldType::kINT32);
           parameters.algo = static_cast<std::int32_t const *>(fields[i].data)[0];
-        }
-        if (attr_name == "is_train") {
-          PLUGIN_VALIDATE(type == nvinfer1::PluginFieldType::kINT32);
-          parameters.is_train = static_cast<std::int32_t const *>(fields[i].data)[0];
         }
         if (attr_name == "dilation") {
           PLUGIN_VALIDATE(type == nvinfer1::PluginFieldType::kINT32);
@@ -216,10 +209,6 @@ IPluginV3 * GetIndicesPairsImplicitGemmPluginCreator::createPlugin(
       logDebug(ss.str().c_str());
 
       ss.str("");
-      ss << "is_train: " << parameters.is_train;
-      logDebug(ss.str().c_str());
-
-      ss.str("");
       ss << "dilation: ";
       for (auto const & val : parameters.dilation) {
         ss << val << " ";
@@ -271,8 +260,8 @@ IPluginV3 * GetIndicesPairsImplicitGemmPluginCreator::createPlugin(
       ss << "transpose: " << parameters.transpose;
       logDebug(ss.str().c_str());
 
-      GetIndicesPairsImplicitGemmPlugin * const plugin{
-        new GetIndicesPairsImplicitGemmPlugin{std::string(name), parameters}};
+      GetIndicesPairsPlugin * const plugin{
+        new GetIndicesPairsPlugin{std::string(name), parameters}};
       return plugin;
     } catch (std::exception const & e) {
       caughtError(e);
@@ -288,12 +277,11 @@ IPluginV3 * GetIndicesPairsImplicitGemmPluginCreator::createPlugin(
       char const * attr_name = fields[0].name;
       PLUGIN_VALIDATE(!strcmp(attr_name, "parameters"));
       PLUGIN_VALIDATE(fields[0].type == nvinfer1::PluginFieldType::kUNKNOWN);
-      PLUGIN_VALIDATE(fields[0].length == sizeof(GetIndicesPairsImplicitGemmParameters));
-      GetIndicesPairsImplicitGemmParameters params{
-        *(static_cast<GetIndicesPairsImplicitGemmParameters const *>(fields[0].data))};
+      PLUGIN_VALIDATE(fields[0].length == sizeof(GetIndicesPairsParameters));
+      GetIndicesPairsParameters params{
+        *(static_cast<GetIndicesPairsParameters const *>(fields[0].data))};
 
-      GetIndicesPairsImplicitGemmPlugin * const plugin{
-        new GetIndicesPairsImplicitGemmPlugin{std::string(name), params}};
+      GetIndicesPairsPlugin * const plugin{new GetIndicesPairsPlugin{std::string(name), params}};
       return plugin;
     } catch (std::exception const & e) {
       caughtError(e);
