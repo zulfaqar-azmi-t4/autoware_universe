@@ -20,6 +20,7 @@
 
 #include <fmt/format.h>
 #include <lanelet2_core/geometry/LaneletMap.h>
+#include <range/v3/view.hpp>
 
 #include <algorithm>
 #include <string>
@@ -101,7 +102,23 @@ std::vector<LinearRing2d> create_vehicle_footprints(
       return transform_vector(local_vehicle_footprint, pose2transform(p.pose));
     });
 
-  return vehicle_footprints;
+  if(vehicle_footprints.empty() || vehicle_footprints.front().size() < 6){
+    return vehicle_footprints;
+  }
+
+  LinearRing2d footprint{vehicle_footprints.back()[6]};
+
+  for(const auto & fp:vehicle_footprints | ranges::views::reverse){
+    footprint.push_back(fp[1]);
+  }
+  footprint.push_back(vehicle_footprints.front()[3]);
+  footprint.push_back(vehicle_footprints.front()[4]);
+
+  for (const auto & fp : vehicle_footprints) {
+    footprint.push_back(fp[6]);
+  }
+
+  return {footprint};
 }
 
 TrajectoryPoints cutTrajectory(const TrajectoryPoints & trajectory, const double length)
