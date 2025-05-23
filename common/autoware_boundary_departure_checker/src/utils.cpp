@@ -17,10 +17,10 @@
 #include <autoware/motion_utils/trajectory/trajectory.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
 #include <autoware_utils/math/unit_conversion.hpp>
+#include <range/v3/view.hpp>
 
 #include <fmt/format.h>
 #include <lanelet2_core/geometry/LaneletMap.h>
-#include <range/v3/view.hpp>
 
 #include <algorithm>
 #include <string>
@@ -102,13 +102,13 @@ std::vector<LinearRing2d> create_vehicle_footprints(
       return transform_vector(local_vehicle_footprint, pose2transform(p.pose));
     });
 
-  if(vehicle_footprints.empty() || vehicle_footprints.front().size() < 6){
+  if (vehicle_footprints.empty() || vehicle_footprints.front().size() < 6) {
     return vehicle_footprints;
   }
 
   LinearRing2d footprint{vehicle_footprints.back()[6]};
 
-  for(const auto & fp:vehicle_footprints | ranges::views::reverse){
+  for (const auto & fp : vehicle_footprints | ranges::views::reverse) {
     footprint.push_back(fp[1]);
   }
   footprint.push_back(vehicle_footprints.front()[3]);

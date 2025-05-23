@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+#include <autoware/trajectory/trajectory_point.hpp>
 #include <autoware_utils/geometry/boost_geometry.hpp>
 #include <autoware_utils/geometry/pose_deviation.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info.hpp>
@@ -54,6 +55,7 @@ using SegmentWithIdx = std::tuple<Segment2d, lanelet::Id, size_t, size_t>;
 namespace bg = boost::geometry;
 namespace bgi = bg::index;
 using UncrossableBoundRTree = boost::geometry::index::rtree<SegmentWithIdx, bgi::rstar<16>>;
+namespace trajectory = experimental::trajectory;  // NOLINT
 
 using geometry_msgs::msg::Point;
 using geometry_msgs::msg::Pose;

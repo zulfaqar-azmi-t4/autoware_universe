@@ -87,6 +87,7 @@ using boundary_departure_checker::DepartureType;                                
 using boundary_departure_checker::Side;                                                 // NOLINT
 using BoundaryDepartureChecker = boundary_departure_checker::BoundaryDepartureChecker;  // NOLINT
 namespace bdc_utils = boundary_departure_checker::utils;                                // NOLINT
+namespace trajectory = experimental::trajectory;                                        // NOLINT
 using boundary_departure_checker::FootprintMargin;                                      // NOLINT
 using BDCParam = boundary_departure_checker::Param;
 }  // namespace autoware::motion_velocity_planner

@@ -23,6 +23,24 @@
 
 namespace autoware::motion_velocity_planner::utils
 {
+
+template <typename Container, typename Predicate>
+void erase_if(Container & container, Predicate pred)
+{
+  for (auto it = container.begin(); it != container.end();) {
+    if (pred(*it)) {  // For map, *it is a std::pair, so pred should handle pair<Key, Value>
+      it = container.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+  inline geometry_msgs::msg::Point to_geom_pt(const Point2d & point)
+  {
+    return autoware_utils::to_msg(point.to_3d(0.0));
+  }
+
 std::pair<std::string, DeparturePoint> create_departure_point(
   const Point2d & candidate_point, const DepartureType & departure_type,
   const param::NodeParam & node_param, std::string_view direction);
