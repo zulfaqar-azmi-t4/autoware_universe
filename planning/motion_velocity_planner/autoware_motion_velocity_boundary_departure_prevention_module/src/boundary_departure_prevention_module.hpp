@@ -59,17 +59,10 @@ private:
 
   void check_departure_points_lifetime();
 
-  template <typename Container, typename Predicate>
-  void erase_if(Container & container, Predicate pred)
-  {
-    for (auto it = container.begin(); it != container.end();) {
-      if (pred(*it)) {  // For map, *it is a std::pair, so pred should handle pair<Key, Value>
-        it = container.erase(it);
-      } else {
-        ++it;
-      }
-    }
-  }
+  VelocityPlanningResult plan_slow_down_intervals(
+    [[maybe_unused]] const TrajectoryPoints & raw_trajectory_points,
+    [[maybe_unused]] const TrajectoryPoints & smoothed_trajectory_points,
+    const std::shared_ptr<const PlannerData> & planner_data);
 
   bool is_critical_departing_{false};
   std::string module_name_;

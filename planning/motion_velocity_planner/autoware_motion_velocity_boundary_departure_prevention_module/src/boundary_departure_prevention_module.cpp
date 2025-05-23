@@ -170,216 +170,11 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
       std::make_unique<BoundaryDepartureChecker>(ll_map_ptr, vehicle_info, node_param_.bdc_param);
   }
   processing_times_ms_[init_bdc_ptr] = stopwatch_ms.toc(init_bdc_ptr);
-  if (!ego_pred_traj_ptr_) {
-    fmt::print("Ego predicted trajectory is invalid.\n");
-    return {};
-  }
 
-  const auto & curr_odom = planner_data->current_odometry;
-  const auto & curr_pose = curr_odom.pose;
-  const auto & curr_twist = curr_odom.twist.twist;
-  const auto & goal_pose = raw_trajectory_points.back().pose;
-
-  if (autoware_utils::calc_distance2d(curr_pose.pose.position, goal_pose.position) < 1.0) {
-    return {};
-  }
-
-  if (raw_trajectory_points.empty()) {
-    fmt::print("raw_trajectory_points is empty.\n");
-    return {};
-  }
-
-  stopwatch_ms.tic(convert_raw_traj_to_aw_traj);
-  const auto raw_trajectory_opt =
-    autoware::experimental::trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(
-      raw_trajectory_points);
-  processing_times_ms_[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
-
-  if (!raw_trajectory_opt) {
-    fmt::print("Unable to convert raw_trajectory_points to trajectory class.\n");
-    return {};
-  }
-
-  stopwatch_ms.tic(convert_ego_pred_to_aw_traj);
-  const auto ego_traj_opt =
-    autoware::experimental::trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(
-      ego_pred_traj_ptr_->points);
-  processing_times_ms_[convert_ego_pred_to_aw_traj] = stopwatch_ms.toc(convert_ego_pred_to_aw_traj);
-
-  constexpr double min_velocity = 0.01;
-  const auto raw_abs_velocity = std::abs(curr_twist.linear.x);
-  const auto abs_velocity = raw_abs_velocity < min_velocity ? 0.0 : raw_abs_velocity;
-
-  stopwatch_ms.tic(find_slow_down_points);
-  const auto output_opt = plan(
-    curr_pose, abs_velocity, ego_pred_traj_ptr_->points, node_param_.pred_path_footprint.scale);
-
-  if (!output_opt) {
-    fmt::print("failed reason({}): {}", __func__, output_opt.error());
-    return {};
-  }
-
-  processing_times_ms_[find_slow_down_points] = stopwatch_ms.toc(find_slow_down_points);
-
-  SlowDownInterpolator interpolator(planner_data, 0.25, 0.5, 5.0 / 3.6, 35.0 / 3.6, -1.5);
-
-  output_.is_critical_departing = false;
-
-  updater_ptr_->force_update();
-
-  const auto dist_to_ego =
-    experimental::trajectory::closest(*raw_trajectory_opt, ego_pred_traj_ptr_->points.front().pose);
-  output_.slow_down_interval.clear();
-
-  StopWatch<std::chrono::milliseconds> stopwatch;
-  std::map<std::string, double> time_print;
-  time_print["total"] = 0;
-  std::vector<SlowdownInterval> slowdown_intervals;
-  for (auto && pair : output_.departure_points | ranges::views::enumerate) {
-    const auto & [idx, enumerated_pt] = pair;
-    auto & [uuid, departure_point] = enumerated_pt;
-
-    stopwatch.tic("lat_dist_to_bound_m");
-    auto lat_dist_to_bound_m =
-      output_.side_to_bound_projections[departure_point.direction].front().projection.dist;
-    time_print["lat_dist_to_bound_m"] = stopwatch.toc("lat_dist_to_bound_m");
-    time_print["total"] += time_print["lat_dist_to_bound_m"];
-
-    stopwatch.tic("arclength_to_point_m");
-    const auto arclength_to_point_m = experimental::trajectory::closest(
-      *raw_trajectory_opt, autoware_utils::to_msg(departure_point.point.to_3d(0.0)));
-    time_print["arclength_to_point_m"] = stopwatch.toc("arclength_to_point_m");
-    time_print["total"] += time_print["arclength_to_point_m"];
-
-    stopwatch.tic("lat_dist_to_bound_m");
-    const auto vel_opt =
-      interpolator.get_interp_to_point(arclength_to_point_m, lat_dist_to_bound_m);
-    time_print["lat_dist_to_bound_m"] = stopwatch.toc("lat_dist_to_bound_m");
-    time_print["total"] += time_print["lat_dist_to_bound_m"];
-
-    if (!vel_opt) {
-      fmt::print("{}\n", vel_opt.error());
-
-      for (const auto & [key, duration] : time_print) {
-        if (key == "total") {
-          continue;
-        }
-        fmt::print("idx: {}, key: {}, time: {}\n", idx, key, duration);
-      }
-      continue;
-    }
-
-    const auto dpt_geom_pt = autoware_utils::to_msg(departure_point.point.to_3d());
-    stopwatch.tic("dist_to_departure_point");
-    const auto dist_to_departure_point =
-      experimental::trajectory::closest(*raw_trajectory_opt, dpt_geom_pt) -
-      vehicle_info.front_overhang_m - vehicle_info.wheel_base_m;
-    time_print["dist_to_departure_point"] = stopwatch.toc("dist_to_departure_point");
-    time_print["total"] += time_print["dist_to_departure_point"];
-
-    if (dist_to_ego >= dist_to_departure_point) {
-      fmt::print(
-        "Slow down distance exceeded distance to slow down point by {} [m]\n",
-        dist_to_ego - dist_to_departure_point);
-
-      for (const auto & [key, duration] : time_print) {
-        if (key == "total") {
-          continue;
-        }
-        fmt::print("idx: {}, key: {}, time: {}\n", idx, key, duration);
-      }
-      continue;
-    }
-
-    const auto vel = std::get<1>(*vel_opt);
-
-    departure_point.velocity = vel;
-
-    stopwatch.tic("find_start_pose");
-    auto start_pose = raw_trajectory_opt->compute(dist_to_ego + std::get<0>(*vel_opt));
-    time_print["find_start_pose"] = stopwatch.toc("find_start_pose");
-    time_print["total"] += time_print["find_start_pose"];
-
-    stopwatch.tic("find_stop_pose");
-    auto end_pose = raw_trajectory_opt->compute(dist_to_departure_point);
-    time_print["find_stop_pose"] = stopwatch.toc("find_stop_pose");
-    time_print["total"] += time_print["find_stop_pose"];
-
-    departure_point.dist_on_traj = dist_to_departure_point;
-    if (departure_point.type == DepartureType::CRITICAL_DEPARTURE) {
-      for (const auto & [key, duration] : time_print) {
-        if (key == "total") {
-          continue;
-        }
-        fmt::print("idx: {}, key: {}, time: {}\n", idx, key, duration);
-      }
-      continue;
-    }
-
-    stopwatch.tic("inserting_point");
-    output_.slow_down_interval.emplace_back(start_pose.pose.position, end_pose.pose.position);
-    slowdown_intervals.emplace_back(start_pose.pose.position, end_pose.pose.position, vel);
-    time_print["inserting_point"] = stopwatch.toc("inserting_point");
-    time_print["total"] += time_print["inserting_point"];
-
-    for (const auto & [key, duration] : time_print) {
-      if (key == "total") {
-        continue;
-      }
-      fmt::print("idx: {}, key: {}, time: {}\n", idx, key, duration);
-    }
-  }
-
-  fmt::print("Total time {} ms\n", time_print["total"]);
-
-  if (debug_publisher_) {
-    slow_down_wall_marker_.markers.clear();
-    autoware_utils::append_marker_array(
-      debug::create_debug_marker_array(output_, clock_ptr_, curr_pose.pose.position.z),
-      &slow_down_wall_marker_);
-    debug_publisher_->publish(slow_down_wall_marker_);
-  }
-
-  // int i = 0;
-  // for (const auto & [start_idx, end_idx] : slow_down_candidate_idx) {
-  //   if (
-  //     start_idx >= output_.ego_sides_from_footprints.size() ||
-  //     end_idx >= output_.ego_sides_from_footprints.size()) {
-  //     continue;
-  //   }
-  //   const auto start_dist = output_.ego_sides_from_footprints.at(start_idx).dist_from_start;
-  //   const auto end_dist = output_.ego_sides_from_footprints.at(end_idx).dist_from_start;
-
-  //   const auto slow_down_start_idx = insert_to_traj(start_dist + dist_to_ego);
-  //   const auto slow_down_end_idx =
-  //     (start_dist < end_dist) ? insert_to_traj(end_dist + dist_to_ego) : std::nullopt;
-
-  //   if (!slow_down_start_idx) {
-  //     continue;
-  //   }
-
-  //   slowdown_intervals.emplace_back(
-  //     updated_traj_points.at(slow_down_start_idx ? *slow_down_start_idx : 0).pose.position,
-  //     updated_traj_points.at(*slow_down_end_idx).pose.position,
-  //     node_param_.slow_down_near_boundary.slow_down_behavior.velocity_mps);
-
-  //   if (slow_down_start_idx && slow_down_end_idx) {
-  //     const auto slow_down_wall_idx = std::invoke([&]() {
-  //       const auto ego_idx = planner_data->find_index(updated_traj_points, curr_pose.pose);
-  //       if (ego_idx < *slow_down_start_idx) return *slow_down_start_idx;
-  //       if (ego_idx < *slow_down_end_idx) return ego_idx;
-  //       return *slow_down_end_idx;
-  //     });
-
-  //     slow_down_wall_marker_.markers.clear();
-  //     const auto marker = autoware::motion_utils::createSlowDownVirtualWallMarker(
-  //       updated_traj_points.at(slow_down_wall_idx).pose, "boundary departure", clock_ptr_->now(),
-  //       ++i);
-  //     autoware_utils::append_marker_array(marker, &slow_down_wall_marker_);
-  //   }
-  // }
-  VelocityPlanningResult result;
-  result.slowdown_intervals = slowdown_intervals;
+  stopwatch_ms.tic("plan_slow_down");
+  auto result =
+    plan_slow_down_intervals(raw_trajectory_points, smoothed_trajectory_points, planner_data);
+  fmt::print("plan_slow_down takes {} ms.\n", stopwatch_ms.toc("plan_slow_down"));
 
   return result;
 }
@@ -504,7 +299,7 @@ void BoundaryDeparturePreventionModule::check_departure_points_lifetime()
   for (const auto side_key : side_keys) {
     remove_exist_point(
       side_to_bound[side_key], output_.departure_points, departure_statuses[side_key]);
-    erase_if(
+    utils::erase_if(
       output_.departure_points, [](const auto & pt) -> bool { return !pt.second.is_alive(); });
 
     for (const auto & [status, idx] : output_.departure_statuses[side_key]) {
@@ -514,6 +309,222 @@ void BoundaryDeparturePreventionModule::check_departure_points_lifetime()
       departure_points_lifetime_watch_.tic(departure_point.first);
     }
   }
+}
+
+VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_intervals(
+  [[maybe_unused]] const TrajectoryPoints & raw_trajectory_points,
+  [[maybe_unused]] const TrajectoryPoints & smoothed_trajectory_points,
+  const std::shared_ptr<const PlannerData> & planner_data)
+{
+  const auto & vehicle_info = planner_data->vehicle_info_;
+  const auto & ll_map_ptr = planner_data->route_handler->getLaneletMapPtr();
+  const auto & curr_odom = planner_data->current_odometry;
+  const auto & curr_pose = curr_odom.pose;
+  const auto & curr_position = curr_pose.pose.position;
+  const auto & goal_position = raw_trajectory_points.back().pose.position;
+  const auto & odom_abs_vel = std::abs(curr_odom.twist.twist.linear.x);
+  constexpr auto min_vel = 0.01;
+  constexpr auto min_effective_dist = 1.0;
+  const auto abs_vel = odom_abs_vel < min_vel ? 0.0 : odom_abs_vel;
+  const auto ego_fr = vehicle_info.front_overhang_m - vehicle_info.wheel_base_m;
+
+  StopWatch<std::chrono::milliseconds> stopwatch_ms;
+  if (!ego_pred_traj_ptr_) {
+    fmt::print("Ego predicted trajectory is invalid.\n");
+    return {};
+  }
+
+  if (autoware_utils::calc_distance2d(curr_position, goal_position) < min_effective_dist) {
+    fmt::print("Distance from ego to goal is less than {}.\n", min_effective_dist);
+    return {};
+  }
+
+  if (raw_trajectory_points.empty()) {
+    fmt::print("raw_trajectory_points is empty.\n");
+    return {};
+  }
+
+  stopwatch_ms.tic(convert_raw_traj_to_aw_traj);
+  const auto aw_raw_traj_opt =
+    trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(raw_trajectory_points);
+  processing_times_ms_[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
+
+
+  if (!aw_raw_traj_opt) {
+    fmt::print(
+      "Failed to convert raw_trajectory_points. Reason: {}\n", aw_raw_traj_opt.error().what);
+    return {};
+  }
+
+  const auto dist_to_ego =
+    experimental::trajectory::closest(*aw_raw_traj_opt, ego_pred_traj_ptr_->points.front().pose);
+
+  stopwatch_ms.tic(convert_raw_traj_to_aw_traj);
+  const auto aw_ego_pred_traj_opt =
+    trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(ego_pred_traj_ptr_->points);
+  processing_times_ms_[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
+
+  if (!aw_ego_pred_traj_opt) {
+    fmt::print(
+      "Failed to generate ego_pred_traj_ptr->points. Reason: {}\n",
+      aw_ego_pred_traj_opt.error().what);
+  }
+
+  // for(const auto & [uuid, departure_point] : output_.departure_points){
+  //   if(!departure_point.point_on_traj){
+  //     continue;
+  //   }
+  //   const auto dpt_geom_pt = utils::to_geom_pt(departure_point.point);
+  //   const auto dist_pt_on_traj = experimental::trajectory::closest(*aw_raw_traj_opt, departure_point.point_on_traj.value());
+  //   if((dist_to_ego + ego_fr) < std::numeric_limits<double>::epsilon()){
+
+  //   }
+  // }
+
+
+
+  stopwatch_ms.tic(find_slow_down_points);
+  const auto output_opt =
+    plan(curr_pose, abs_vel, ego_pred_traj_ptr_->points, node_param_.pred_path_footprint.scale);
+  processing_times_ms_[find_slow_down_points] = stopwatch_ms.toc(find_slow_down_points);
+
+  if (!output_opt) {
+    fmt::print("failed reason({}): {}", __func__, output_opt.error());
+    return {};
+  }
+
+  SlowDownInterpolator interpolator(planner_data, 0.25, 0.5, 5.0 / 3.6, 35.0 / 3.6, -1.5);
+
+  output_.is_critical_departing = false;
+  updater_ptr_->force_update();
+
+  output_.slow_down_interval.clear();
+
+  StopWatch<std::chrono::milliseconds> stopwatch;
+  std::map<std::string, double> time_print;
+  time_print["total"] = 0;
+  std::vector<SlowdownInterval> slowdown_intervals;
+  for (auto && pair : output_.departure_points | ranges::views::enumerate) {
+    const auto & [idx, enumerated_pt] = pair;
+    auto & [uuid, departure_point] = enumerated_pt;
+
+    stopwatch.tic("lat_dist_to_bound_m");
+    auto lat_dist_to_bound_m =
+      output_.side_to_bound_projections[departure_point.direction].front().projection.dist;
+    time_print["lat_dist_to_bound_m"] = stopwatch.toc("lat_dist_to_bound_m");
+    time_print["total"] += time_print["lat_dist_to_bound_m"];
+
+    stopwatch.tic("dpt_pt_dist_on_traj_m");
+    const auto dpt_pt_dist_on_traj_m = experimental::trajectory::closest(
+                                                                         *aw_raw_traj_opt, utils::to_geom_pt(departure_point.point));
+    time_print["dpt_pt_dist_on_traj_m"] = stopwatch.toc("dpt_pt_dist_on_traj_m");
+    time_print["total"] += time_print["dpt_pt_dist_on_traj_m"];
+
+    stopwatch.tic("interpolate_velocity");
+    const auto vel_opt =
+      interpolator.get_interp_to_point(dpt_pt_dist_on_traj_m, lat_dist_to_bound_m);
+    time_print["interpolate_velocity"] = stopwatch.toc("interpolate_velocity");
+    time_print["total"] += time_print["interpolate_velocity"];
+
+    if (!vel_opt) {
+      fmt::print("{}\n", vel_opt.error());
+
+      for (const auto & [key, duration] : time_print) {
+        if (key == "total") {
+          continue;
+        }
+        fmt::print("idx: {}, key: {}, time: {}\n", idx, key, duration);
+      }
+      continue;
+    }
+
+    const auto dpt_geom_pt = autoware_utils::to_msg(departure_point.point.to_3d());
+
+    stopwatch.tic("dist_to_departure_point");
+    const auto dist_to_departure_point =
+      experimental::trajectory::closest(*aw_raw_traj_opt, dpt_geom_pt) -
+      vehicle_info.front_overhang_m - vehicle_info.wheel_base_m;
+    time_print["dist_to_departure_point"] = stopwatch.toc("dist_to_departure_point");
+    time_print["total"] += time_print["dist_to_departure_point"];
+
+    stopwatch.tic("find_stop_pose");
+    auto end_pose = aw_raw_traj_opt->compute(dist_to_departure_point);
+    time_print["find_stop_pose"] = stopwatch.toc("find_stop_pose");
+    time_print["total"] += time_print["find_stop_pose"];
+
+    if (!departure_point.point_on_traj) {
+      departure_point.point_on_traj = end_pose;
+    } else {
+      const auto point_diff = autoware_utils::calc_distance2d(
+        departure_point.point_on_traj->pose.position, end_pose.pose.position);
+      constexpr double point_diff_th{.5};
+      if (point_diff > point_diff_th) {
+        continue;
+      }
+    }
+
+    if (dist_to_ego >= dist_to_departure_point) {
+      fmt::print(
+        "Slow down distance exceeded distance to slow down point by {} [m]\n",
+        dist_to_ego - dist_to_departure_point);
+
+      for (const auto & [key, duration] : time_print) {
+        if (key == "total") {
+          continue;
+        }
+        fmt::print("idx: {}, key: {}, time: {}\n", idx, key, duration);
+      }
+      continue;
+    }
+
+    const auto vel = std::get<1>(*vel_opt);
+
+    departure_point.velocity = vel;
+
+    stopwatch.tic("find_start_pose");
+    auto start_pose = aw_raw_traj_opt->compute(dist_to_ego + std::get<0>(*vel_opt));
+    time_print["find_start_pose"] = stopwatch.toc("find_start_pose");
+    time_print["total"] += time_print["find_start_pose"];
+
+    departure_point.dist_on_traj = dist_to_departure_point;
+    if (departure_point.type == DepartureType::CRITICAL_DEPARTURE) {
+      for (const auto & [key, duration] : time_print) {
+        if (key == "total") {
+          continue;
+        }
+        fmt::print("idx: {}, key: {}, time: {}\n", idx, key, duration);
+      }
+      continue;
+    }
+
+    stopwatch.tic("inserting_point");
+    output_.slow_down_interval.emplace_back(start_pose.pose.position, end_pose.pose.position);
+    slowdown_intervals.emplace_back(start_pose.pose.position, end_pose.pose.position, vel);
+    time_print["inserting_point"] = stopwatch.toc("inserting_point");
+    time_print["total"] += time_print["inserting_point"];
+
+    for (const auto & [key, duration] : time_print) {
+      if (key == "total") {
+        continue;
+      }
+      fmt::print("idx: {}, key: {}, time: {}\n", idx, key, duration);
+    }
+  }
+
+  fmt::print("Total time {} ms\n", time_print["total"]);
+
+  if (debug_publisher_) {
+    slow_down_wall_marker_.markers.clear();
+    autoware_utils::append_marker_array(
+      debug::create_debug_marker_array(output_, clock_ptr_, curr_pose.pose.position.z),
+      &slow_down_wall_marker_);
+    debug_publisher_->publish(slow_down_wall_marker_);
+  }
+
+  VelocityPlanningResult result;
+  result.slowdown_intervals = slowdown_intervals;
+
+  return result;
 }
 }  // namespace autoware::motion_velocity_planner
 

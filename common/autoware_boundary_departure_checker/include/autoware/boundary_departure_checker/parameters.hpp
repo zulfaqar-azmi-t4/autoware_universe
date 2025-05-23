@@ -122,12 +122,14 @@ struct DeparturePoint
 {
   DepartureType type = DepartureType::NONE;
   std::string_view direction;
+  double dist_from_ego{0.0};
   double dist_on_traj{1000.0};
   double velocity{0.0};
   double lifetime{0.0};
   double th_dist_hysteresis{2.0};
   double th_lifetime{1.0};
   Point2d point;
+  std::optional<TrajectoryPoint> point_on_traj;
 
   [[nodiscard]] bool is_nearby(const Pose & pose) const { return is_nearby(pose.position); }
 
