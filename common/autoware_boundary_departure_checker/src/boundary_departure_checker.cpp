@@ -113,8 +113,8 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
   for (size_t i = 0; i < ab_enveloped_footprints.size(); ++i) {
     ab_enveloped_fp.emplace_back(ab_enveloped_footprints[i], ego_pred_traj[i].pose);
     ab_lon_tracking_fp.emplace_back(ab_lon_tracking[i], ego_pred_traj[i].pose);
-    ab_steering_fp.emplace_back(ab_steering_footprints[i], ego_pred_traj[i].pose);
   }
+  ab_steering_fp.emplace_back(ab_steering_footprints.front(), ego_pred_traj.front().pose);
 
   bdc_data.ab_enveloped_fp = std::move(ab_enveloped_fp);
   bdc_data.ab_lon_tracking_fp = std::move(ab_lon_tracking_fp);
