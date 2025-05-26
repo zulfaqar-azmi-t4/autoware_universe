@@ -81,6 +81,10 @@ struct Output
   DepartureTypeesIdx departure_statuses;
   std::vector<std::pair<geometry_msgs::msg::Point, geometry_msgs::msg::Point>> slow_down_interval;
 
+  trajectory::Trajectory<TrajectoryPoint> aw_ref_traj;
+  trajectory::Trajectory<TrajectoryPoint> aw_ego_traj;
+
+  DepartureIntervals departure_intervals;
   DeparturePoints departure_points;
   bool is_critical_departing{false};
 };

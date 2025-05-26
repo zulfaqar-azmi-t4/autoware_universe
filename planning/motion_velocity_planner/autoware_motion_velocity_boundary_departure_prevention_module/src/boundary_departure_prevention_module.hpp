@@ -45,19 +45,17 @@ private:
   void publish_topics(rclcpp::Node & node);
   tl::expected<param::Output, std::string> plan(
     const PoseWithCovariance & pose_with_covariance, const double abs_velocity,
-    const TrajectoryPoints & ego_pred_traj, const double footprint_margin_scale);
+    const TrajectoryPoints & ego_pred_traj,
+    const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
+    const trajectory::Trajectory<TrajectoryPoint> & aw_ego_traj,
+    const double footprint_margin_scale, const double dist_to_ego,
+    const VehicleInfo & vehicle_info);
   [[nodiscard]] bool is_data_ready(std::unordered_map<std::string, double> & processing_times);
   [[nodiscard]] bool is_data_valid() const;
   [[nodiscard]] bool is_data_timeout(const Odometry & odom) const;
 
-  bool found_nearby_points(
-    const Point2d & candidate_point, DeparturePoints & curr_departure_points);
-
-  void remove_exist_point(
-    const std::vector<ProjectionWithSegment> & projections, DeparturePoints & departure_points,
-    std::vector<param::DepartureTypeIdx> & statuses);
-
-  void check_departure_points_lifetime();
+  static bool found_nearby_points(
+    const Point2d & candidate_point, const DeparturePoints & curr_departure_points);
 
   VelocityPlanningResult plan_slow_down_intervals(
     [[maybe_unused]] const TrajectoryPoints & raw_trajectory_points,
@@ -72,8 +70,6 @@ private:
   rclcpp::TimerBase::SharedPtr timer_ptr_;
   MarkerArray slow_down_wall_marker_;
   static constexpr auto throttle_duration_ms{5000};
-
-  StopWatch<std::chrono::milliseconds> departure_points_lifetime_watch_;
 
   Trajectory::ConstSharedPtr ego_pred_traj_ptr_;
   Control::ConstSharedPtr control_cmd_ptr_;

@@ -123,9 +123,8 @@ Marker create_departure_points_marker(
   auto marker = create_default_marker(
     "map", curr_time, "departure_points", ++id, visualization_msgs::msg::Marker::SPHERE_LIST,
     create_marker_scale(0.25, 0.25, 1.0), color::yellow());
-  for (const auto & [uuid, point] : departure_points) {
-    auto pose = autoware_utils::to_msg(point.point.to_3d(base_link_z));
-    marker.points.push_back(pose);
+  for (const auto & pt : departure_points) {
+    marker.points.push_back(pt.to_geom_pt(base_link_z));
   }
   return marker;
 }

@@ -120,16 +120,16 @@ using EgoSides = std::vector<EgoSide>;
 
 struct DeparturePoint
 {
+  std::string uuid;
   DepartureType type = DepartureType::NONE;
-  std::string_view direction;
-  double dist_from_ego{0.0};
-  double dist_on_traj{1000.0};
-  double velocity{0.0};
-  double lifetime{0.0};
-  double th_dist_hysteresis{2.0};
-  double th_lifetime{1.0};
   Point2d point;
-  std::optional<TrajectoryPoint> point_on_traj;
+  std::string_view direction;
+  double th_dist_hysteresis{2.0};
+  double dist_on_traj{1000.0};
+  double dist_from_ego{0.0};
+  double velocity{0.0};
+  bool can_be_removed{false};
+  TrajectoryPoint point_on_prev_traj;
 
   [[nodiscard]] bool is_nearby(const Pose & pose) const { return is_nearby(pose.position); }
 
@@ -141,9 +141,27 @@ struct DeparturePoint
     return diff < th_dist_hysteresis;
   }
 
-  [[nodiscard]] bool is_alive() const { return lifetime <= th_lifetime; }
+  [[nodiscard]] Point to_geom_pt(const double z = 0.0) const
+  {
+    return autoware_utils::to_msg(point.to_3d(z));
+  }
+
+  bool operator<(const DeparturePoint & other) const { return dist_on_traj < other.dist_on_traj; }
 };
-using DeparturePoints = std::map<std::string, DeparturePoint>;
+
+using DeparturePoints = std::vector<DeparturePoint>;
+
+struct DepartureInterval
+{
+  TrajectoryPoint start;
+  TrajectoryPoint end;
+  std::string_view direction;
+  double start_dist_on_traj;
+  double end_dist_on_traj;
+
+  DeparturePoints candidates;
+};
+using DepartureIntervals = std::vector<DepartureInterval>;
 
 struct Param
 {

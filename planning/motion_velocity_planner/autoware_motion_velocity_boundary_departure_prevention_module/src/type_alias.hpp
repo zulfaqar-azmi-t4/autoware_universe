@@ -76,6 +76,8 @@ using autoware_utils::ProcessingTimePublisher;            // NOLINT
 using autoware_utils::StopWatch;                          // NOLINT
 using autoware_utils::to_msg;                             // NOLINT
 using autoware_utils_geometry::Point2d;                   // NOLINT
+using boundary_departure_checker::DepartureInterval;      // NOLINT
+using boundary_departure_checker::DepartureIntervals;     // NOLINT
 using boundary_departure_checker::DeparturePoint;         // NOLINT
 using boundary_departure_checker::DeparturePoints;        // NOLINT
 using boundary_departure_checker::Projection;             // NOLINT

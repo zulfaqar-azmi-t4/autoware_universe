@@ -23,18 +23,17 @@
 
 namespace autoware::motion_velocity_planner::utils
 {
-std::pair<std::string, DeparturePoint> create_departure_point(
+DeparturePoint create_departure_point(
   const Point2d & candidate_point, const DepartureType & departure_type,
   const param::NodeParam & node_param, std::string_view direction)
 {
   DeparturePoint point;
-  auto uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
+  point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
   point.point = candidate_point;
   point.direction = direction;
-  point.th_lifetime = node_param.th_departure_point_lifetime_s;
   point.th_dist_hysteresis = node_param.th_dist_hysteresis_m;
   point.type = departure_type;
-  return std::make_pair(uuid, point);
+  return point;
 }
 
 param::DepartureTypeesIdx check_departure_status(
