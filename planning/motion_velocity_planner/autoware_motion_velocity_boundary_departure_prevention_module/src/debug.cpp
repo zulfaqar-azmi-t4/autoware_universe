@@ -206,6 +206,18 @@ MarkerArray create_slow_down_interval(
   return marker_array;
 }
 
+Marker create_departure_interval_marker(
+  const DepartureIntervals & departure_intervals, Marker marker, std::string && ns)
+{
+  marker.ns = ns;
+  marker.color = color::magenta();
+  for (const auto & departure_interval : departure_intervals) {
+    marker.points.push_back(departure_interval.start.pose.position);
+    marker.points.push_back(departure_interval.end.pose.position);
+  }
+  return marker;
+}
+
 MarkerArray create_debug_marker_array(
   const param::Output & output, const rclcpp::Clock::SharedPtr & clock_ptr,
   const double base_link_z)
@@ -229,6 +241,8 @@ MarkerArray create_debug_marker_array(
     create_departure_points_marker(output.departure_points, curr_time, base_link_z));
   marker_array.markers.push_back(create_boundary_segments_marker(
     output.boundary_segments, marker, "boundary_segments", base_link_z));
+  marker_array.markers.push_back(
+    create_departure_interval_marker(output.departure_intervals, marker, "departure interval"));
   autoware_utils::append_marker_array(
     create_footprint_with_pose_marker(output.ab_enveloped_fp, curr_time, "envelop", base_link_z),
     &marker_array);

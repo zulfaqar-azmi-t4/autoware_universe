@@ -17,6 +17,8 @@
 #include "fmt/format.h"
 #include "str_map.hpp"
 
+#include <magic_enum.hpp>
+
 #include <string>
 #include <utility>
 #include <vector>
@@ -37,8 +39,9 @@ DeparturePoint create_departure_point(
 }
 
 param::DepartureTypeesIdx check_departure_status(
-  const EgoSides & ego_sides, const SideToBoundPojections & side_to_bound_projections,
-  const param::NodeParam & param, const double curr_vel)
+  [[maybe_unused]] const EgoSides & ego_sides,
+  const SideToBoundPojections & side_to_bound_projections, const param::NodeParam & param,
+  [[maybe_unused]] const double curr_vel)
 {
   param::DepartureTypeesIdx stats;
   const auto assign_status =
@@ -71,35 +74,6 @@ param::DepartureTypeesIdx check_departure_status(
         stats[side_key].emplace_back(status, idx_from_orig);
       }
     }
-  }
-
-  const auto is_far = [&](const auto & param, const auto dist_to_start) {
-    const auto braking_dist = utils::calc_braking_distance(
-      std::clamp(curr_vel, 5.0 / 3.6, 35.0 / 3.6), param.th_trigger.decel_mp2,
-      param.th_trigger.brake_delay_s, param.th_trigger.dist_error_m);
-    return (braking_dist > dist_to_start);
-  };
-
-  const auto cond = [&](const param::DepartureTypeIdx & side) {
-    const auto [status, idx] = side;
-    const auto dist_to_start = ego_sides.at(idx).dist_from_start;
-    if (status == DepartureType::CRITICAL_DEPARTURE) {
-      return is_far(param.stop_before_departure, dist_to_start);
-    }
-
-    if (status == DepartureType::APPROACHING_DEPARTURE) {
-      return is_far(param.slow_down_before_departure, dist_to_start);
-    }
-
-    if (status == DepartureType::NEAR_BOUNDARY) {
-      return is_far(param.slow_down_near_boundary, dist_to_start);
-    }
-    return true;
-  };
-
-  for (const auto side_key : side_keys) {
-    auto remove_itr = std::remove_if(stats[side_key].begin(), stats[side_key].end(), cond);
-    stats[side_key].erase(remove_itr, stats[side_key].end());
   }
 
   return stats;
@@ -148,5 +122,22 @@ std::vector<std::pair<size_t, size_t>> get_traj_indices_candidates(
       departure_stats.at(p1).second, departure_stats.at(p2 - 1).second);
   }
   return slow_down_candidate_idx;
+}
+
+void erase_after_first_match(DeparturePoints & departure_points)
+{
+  const auto find_cri_dpt = [](const DeparturePoint & point) {
+    return point.type == DepartureType::CRITICAL_DEPARTURE ||
+           point.type == DepartureType::APPROACHING_DEPARTURE;
+  };
+
+  auto crit_dpt_finder =
+    std::find_if(departure_points.begin(), departure_points.end(), find_cri_dpt);
+
+  if (
+    crit_dpt_finder != departure_points.end() &&
+    std::next(crit_dpt_finder) != departure_points.end()) {
+    departure_points.erase(std::next(crit_dpt_finder), departure_points.end());
+  }
 }
 }  // namespace autoware::motion_velocity_planner::utils

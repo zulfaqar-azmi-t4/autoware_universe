@@ -125,6 +125,8 @@ struct DeparturePoint
   Point2d point;
   std::string_view direction;
   double th_dist_hysteresis{2.0};
+  double th_lat_dist_to_bounday_hyteresis{0.01};
+  double lat_dist_to_bound{1000.0};
   double dist_on_traj{1000.0};
   double dist_from_ego{0.0};
   double velocity{0.0};
@@ -135,10 +137,18 @@ struct DeparturePoint
 
   [[nodiscard]] bool is_nearby(const Point & point) const { return is_nearby({point.x, point.y}); }
 
+  [[nodiscard]] bool is_close_to_bound() const
+  {
+    return (
+      (type == DepartureType::CRITICAL_DEPARTURE || type == DepartureType::APPROACHING_DEPARTURE) &&
+      std::abs(lat_dist_to_bound) < th_lat_dist_to_bounday_hyteresis);
+  }
+
   [[nodiscard]] bool is_nearby(const Point2d & candidate_point) const
   {
     const auto diff = boost::geometry::distance(point, candidate_point);
-    return diff < th_dist_hysteresis;
+
+    return !is_close_to_bound() && diff < th_dist_hysteresis;
   }
 
   [[nodiscard]] Point to_geom_pt(const double z = 0.0) const

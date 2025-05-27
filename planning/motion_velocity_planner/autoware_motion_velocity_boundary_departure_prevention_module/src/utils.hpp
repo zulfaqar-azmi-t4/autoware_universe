@@ -56,5 +56,6 @@ double calc_braking_distance(
 std::vector<std::pair<size_t, size_t>> get_traj_indices_candidates(
   const std::vector<param::DepartureTypeIdx> & departure_stats, const EgoSides & ego_sides,
   const double ego_length);
+void erase_after_first_match(DeparturePoints & departure_points);
 }  // namespace autoware::motion_velocity_planner::utils
 #endif  // UTILS_HPP_
