@@ -345,6 +345,7 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
           departure_interval.end_dist_on_traj <
             departure_point.dist_on_traj + vehicle_info.max_longitudinal_offset_m &&
           departure_interval.direction == departure_point.direction) {
+
           // althought name is point on prev traj, we already update them earlier
           departure_interval.end = departure_point.point_on_prev_traj;
           departure_point.can_be_removed = true;
@@ -352,37 +353,9 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
       }
     }
   }
-  output_.departure_points = departure_points;
-
-  // for (auto & pt : departure_points) {
-  //   const auto prev_point_dist_in_curr_traj =
-  //     trajectory::closest(output_.aw_ref_traj, pt.point_on_prev_traj);
-  //   const auto prev_point_in_curr_traj =
-  //   output_.aw_ref_traj.compute(prev_point_dist_in_curr_traj); const auto
-  //   dist_diff_in_curr_instance =
-  //     autoware_utils::calc_distance2d(prev_point_in_curr_traj.pose.position,
-  //     pt.point_on_prev_traj);
-  //   fmt::print(
-  //     "{}: dist diff {}, type {}\n", pt.uuid.substr(0, 6), dist_diff_in_curr_instance,
-  //     magic_enum::enum_name(pt.type));
-  //   constexpr auto th_dist_diff_from_prev_traj = 0.5;
-  //   pt.can_be_removed = dist_diff_in_curr_instance > th_dist_diff_from_prev_traj;
-  //   pt.dist_on_traj = prev_point_dist_in_curr_traj;
-
-  //   // even if we don't need to remove the point, we should still update the point to avoid bug
-  //   if (dist_diff_in_curr_instance >= std::numeric_limits<double>::epsilon()) {
-  //     pt.point_on_prev_traj = prev_point_in_curr_traj;
-  //   }
-  // }
-  // std::sort(departure_points.begin(), departure_points.end());
+  output_.departure_points = std::move(departure_points);
 
   fmt::print("total num of intervals {}\n", output_.departure_intervals.size());
-
-  departure_points.erase(
-    std::remove_if(
-      departure_points.begin(), departure_points.end(),
-      [](const DeparturePoint & pt) { return pt.can_be_removed; }),
-    departure_points.end());
 
   return output_;
 }
