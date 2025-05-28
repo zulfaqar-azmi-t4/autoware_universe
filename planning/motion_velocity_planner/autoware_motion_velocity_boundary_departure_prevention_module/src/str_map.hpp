@@ -26,6 +26,7 @@ static constexpr const char * convert_ego_pred_to_aw_traj = "convert_ego_pred_to
 static constexpr const char * find_slow_down_points = "find_slow_down_points";
 static constexpr const char * find_slow_down_intervals = "find_slow_down_intervals";
 constexpr std::array<std::string_view, 2> side_keys = {"left", "right"};
+constexpr std::array<std::string_view, 3> abnormality_keys = {"normal", "localization", "steering"};
 }  // namespace autoware::motion_velocity_planner
 
 #endif  // STR_MAP_HPP_

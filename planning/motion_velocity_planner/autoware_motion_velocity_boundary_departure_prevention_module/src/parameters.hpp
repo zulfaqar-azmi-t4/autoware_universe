@@ -28,6 +28,29 @@ namespace autoware::motion_velocity_planner::param
 using SegmentWithIdx = boundary_departure_checker::SegmentWithIdx;
 using UncrossableBoundRTree = boundary_departure_checker::UncrossableBoundRTree;
 
+template <typename T>
+struct AbnormalityType
+{
+  T normal;
+  T localization;
+  T steering;
+  T & operator[](const std::string_view key)
+  {
+    if (key == "normal") return normal;
+    if (key == "localization") return localization;
+    if (key == "steering") return steering;
+    throw std::out_of_range(std::string("Invalid key: ") + std::string(key));
+  }
+
+  const T & operator[](const std::string_view key) const
+  {
+    if (key == "normal") return normal;
+    if (key == "localization") return localization;
+    if (key == "steering") return steering;
+    throw std::out_of_range(std::string("Invalid key: ") + std::string(key));
+  }
+};
+
 struct BehaviorTriggerThreshold
 {
   double decel_mp2{-1.0};

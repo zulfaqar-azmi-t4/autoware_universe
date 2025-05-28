@@ -21,6 +21,8 @@
 #include <autoware_utils/math/normalization.hpp>
 #include <autoware_utils/math/unit_conversion.hpp>
 #include <autoware_utils/system/stop_watch.hpp>
+#include <range/v3/algorithm.hpp>
+#include <range/v3/view.hpp>
 #include <tl_expected/expected.hpp>
 
 #include <boost/geometry.hpp>
@@ -97,6 +99,8 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
                               (curr_vel * param_ptr_->lon_tracking.scale) +
                               param_ptr_->lon_tracking.extra_margin_m;
 
+  auto normal_footprint =
+    utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, {0.0, 0.0});
   auto ab_lon_tracking =
     utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, lon_tracking_margin);
   const auto ab_steering_footprints =
@@ -105,17 +109,22 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
     return tl::unexpected<std::string>("Mismatch footprint and predicted trajectory size.");
   }
 
+  FootprintWithPose normal_fp;
   FootprintWithPose ab_enveloped_fp;
   FootprintWithPose ab_lon_tracking_fp;
 
   FootprintWithPose ab_steering_fp;
   ab_enveloped_fp.reserve(ab_enveloped_footprints.size());
-  for (size_t i = 0; i < ab_enveloped_footprints.size(); ++i) {
-    ab_enveloped_fp.emplace_back(ab_enveloped_footprints[i], ego_pred_traj[i].pose);
-    ab_lon_tracking_fp.emplace_back(ab_lon_tracking[i], ego_pred_traj[i].pose);
+
+  for (auto && [ab_env, ab_lon, norm, pred] : ranges::views::zip(
+         ab_enveloped_footprints, ab_lon_tracking, normal_footprint, ego_pred_traj)) {
+    normal_fp.emplace_back(norm, pred.pose);
+    ab_enveloped_fp.emplace_back(ab_env, pred.pose);
+    ab_lon_tracking_fp.emplace_back(ab_lon, pred.pose);
   }
   ab_steering_fp.emplace_back(ab_steering_footprints.front(), ego_pred_traj.front().pose);
 
+  bdc_data.normal_fp = std::move(normal_fp);
   bdc_data.ab_enveloped_fp = std::move(ab_enveloped_fp);
   bdc_data.ab_lon_tracking_fp = std::move(ab_lon_tracking_fp);
   bdc_data.ab_steering_fp = std::move(ab_steering_fp);

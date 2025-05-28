@@ -169,6 +169,8 @@ struct DepartureInterval
   double start_dist_on_traj;
   double end_dist_on_traj;
 
+  bool start_at_traj_front{false};
+
   DeparturePoints candidates;
 };
 using DepartureIntervals = std::vector<DepartureInterval>;
@@ -198,6 +200,7 @@ using FootprintWithPose = std::vector<std::pair<LinearRing2d, Pose>>;
 
 struct BDCData
 {
+  FootprintWithPose normal_fp;
   FootprintWithPose ab_enveloped_fp;
   FootprintWithPose ab_lon_tracking_fp;
   FootprintWithPose ab_steering_fp;

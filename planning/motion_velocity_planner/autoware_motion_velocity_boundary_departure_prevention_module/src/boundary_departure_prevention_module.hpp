@@ -45,9 +45,8 @@ private:
   void publish_topics(rclcpp::Node & node);
   tl::expected<param::Output, std::string> plan(
     const PoseWithCovariance & pose_with_covariance, const double abs_velocity,
-    const TrajectoryPoints & ego_pred_traj,
+    const TrajectoryPoints & ref_traj, const TrajectoryPoints & ego_pred_traj,
     const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-    const trajectory::Trajectory<TrajectoryPoint> & aw_ego_traj,
     const double footprint_margin_scale, const double dist_to_ego,
     const VehicleInfo & vehicle_info);
   [[nodiscard]] bool is_data_ready(std::unordered_map<std::string, double> & processing_times);

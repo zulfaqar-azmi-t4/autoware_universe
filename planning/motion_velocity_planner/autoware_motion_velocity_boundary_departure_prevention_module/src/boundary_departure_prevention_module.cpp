@@ -29,6 +29,9 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
+#include <limits>
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -182,23 +185,29 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
 
 tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan(
   const PoseWithCovariance & pose_with_covariance, const double abs_velocity,
-  const TrajectoryPoints & ego_pred_traj,
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ego_traj, const double footprint_margin_scale,
+  const TrajectoryPoints & ref_traj, const TrajectoryPoints & ego_pred_traj,
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double footprint_margin_scale,
   const double dist_to_ego, const VehicleInfo & vehicle_info)
 {
-  autoware_utils::StopWatch<std::chrono::milliseconds> stop_watch;
+  autoware_utils::StopWatch<std::chrono::milliseconds> stopwatch_ms;
   const auto bdc_results =
     boundary_departure_checker_ptr_->get_projections_to_closest_uncrossable_boundaries(
       pose_with_covariance, abs_velocity, ego_pred_traj, footprint_margin_scale,
       *steering_angle_ptr_);
 
   if (!bdc_results) {
-    fmt::print("Failed reason({}): {}.\n", __func__, bdc_results.error());
     return tl::unexpected<std::string>(bdc_results.error());
   }
 
-  output_.aw_ego_traj = aw_ego_traj;
+  stopwatch_ms.tic(convert_raw_traj_to_aw_traj);
+  const auto aw_ego_pred_traj_opt =
+    trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(ego_pred_traj_ptr_->points);
+  processing_times_ms_[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
+
+  if (!aw_ego_pred_traj_opt) {
+    return tl::unexpected<std::string>(aw_ego_pred_traj_opt.error().what);
+  }
+  output_.aw_ego_traj = *aw_ego_pred_traj_opt;
   output_.aw_ref_traj = aw_ref_traj;
   output_.ab_enveloped_fp = bdc_results->ab_enveloped_fp;
   output_.ab_lon_tracking_fp = bdc_results->ab_lon_tracking_fp;
@@ -207,14 +216,14 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
   output_.side_to_bound_projections = bdc_results->side_to_bound_projections;
   output_.ab_steering_fp = bdc_results->ab_steering_fp;
 
-  output_.processing_time_map["get_closest_boundary_segments_from_side;"] = stop_watch.toc(true);
+  output_.processing_time_map["get_closest_boundary_segments_from_side;"] = stopwatch_ms.toc(true);
 
   output_.departure_statuses = utils::check_departure_status(
     output_.ego_sides_from_footprints, output_.side_to_bound_projections, node_param_,
     abs_velocity);
 
-  DeparturePoints left_dpts;
-  DeparturePoints right_dpts;
+  Side<DeparturePoints> dpts;
+  DeparturePoints departure_points;
   for (const auto direction : side_keys) {
     auto & departure_statuses = output_.departure_statuses[direction];
     const auto & side_to_bound = output_.side_to_bound_projections[direction];
@@ -255,28 +264,12 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
       }
 
       point.point_on_prev_traj = output_.aw_ref_traj.compute(point.dist_on_traj);
-
-      if (point.direction == "left") {
-        left_dpts.push_back(point);
-        continue;
-      }
-
-      if (point.direction == "right") {
-        right_dpts.push_back(point);
-        continue;
-      }
+      dpts[point.direction].push_back(point);
     }
+    std::sort(dpts[direction].begin(), dpts[direction].end());
+    utils::erase_after_first_match(dpts[direction]);
+    std::move(dpts[direction].begin(), dpts[direction].end(), std::back_inserter(departure_points));
   }
-
-  std::sort(left_dpts.begin(), left_dpts.end());
-  utils::erase_after_first_match(left_dpts);
-
-  std::sort(right_dpts.begin(), right_dpts.end());
-  utils::erase_after_first_match(right_dpts);
-
-  DeparturePoints departure_points;
-  std::move(left_dpts.begin(), left_dpts.end(), std::back_inserter(departure_points));
-  std::move(right_dpts.begin(), right_dpts.end(), std::back_inserter(departure_points));
 
   auto & departure_intervals_mut = output_.departure_intervals;
   if (departure_intervals_mut.empty()) {
@@ -311,12 +304,20 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
     }
   } else {
     // check if path is shifted
-    for (auto & departure_interval : departure_intervals_mut) {
+    for (auto & departure_interval_mut : departure_intervals_mut) {
       // update start end pose
-      departure_interval.start_dist_on_traj =
-        trajectory::closest(aw_ref_traj, departure_interval.start);
-      departure_interval.end_dist_on_traj =
-        trajectory::closest(aw_ref_traj, departure_interval.end);
+      if (!departure_interval_mut.start_at_traj_front) {
+        departure_interval_mut.start_dist_on_traj =
+          trajectory::closest(aw_ref_traj, departure_interval_mut.start);
+        constexpr auto th_dist_from_start{1.0};
+        departure_interval_mut.start_at_traj_front =
+          departure_interval_mut.start_dist_on_traj < th_dist_from_start;
+      } else {
+        departure_interval_mut.start_dist_on_traj = 0.0;
+        departure_interval_mut.start = ref_traj.front();
+      }
+      departure_interval_mut.end_dist_on_traj =
+        trajectory::closest(aw_ref_traj, departure_interval_mut.end);
     }
 
     // remove if ego already pass the end pose.
@@ -335,20 +336,19 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
 
     // check if departure point is in between any intervals.
     // if close to end pose, update end pose.
-    for (auto & departure_interval : departure_intervals_mut) {
-      for (auto & departure_point : departure_points) {
-        if (departure_point.can_be_removed) {
+    for (auto & departure_interval_mut : departure_intervals_mut) {
+      for (auto & departure_point_mut : departure_points) {
+        if (departure_point_mut.can_be_removed) {
           continue;
         }
 
         if (
-          departure_interval.end_dist_on_traj <
-            departure_point.dist_on_traj + vehicle_info.max_longitudinal_offset_m &&
-          departure_interval.direction == departure_point.direction) {
-
+          departure_interval_mut.end_dist_on_traj <
+            departure_point_mut.dist_on_traj + vehicle_info.max_longitudinal_offset_m &&
+          departure_interval_mut.direction == departure_point_mut.direction) {
           // althought name is point on prev traj, we already update them earlier
-          departure_interval.end = departure_point.point_on_prev_traj;
-          departure_point.can_be_removed = true;
+          departure_interval_mut.end = departure_point_mut.point_on_prev_traj;
+          departure_point_mut.can_be_removed = true;
         }
       }
     }
@@ -462,20 +462,9 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
   const auto dist_to_ego =
     experimental::trajectory::closest(*aw_raw_traj_opt, ego_pred_traj_ptr_->points.front().pose);
 
-  stopwatch_ms.tic(convert_raw_traj_to_aw_traj);
-  const auto aw_ego_pred_traj_opt =
-    trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(ego_pred_traj_ptr_->points);
-  processing_times_ms_[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
-
-  if (!aw_ego_pred_traj_opt) {
-    fmt::print(
-      "Failed to generate ego_pred_traj_ptr->points. Reason: {}\n",
-      aw_ego_pred_traj_opt.error().what);
-  }
-
   stopwatch_ms.tic(find_slow_down_points);
   const auto output_opt = plan(
-    curr_pose, abs_vel, ego_pred_traj_ptr_->points, *aw_raw_traj_opt, *aw_ego_pred_traj_opt,
+    curr_pose, abs_vel, raw_trajectory_points, ego_pred_traj_ptr_->points, *aw_raw_traj_opt,
     node_param_.pred_path_footprint.scale, dist_to_ego, vehicle_info);
   processing_times_ms_[find_slow_down_points] = stopwatch_ms.toc(find_slow_down_points);
 
@@ -488,7 +477,11 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
 
   output_.is_critical_departing = std::any_of(
     output_.departure_points.begin(), output_.departure_points.end(),
-    [](const DeparturePoint & pt) { return pt.type == DepartureType::CRITICAL_DEPARTURE; });
+    [abs_vel](const DeparturePoint & pt) {
+      const auto braking_dist = utils::compute_braking_distance(abs_vel, 0.0, -2.5, -1.5);
+      fmt::print("braking_dist = {} [m]\n", braking_dist);
+      return braking_dist < pt.dist_from_ego && pt.type == DepartureType::CRITICAL_DEPARTURE;
+    });
 
   if (output_.is_critical_departing) {
     fmt::print("is critical departure\n");
@@ -570,7 +563,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
                       : departure_interval.end.pose.position;
     if (dist_to_ego + std::get<0>(*vel_opt) > aw_raw_traj_opt->length()) {
       continue;
-    };
+    }
 
     stopwatch.tic("find_start_pose");
     auto start_pose = aw_raw_traj_opt->compute(dist_to_ego + std::get<0>(*vel_opt));
