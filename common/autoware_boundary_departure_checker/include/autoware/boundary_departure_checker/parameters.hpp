@@ -196,14 +196,15 @@ struct Input
   std::vector<std::string> boundary_types_to_detect;
 };
 
-using FootprintWithPose = std::vector<std::pair<LinearRing2d, Pose>>;
+using Footprint = LinearRing2d;
+using Footprints = std::vector<Footprint>;
 
 struct BDCData
 {
-  FootprintWithPose normal_fp;
-  FootprintWithPose ab_enveloped_fp;
-  FootprintWithPose ab_lon_tracking_fp;
-  FootprintWithPose ab_steering_fp;
+  Footprints normal_fp;
+  Footprints ab_enveloped_fp;
+  Footprints ab_lon_tracking_fp;
+  Footprints ab_steering_fp;
   EgoSides ego_sides_from_footprints;
   BoundarySideWithIdx boundary_segments;
   SideToBoundPojections side_to_bound_projections;
