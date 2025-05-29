@@ -34,7 +34,7 @@ std::vector<LinearRing2d> create_vehicle_footprints(
   const SteeringReport & current_steering);
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
-  const FootprintMargin & margin);
+  const FootprintMargin & margin = {0.0, 0.0});
 /**
  * @brief cut trajectory by length
  * @param trajectory input trajectory
@@ -141,7 +141,16 @@ std::vector<lanelet::ConstLineString3d> get_linestrings_near_footprint(
 FootprintMargin calc_extra_margin_from_pose_covariance(
   const geometry_msgs::msg::PoseWithCovariance & covariance, const double scale);
 
-EgoSides get_ego_sides_from_footprints(const FootprintWithPose & footprints_with_pose);
+tl::expected<std::vector<PoseWithDist>, std::string> get_poses_with_dist_on_trajectory(
+  const TrajectoryPoints & ego_pred_traj,
+  const trajectory::Trajectory<TrajectoryPoint> & aw_raw_traj);
+
+EgoSide get_ego_side_from_footprint(
+  const Footprint & fp, const PoseWithDist & pose_with_dist, const bool use_center_right = true,
+  const bool use_center_left = true);
+
+tl::expected<EgoSides, std::string> get_ego_sides_from_footprints(
+  const Footprints & footprints, const std::vector<PoseWithDist> & poses_on_traj);
 }  // namespace autoware::boundary_departure_checker::utils
 
 #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__UTILS_HPP_

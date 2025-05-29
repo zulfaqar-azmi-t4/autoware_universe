@@ -15,6 +15,8 @@
 #include "autoware/boundary_departure_checker/utils.hpp"
 
 #include <autoware/motion_utils/trajectory/trajectory.hpp>
+#include <autoware/trajectory/trajectory_point.hpp>
+#include <autoware/trajectory/utils/closest.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
 #include <autoware_utils/math/unit_conversion.hpp>
 #include <range/v3/view.hpp>
@@ -587,40 +589,59 @@ FootprintMargin calc_extra_margin_from_pose_covariance(
   return FootprintMargin{cov_xy_vehicle(0, 0) * scale, cov_xy_vehicle(1, 1) * scale};
 }
 
-EgoSides get_ego_sides_from_footprints(const FootprintWithPose & footprints_with_pose)
+tl::expected<std::vector<PoseWithDist>, std::string> get_poses_with_dist_on_trajectory(
+  const TrajectoryPoints & ego_pred_traj,
+  const trajectory::Trajectory<TrajectoryPoint> & aw_raw_traj)
 {
-  if (footprints_with_pose.empty()) {
-    fmt::print("empty footprint\n");
-    return {};
+  if (ego_pred_traj.empty()) {
+    return tl::make_unexpected("Ego predicted trajectory is empty");
+  }
+
+  std::vector<PoseWithDist> poses_with_dist;
+  const auto underlying_bases = aw_raw_traj.get_underlying_bases();
+  poses_with_dist.reserve(underlying_bases.size());
+
+  for (const auto & pred_traj_pt : ego_pred_traj) {
+    const auto dist_from_start = trajectory::closest(aw_raw_traj, pred_traj_pt);
+    poses_with_dist.emplace_back(pred_traj_pt.pose, dist_from_start);
+  }
+
+  return poses_with_dist;
+}
+
+EgoSide get_ego_side_from_footprint(
+  const Footprint & fp, const PoseWithDist & pose_with_dist, const bool use_center_right,
+  const bool use_center_left)
+{
+  const auto & [pose, d] = pose_with_dist;
+  auto fp_side = get_footprint_sides(fp, use_center_right, use_center_left);
+  EgoSide ego_side;
+  ego_side.left = std::move(fp_side.left);
+  ego_side.right = std::move(fp_side.right);
+  ego_side.dist_from_start = d;
+  ego_side.pose = pose;
+  return ego_side;
+}
+
+tl::expected<EgoSides, std::string> get_ego_sides_from_footprints(
+  const Footprints & footprints, const std::vector<PoseWithDist> & poses_on_traj)
+{
+  if (footprints.empty() || poses_on_traj.empty()) {
+    return tl::make_unexpected("Footprint or trajectory is empty");
+  }
+
+  if (footprints.size() != poses_on_traj.size()) {
+    return tl::make_unexpected("footprint size does not match trajectory size");
   }
 
   EgoSides footprints_sides;
-  footprints_sides.reserve(footprints_with_pose.size());
+  footprints_sides.reserve(footprints.size());
   constexpr bool use_center_right = true;
   constexpr bool use_center_left = true;
 
-  {
-    const auto & [fp, pose] = footprints_with_pose.front();
-
-    auto fp_side = get_footprint_sides(fp, use_center_right, use_center_left);
-    EgoSide ego_side;
-    ego_side.left = std::move(fp_side.left);
-    ego_side.right = std::move(fp_side.right);
-    footprints_sides.push_back(ego_side);
-  }
-
-  for (size_t i = 1; i < footprints_with_pose.size(); ++i) {
-    const auto & [fp, pose] = footprints_with_pose.at(i);
-    const auto & [prev_fp, prev_pose] = footprints_with_pose.at(i - 1);
-
-    auto fp_side = get_footprint_sides(fp, use_center_right, use_center_left);
-
-    EgoSide ego_side;
-    ego_side.left = std::move(fp_side.left);
-    ego_side.right = std::move(fp_side.right);
-    ego_side.dist_from_start +=
-      footprints_sides.back().dist_from_start + autoware_utils::calc_distance2d(prev_pose, pose);
-    ego_side.pose = pose;
+  for (const auto & [fp, pose_with_dist] : ranges::views::zip(footprints, poses_on_traj)) {
+    auto ego_side =
+      get_ego_side_from_footprint(fp, pose_with_dist, use_center_right, use_center_left);
     footprints_sides.push_back(ego_side);
   }
 

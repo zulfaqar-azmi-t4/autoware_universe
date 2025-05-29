@@ -56,12 +56,40 @@ struct FootprintMargin
     return FootprintMargin{lon_m + other.lon_m, lat_m + other.lat_m};
   }
 };
-
 struct LonTracking
+
 {
   double scale{1.0};
   double extra_margin_m{0.25};
 };
+
+template <typename T>
+struct AbnormalityType
+{
+  T normal;
+  T longitudinal;
+  T localization;
+  T steering;
+  T & operator[](const std::string_view key)
+  {
+    if (key == "normal") return normal;
+    if (key == "localization") return localization;
+    if (key == "longitudinal") return longitudinal;
+    if (key == "steering") return steering;
+    throw std::out_of_range(std::string("Invalid key: ") + std::string(key));
+  }
+
+  const T & operator[](const std::string_view key) const
+  {
+    if (key == "normal") return normal;
+    if (key == "localization") return localization;
+    if (key == "longitudinal") return longitudinal;
+    if (key == "steering") return steering;
+    throw std::out_of_range(std::string("Invalid key: ") + std::string(key));
+  }
+};
+constexpr std::array<std::string_view, 4> abnormality_keys = {
+  "normal", "longitudinal", "localization", "steering"};
 
 template <typename T>
 struct Side
@@ -198,14 +226,12 @@ struct Input
 
 using Footprint = LinearRing2d;
 using Footprints = std::vector<Footprint>;
+using PoseWithDist = std::pair<Pose, double>;
 
 struct BDCData
 {
-  Footprints normal_fp;
-  Footprints ab_enveloped_fp;
-  Footprints ab_lon_tracking_fp;
-  Footprints ab_steering_fp;
-  EgoSides ego_sides_from_footprints;
+  AbnormalityType<EgoSides> ego_sides_from_fps;
+  AbnormalityType<Footprints> footprints;
   BoundarySideWithIdx boundary_segments;
   SideToBoundPojections side_to_bound_projections;
 };

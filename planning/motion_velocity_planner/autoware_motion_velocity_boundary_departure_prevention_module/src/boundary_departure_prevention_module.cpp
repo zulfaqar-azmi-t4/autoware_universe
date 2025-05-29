@@ -192,7 +192,7 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
   autoware_utils::StopWatch<std::chrono::milliseconds> stopwatch_ms;
   const auto bdc_results =
     boundary_departure_checker_ptr_->get_projections_to_closest_uncrossable_boundaries(
-      pose_with_covariance, abs_velocity, ego_pred_traj, footprint_margin_scale,
+      pose_with_covariance, abs_velocity, ego_pred_traj, aw_ref_traj, footprint_margin_scale,
       *steering_angle_ptr_);
 
   if (!bdc_results) {

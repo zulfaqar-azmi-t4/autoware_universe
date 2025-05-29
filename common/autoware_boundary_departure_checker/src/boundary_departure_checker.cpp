@@ -78,75 +78,75 @@ BoundaryDepartureChecker::BoundaryDepartureChecker(
 tl::expected<BDCData, std::string>
 BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
   const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov, const double curr_vel,
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ego_pred_traj, const double uncertainty_fp_margin_scale,
-  const SteeringReport & current_steering)
+  const TrajectoryPoints & ego_pred_traj,
+  const trajectory::Trajectory<TrajectoryPoint> & aw_raw_traj,
+  const double uncertainty_fp_margin_scale, const SteeringReport & current_steering)
 {
-  const auto aw_ego_traj_pts = aw_ego_pred_traj.restore();
-  if (aw_ego_traj_pts.empty()) {
-    return tl::unexpected<std::string>("Trajectory points is empty.");
+  if (!uncrossable_boundaries_rtree_ptr_) {
+    return tl::unexpected<std::string>("No rtree available.");
   }
 
-BDCData bdc_data;
-const auto uncertainty_fp_margin =
-  utils::calc_extra_margin_from_pose_covariance(curr_pose_with_cov, uncertainty_fp_margin_scale);
-const auto ab_enveloped_footprints = utils::create_vehicle_footprints(
-  ego_pred_traj, *vehicle_info_ptr_, uncertainty_fp_margin + param_ptr_->footprint_envelop);
+  BDCData bdc_data;
+  if (!lanelet_map_ptr_) {
+    return tl::unexpected<std::string>("lanelet_map_ptr is null");
+  }
 
-FootprintMargin lon_tracking_margin = uncertainty_fp_margin;
-lon_tracking_margin.lon_m = lon_tracking_margin.lon_m +
-                            (curr_vel * param_ptr_->lon_tracking.scale) +
-                            param_ptr_->lon_tracking.extra_margin_m;
+  const auto poses_with_dist_opt =
+    utils::get_poses_with_dist_on_trajectory(ego_pred_traj, aw_raw_traj);
+  if (!poses_with_dist_opt) {
+    return tl::unexpected<std::string>(poses_with_dist_opt.error());
+  }
 
-auto normal_footprint =
-  utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, {0.0, 0.0});
-auto ab_lon_tracking =
-  utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, lon_tracking_margin);
-const auto ab_steering_footprints =
-  utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, current_steering);
-if (ab_enveloped_footprints.size() != ego_pred_traj.size()) {
-  return tl::unexpected<std::string>("Mismatch footprint and predicted trajectory size.");
-}
+  const auto uncertainty_fp_margin =
+    utils::calc_extra_margin_from_pose_covariance(curr_pose_with_cov, uncertainty_fp_margin_scale);
 
-FootprintWithPose normal_fp;
-FootprintWithPose ab_enveloped_fp;
-FootprintWithPose ab_lon_tracking_fp;
+  AbnormalityType<EgoSides> ego_sides_from_fps;
+  AbnormalityType<Footprints> footprints;
+  for (const std::string_view abnormality_type : {"normal", "longitudinal", "localization"}) {
+    FootprintMargin margin;
 
-FootprintWithPose ab_steering_fp;
-ab_enveloped_fp.reserve(ab_enveloped_footprints.size());
+    if (abnormality_type == "normal") {
+      margin = uncertainty_fp_margin;
+    } else if (abnormality_type == "longitudinal") {
+      margin = std::invoke([&]() {
+        FootprintMargin lon_tracking;
+        lon_tracking.lat_m = 0.0;
+        lon_tracking.lon_m =
+          (curr_vel * param_ptr_->lon_tracking.scale) + param_ptr_->lon_tracking.extra_margin_m;
+        return uncertainty_fp_margin + lon_tracking;
+      });
+    } else if (abnormality_type == "localization") {
+      margin = uncertainty_fp_margin + param_ptr_->footprint_envelop;
+    }
 
-for (auto && [ab_env, ab_lon, norm, pred] : ranges::views::zip(
-       ab_enveloped_footprints, ab_lon_tracking, normal_footprint, ego_pred_traj)) {
-  normal_fp.emplace_back(norm, pred.pose);
-  ab_enveloped_fp.emplace_back(ab_env, pred.pose);
-  ab_lon_tracking_fp.emplace_back(ab_lon, pred.pose);
-}
-ab_steering_fp.emplace_back(ab_steering_footprints.front(), ego_pred_traj.front().pose);
+    if (abnormality_type == "steering") {
+      footprints[abnormality_type] =
+        utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, current_steering);
+      auto ego_side = utils::get_ego_side_from_footprint(
+        footprints[abnormality_type].front(), poses_with_dist_opt->front());
+      ego_sides_from_fps[abnormality_type].push_back(ego_side);
+      continue;
+    }
 
-bdc_data.normal_fp = std::move(normal_fp);
-bdc_data.ab_enveloped_fp = std::move(ab_enveloped_fp);
-bdc_data.ab_lon_tracking_fp = std::move(ab_lon_tracking_fp);
-bdc_data.ab_steering_fp = std::move(ab_steering_fp);
+    footprints[abnormality_type] =
+      utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, margin);
+    if (
+      const auto sides_opt =
+        utils::get_ego_sides_from_footprints(footprints[abnormality_type], *poses_with_dist_opt)) {
+      ego_sides_from_fps[abnormality_type] = *sides_opt;
+    }
+  }
 
-if (!uncrossable_boundaries_rtree_ptr_) {
-  return tl::unexpected<std::string>("No rtree available.");
-}
+  bdc_data.footprints = footprints;
+  bdc_data.ego_sides_from_fps = ego_sides_from_fps;
 
-if (!lanelet_map_ptr_) {
-  return tl::unexpected<std::string>("lanelet_map_ptr is null");
-}
+  bdc_data.boundary_segments = utils::get_boundary_segments_from_side(
+    *uncrossable_boundaries_rtree_ptr_, lanelet_map_ptr_->lineStringLayer,
+    bdc_data.ego_sides_from_fps["localization"], param_ptr_->th_max_lateral_query_num);
+  bdc_data.side_to_bound_projections = utils::get_closest_boundary_segments_from_side(
+    bdc_data.boundary_segments, bdc_data.ego_sides_from_fps["localization"]);
 
-bdc_data.ego_sides_from_footprints = utils::get_ego_sides_from_footprints(bdc_data.ab_enveloped_fp);
-
-const auto & linestring_layer = lanelet_map_ptr_->lineStringLayer;
-
-bdc_data.boundary_segments = utils::get_boundary_segments_from_side(
-  *uncrossable_boundaries_rtree_ptr_, linestring_layer, bdc_data.ego_sides_from_footprints,
-  param_ptr_->th_max_lateral_query_num);
-
-bdc_data.side_to_bound_projections = utils::get_closest_boundary_segments_from_side(
-  bdc_data.boundary_segments, bdc_data.ego_sides_from_footprints);
-
-return bdc_data;
+  return bdc_data;
 }
 
 tl::expected<UncrossableBoundRTree, std::string>
