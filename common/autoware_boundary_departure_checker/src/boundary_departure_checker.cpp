@@ -102,7 +102,7 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
 
   AbnormalityType<EgoSides> ego_sides_from_fps;
   AbnormalityType<Footprints> footprints;
-  for (const std::string_view abnormality_type : {"normal", "longitudinal", "localization"}) {
+  for (const std::string_view abnormality_type : abnormality_keys) {
     FootprintMargin margin;
 
     if (abnormality_type == "normal") {
@@ -145,8 +145,11 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
     *uncrossable_boundaries_rtree_ptr_, lanelet_map_ptr_->lineStringLayer,
     bdc_data.ego_sides_from_fps["normal"], param_ptr_->th_max_lateral_query_num);
 
-  bdc_data.side_to_bound_projections = utils::get_closest_boundary_segments_from_side(
-    bdc_data.boundary_segments, bdc_data.ego_sides_from_fps["localization"]);
+  for (const auto abnormality_key : abnormality_keys) {
+    bdc_data.side_to_bound_projections[abnormality_key] =
+      utils::get_closest_boundary_segments_from_side(
+        bdc_data.boundary_segments, bdc_data.ego_sides_from_fps[abnormality_key]);
+  }
 
   return bdc_data;
 }

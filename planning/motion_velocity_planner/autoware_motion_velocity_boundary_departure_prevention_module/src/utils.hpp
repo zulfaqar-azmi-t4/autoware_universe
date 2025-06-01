@@ -46,7 +46,7 @@ DeparturePoint create_departure_point(
   const param::NodeParam & node_param, std::string_view direction);
 
 param::DepartureTypeesIdx check_departure_status(
-  const EgoSides & ego_sides, const SideToBoundPojections & side_to_bound_projections,
+  const SideToBoundPojections & side_to_bound_projections,
   const param::NodeParam & param, const double curr_vel);
 
 double calc_braking_distance(

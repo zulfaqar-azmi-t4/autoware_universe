@@ -121,8 +121,8 @@ struct SideExt : Side<T>
 
 struct Projection
 {
-  Point2d pt_on_ego; // orig
-  Point2d pt_on_bound; // proj
+  Point2d pt_on_ego;    // orig
+  Point2d pt_on_bound;  // proj
   Segment2d nearest_bound_seg;
   double lat_dist{std::numeric_limits<double>::max()};
   size_t ego_sides_idx{0};
@@ -232,7 +232,7 @@ struct BDCData
   AbnormalityType<EgoSides> ego_sides_from_fps;
   AbnormalityType<Footprints> footprints;
   BoundarySideWithIdx boundary_segments;
-  SideToBoundPojections side_to_bound_projections;
+  AbnormalityType<SideToBoundPojections> side_to_bound_projections;
 };
 }  // namespace autoware::boundary_departure_checker
 

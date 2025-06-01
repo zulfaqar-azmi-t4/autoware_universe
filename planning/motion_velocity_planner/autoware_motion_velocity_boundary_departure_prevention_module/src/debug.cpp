@@ -104,18 +104,20 @@ Marker create_ego_sides_marker(
 }
 
 Marker create_side_to_boundary_marker(
-  const std::vector<Projection> & side_to_boundary, Marker marker, std::string && ns,
+  const SideToBoundPojections & side_to_boundary, Marker marker, const std::string & ns,
   const double base_link_z)
 {
-  marker.ns = ns;
-  const auto to_geom = [base_link_z](const auto & pt) { return to_msg(pt.to_3d(base_link_z)); };
-  for (const auto & [pt_on_ego, pt_on_bound, segment, lat_dist_m, idx_from_orig] :
-       side_to_boundary) {
-    marker.color = color::blue();
-    marker.points.push_back(to_geom(pt_on_ego));
-    marker.points.push_back(to_geom(pt_on_bound));
-    marker.points.push_back(to_geom(segment.first));
-    marker.points.push_back(to_geom(segment.second));
+  marker.ns = "side_to_boundary_marker_" + ns;
+  for (const auto side_key : side_keys) {
+    const auto to_geom = [base_link_z](const auto & pt) { return to_msg(pt.to_3d(base_link_z)); };
+    for (const auto & [pt_on_ego, pt_on_bound, segment, lat_dist_m, idx_from_orig] :
+         side_to_boundary[side_key]) {
+      marker.color = color::blue();
+      marker.points.push_back(to_geom(pt_on_ego));
+      marker.points.push_back(to_geom(pt_on_bound));
+      marker.points.push_back(to_geom(segment.first));
+      marker.points.push_back(to_geom(segment.second));
+    }
   }
   return marker;
 }
@@ -228,12 +230,6 @@ MarkerArray create_debug_marker_array(
   auto marker = create_default_marker("map", curr_time, "", 0, line_list, m_scale, color);
 
   marker_array.markers.push_back(
-    create_ego_sides_marker(output.ego_sides_from_footprints, marker, "ego_sides", base_link_z));
-  marker_array.markers.push_back(create_side_to_boundary_marker(
-    output.side_to_bound_projections.left, marker, "closest_to_left_side", base_link_z));
-  marker_array.markers.push_back(create_side_to_boundary_marker(
-    output.side_to_bound_projections.right, marker, "closest_to_right_side", base_link_z));
-  marker_array.markers.push_back(
     create_departure_points_marker(output.departure_points, curr_time, base_link_z));
   marker_array.markers.push_back(create_boundary_segments_marker(
     output.boundary_segments, marker, "boundary_segments", base_link_z));
@@ -242,6 +238,8 @@ MarkerArray create_debug_marker_array(
   for (const std::string_view type : abnormality_keys) {
     marker_array.markers.push_back(create_footprint_marker(
       output.footprints[type], curr_time, type, base_link_z, color::aqua()));
+    marker_array.markers.push_back(create_side_to_boundary_marker(
+      output.side_to_bound_projections[type], marker, std::string(type), base_link_z));
   }
   autoware_utils::append_marker_array(
     create_slow_down_interval(output.slow_down_interval, curr_time), &marker_array);

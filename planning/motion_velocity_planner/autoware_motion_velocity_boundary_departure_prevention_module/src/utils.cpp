@@ -39,7 +39,6 @@ DeparturePoint create_departure_point(
 }
 
 param::DepartureTypeesIdx check_departure_status(
-  [[maybe_unused]] const EgoSides & ego_sides,
   const SideToBoundPojections & side_to_bound_projections, const param::NodeParam & param,
   [[maybe_unused]] const double curr_vel)
 {

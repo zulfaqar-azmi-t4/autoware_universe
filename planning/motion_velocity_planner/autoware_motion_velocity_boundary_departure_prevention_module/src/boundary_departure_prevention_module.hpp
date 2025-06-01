@@ -39,6 +39,13 @@ public:
     const TrajectoryPoints & smoothed_trajectory_points,
     const std::shared_ptr<const PlannerData> planner_data) override;
   std::string get_module_name() const override { return module_name_; };
+  RequiredSubscriptionInfo getRequiredSubscriptions() const override
+  {
+    RequiredSubscriptionInfo required_subscription_info;
+    required_subscription_info.predicted_objects = true;
+    required_subscription_info.no_ground_pointcloud = true;
+    return required_subscription_info;
+  }
 
 private:
   void subscribe_topics(rclcpp::Node & node);

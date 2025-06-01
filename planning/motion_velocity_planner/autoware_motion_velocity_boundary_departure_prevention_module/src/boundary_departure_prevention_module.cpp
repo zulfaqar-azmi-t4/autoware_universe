@@ -210,21 +210,23 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
   output_.aw_ego_traj = *aw_ego_pred_traj_opt;
   output_.aw_ref_traj = aw_ref_traj;
   output_.footprints = bdc_results->footprints;
-  output_.ego_sides_from_footprints = bdc_results->ego_sides_from_fps["localization"];
   output_.boundary_segments = bdc_results->boundary_segments;
   output_.side_to_bound_projections = bdc_results->side_to_bound_projections;
 
   output_.processing_time_map["get_closest_boundary_segments_from_side;"] = stopwatch_ms.toc(true);
 
+  for(const auto abnormality_key:abnormality_keys){
   output_.departure_statuses = utils::check_departure_status(
-    output_.ego_sides_from_footprints, output_.side_to_bound_projections, node_param_,
+    output_.side_to_bound_projections[abnormality_key], node_param_,
     abs_velocity);
+
+  }
 
   Side<DeparturePoints> dpts;
   DeparturePoints departure_points;
   for (const auto direction : side_keys) {
     auto & departure_statuses = output_.departure_statuses[direction];
-    const auto & side_to_bound = output_.side_to_bound_projections[direction];
+    const auto & side_to_bound = output_.side_to_bound_projections["localization"][direction];
 
     for (const auto & [status, idx] : departure_statuses) {
       const auto & curr_side = side_to_bound[idx];
@@ -497,7 +499,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
 
     stopwatch.tic("lat_dist_to_bound_m");
     auto lat_dist_to_bound_m =
-      output_.side_to_bound_projections[departure_interval.direction].front().lat_dist;
+      output_.side_to_bound_projections["localization"][departure_interval.direction].front().lat_dist;
     time_print["lat_dist_to_bound_m"] = stopwatch.toc("lat_dist_to_bound_m");
     time_print["total"] += time_print["lat_dist_to_bound_m"];
 

@@ -74,9 +74,8 @@ struct Output
   std::unordered_map<std::string, double> processing_time_map;
   AbnormalityType<Footprints> footprints;
   AbnormalityType<EgoSides> ego_sides_from_fps;
-  EgoSides ego_sides_from_footprints;
   BoundarySideWithIdx boundary_segments;
-  SideToBoundPojections side_to_bound_projections;
+  AbnormalityType<SideToBoundPojections> side_to_bound_projections;
   DepartureTypeesIdx departure_statuses;
   std::vector<std::pair<geometry_msgs::msg::Point, geometry_msgs::msg::Point>> slow_down_interval;
 
