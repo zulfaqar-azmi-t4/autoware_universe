@@ -209,12 +209,10 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
   }
   output_.aw_ego_traj = *aw_ego_pred_traj_opt;
   output_.aw_ref_traj = aw_ref_traj;
-  output_.ab_enveloped_fp = bdc_results->ab_enveloped_fp;
-  output_.ab_lon_tracking_fp = bdc_results->ab_lon_tracking_fp;
-  output_.ego_sides_from_footprints = bdc_results->ego_sides_from_footprints;
+  output_.footprints = bdc_results->footprints;
+  output_.ego_sides_from_footprints = bdc_results->ego_sides_from_fps["localization"];
   output_.boundary_segments = bdc_results->boundary_segments;
   output_.side_to_bound_projections = bdc_results->side_to_bound_projections;
-  output_.ab_steering_fp = bdc_results->ab_steering_fp;
 
   output_.processing_time_map["get_closest_boundary_segments_from_side;"] = stopwatch_ms.toc(true);
 

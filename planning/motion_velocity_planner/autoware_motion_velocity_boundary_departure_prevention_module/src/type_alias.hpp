@@ -90,8 +90,11 @@ using boundary_departure_checker::Side;                                         
 using BoundaryDepartureChecker = boundary_departure_checker::BoundaryDepartureChecker;  // NOLINT
 namespace bdc_utils = boundary_departure_checker::utils;                                // NOLINT
 namespace trajectory = experimental::trajectory;                                        // NOLINT
-using boundary_departure_checker::FootprintMargin;                                      // NOLINT
+using boundary_departure_checker::Footprint;
+using boundary_departure_checker::FootprintMargin;  // NOLINT
+using boundary_departure_checker::Footprints;
 using BDCParam = boundary_departure_checker::Param;
+using boundary_departure_checker::AbnormalityType;
 }  // namespace autoware::motion_velocity_planner
 
 #endif  // TYPE_ALIAS_HPP_

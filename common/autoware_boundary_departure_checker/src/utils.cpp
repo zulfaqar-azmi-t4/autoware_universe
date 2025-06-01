@@ -14,18 +14,24 @@
 
 #include "autoware/boundary_departure_checker/utils.hpp"
 
+#include "autoware/boundary_departure_checker/parameters.hpp"
+
 #include <autoware/motion_utils/trajectory/trajectory.hpp>
 #include <autoware/trajectory/trajectory_point.hpp>
 #include <autoware/trajectory/utils/closest.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
 #include <autoware_utils/math/unit_conversion.hpp>
+#include <autoware_utils_geometry/boost_geometry.hpp>
 #include <range/v3/view.hpp>
+#include <tl_expected/expected.hpp>
 
 #include <fmt/format.h>
 #include <lanelet2_core/geometry/LaneletMap.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -304,7 +310,7 @@ double calcMaxSearchLengthForBoundaries(
   return autoware::motion_utils::calcArcLength(trajectory.points) + max_ego_search_length;
 }
 
-std::optional<Projection> point_to_segment_projection(
+tl::expected<std::tuple<Point2d, Point2d, double>, std::string> point_to_segment_projection(
   const Point2d & p, const Segment2d & segment, const bool swap_points = false)
 {
   const auto & p1 = segment.first;
@@ -313,17 +319,19 @@ std::optional<Projection> point_to_segment_projection(
   const Point2d p2_vec = {p2.x() - p1.x(), p2.y() - p1.y()};
   const Point2d p_vec = {p.x() - p1.x(), p.y() - p1.y()};
 
-  const auto result = [&swap_points](const Point2d & orig, const Point2d & proj) {
-    return swap_points ? Projection{proj, orig, boost::geometry::distance(proj, orig)}
-                       : Projection{orig, proj, boost::geometry::distance(orig, proj)};
+  const auto result = [&swap_points](
+                        const Point2d & orig,
+                        const Point2d & proj) -> std::tuple<Point2d, Point2d, double> {
+    return swap_points ? std::make_tuple(proj, orig, boost::geometry::distance(proj, orig))
+                       : std::make_tuple(orig, proj, boost::geometry::distance(orig, proj));
   };
 
   const auto c1 = boost::geometry::dot_product(p_vec, p2_vec);
-  if (c1 < 0.0) return std::nullopt;
+  if (c1 < 0.0) return tl::make_unexpected("Point before segment start");
   if (c1 == 0.0) return result(p, p1);
 
   const auto c2 = boost::geometry::dot_product(p2_vec, p2_vec);
-  if (c1 > c2) return std::nullopt;
+  if (c1 > c2) return tl::make_unexpected("Point after segment end");
 
   if (c1 == c2) return result(p, p2);
 
@@ -333,44 +341,50 @@ std::optional<Projection> point_to_segment_projection(
   return result(p, projection_point);
 }
 
-std::optional<Projection> segment_to_segment_nearest_projection(
-  const Segment2d & ego_seg, const Segment2d & lane_seg)
+tl::expected<Projection, std::string> segment_to_segment_nearest_projection(
+  const Segment2d & ego_seg, const Segment2d & lane_seg, const size_t ego_sides_idx)
 {
   const auto & [ego_f, ego_b] = ego_seg;
   const auto & [lane_pt1, lane_pt2] = lane_seg;
+
   if (
     const auto is_intersecting = autoware_utils::intersect(
       autoware_utils::to_msg(ego_f.to_3d()), autoware_utils::to_msg(ego_b.to_3d()),
       autoware_utils::to_msg(lane_pt1.to_3d()), autoware_utils::to_msg(lane_pt2.to_3d()))) {
     Point2d point(is_intersecting->x, is_intersecting->y);
-    return Projection{point, point, 0.0};
+    return Projection{point, point, lane_seg, 0.0, ego_sides_idx};
   }
 
   std::vector<Projection> projections;
   projections.reserve(4);
   constexpr bool swap_result = true;
   if (const auto projection_opt = point_to_segment_projection(ego_f, lane_seg, swap_result)) {
-    projections.push_back(*projection_opt);
+    const auto & [pt_ego, pt_lane, dist] = *projection_opt;
+    projections.emplace_back(pt_ego, pt_lane, lane_seg, dist, ego_sides_idx);
   }
 
   if (const auto projection_opt = point_to_segment_projection(ego_b, lane_seg, swap_result)) {
-    projections.push_back(*projection_opt);
+    const auto & [pt_ego, pt_lane, dist] = *projection_opt;
+    projections.emplace_back(pt_ego, pt_lane, lane_seg, dist, ego_sides_idx);
   }
 
   if (const auto projection_opt = point_to_segment_projection(lane_pt1, ego_seg, !swap_result)) {
-    projections.push_back(*projection_opt);
+    const auto & [pt_ego, pt_lane, dist] = *projection_opt;
+    projections.emplace_back(pt_ego, pt_lane, lane_seg, dist, ego_sides_idx);
   }
 
   if (const auto projection_opt = point_to_segment_projection(lane_pt2, ego_seg, !swap_result)) {
-    projections.push_back(*projection_opt);
+    const auto & [pt_ego, pt_lane, dist] = *projection_opt;
+    projections.emplace_back(pt_ego, pt_lane, lane_seg, dist, ego_sides_idx);
   }
 
-  if (projections.empty()) return std::nullopt;
+  if (projections.empty())
+    return tl::make_unexpected("Couldn't generate projection at " + std::to_string(ego_sides_idx));
   if (projections.size() == 1) return projections.front();
 
   const auto min_elem = std::min_element(
     projections.begin(), projections.end(), [](const Projection & proj1, const Projection & proj2) {
-      return std::abs(proj1.dist) < std::abs(proj2.dist);
+      return std::abs(proj1.lat_dist) < std::abs(proj2.lat_dist);
     });
 
   return *min_elem;
@@ -458,40 +472,60 @@ BoundarySideWithIdx get_boundary_segments_from_side(
   return output;
 }
 
+tl::expected<Projection, std::string> find_closest_segment(
+  const Segment2d & ego_side_seg, const Segment2d & ego_rear_seg, const size_t curr_fp_idx,
+  const std::vector<SegmentWithIdx> & boundary_segments)
+{
+  using autoware_utils::to_msg;
+  std::optional<Projection> closest_proj;
+  for (const auto & [seg, ll_id, idx_curr, idx_next] : boundary_segments) {
+    const auto & [ego_lr, ego_rr] = ego_rear_seg;
+    const auto & [seg_f, seg_r] = seg;
+    // we can assume that before front touches boundary, either left or right side will touch
+    // boundary first
+    if (
+      const auto is_intersecting_rear = autoware_utils::intersect(
+        to_msg(ego_lr.to_3d()), to_msg(ego_rr.to_3d()), to_msg(seg_f.to_3d()),
+        to_msg(seg_r.to_3d()))) {
+      Point2d point(is_intersecting_rear->x, is_intersecting_rear->y);
+      return Projection{point, point, seg, 0.0, curr_fp_idx};
+    }
+    if (
+      const auto proj_opt = segment_to_segment_nearest_projection(ego_side_seg, seg, curr_fp_idx)) {
+      if (!closest_proj || proj_opt->lat_dist < closest_proj->lat_dist) {
+        closest_proj = *proj_opt;
+      }
+    }
+  }
+
+  if (closest_proj) {
+    return *closest_proj;
+  }
+
+  return tl::make_unexpected("Couldn't find any nearest point.");
+}
+
 SideToBoundPojections get_closest_boundary_segments_from_side(
   const BoundarySideWithIdx & boundaries, const EgoSides & ego_sides_from_footprints)
 {
-  const auto closest_segment =
-    [&](
-      const auto & ego_seg, const auto curr_fp_idx,
-      const auto & boundary_segments) -> std::optional<ProjectionWithSegment> {
-    std::optional<ProjectionWithSegment> closest_proj;
-    for (const auto & [seg, ll_id, idx_curr, idx_next] : boundary_segments) {
-      if (const auto proj_opt = segment_to_segment_nearest_projection(ego_seg, seg)) {
-        if (!closest_proj || proj_opt->dist < closest_proj->projection.dist) {
-          closest_proj = ProjectionWithSegment{*proj_opt, seg, curr_fp_idx};
-        }
-      }
-    }
-
-    if (closest_proj) {
-      return *closest_proj;
-    }
-    return std::nullopt;
-  };
-
   SideToBoundPojections side;
-  side.left.reserve(ego_sides_from_footprints.size());
-  side.right.reserve(ego_sides_from_footprints.size());
-
+  for (const std::string_view side_key : side_keys) {
+    side[side_key].reserve(ego_sides_from_footprints.size());
+  }
   for (size_t i = 0; i < ego_sides_from_footprints.size(); ++i) {
     const auto & fp = ego_sides_from_footprints[i];
-    if (const auto left_segment_opt = closest_segment(fp.left, i, boundaries.left)) {
-      side.left.push_back(*left_segment_opt);
-    }
 
-    if (const auto right_segment_opt = closest_segment(fp.right, i, boundaries.right)) {
-      side.right.push_back(*right_segment_opt);
+    const auto & [ego_lf, ego_lb] = fp.left;
+    const auto & [ego_rf, ego_rb] = fp.left;
+
+    const auto rear_seg = Segment2d(ego_lb, ego_rb);
+
+    for (const std::string_view side_key : side_keys) {
+      if (
+        const auto segment_opt =
+          find_closest_segment(fp[side_key], rear_seg, i, boundaries[side_key])) {
+        side[side_key].push_back(*segment_opt);
+      }
     }
   }
 

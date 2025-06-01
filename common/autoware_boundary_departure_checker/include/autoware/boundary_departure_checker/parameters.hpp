@@ -22,6 +22,7 @@
 #include <autoware_utils/geometry/pose_deviation.hpp>
 #include <autoware_utils/ros/uuid_helper.hpp>
 #include <autoware_utils/system/stop_watch.hpp>
+#include <autoware_utils_geometry/boost_geometry.hpp>
 
 #include <nav_msgs/msg/odometry.hpp>
 
@@ -120,29 +121,27 @@ struct SideExt : Side<T>
 
 struct Projection
 {
-  Point2d orig;
-  Point2d proj;
-  double dist{std::numeric_limits<double>::max()};
-};
-
-struct ProjectionWithSegment
-{
-  Projection projection;
-  Segment2d nearest_segment;
-  size_t idx_from_ego_sides_from_footprints{0};
-  ProjectionWithSegment() = default;
-  ProjectionWithSegment(Projection proj, Segment2d seg, size_t idx)
-  : projection(std::move(proj)),
-    nearest_segment(std::move(seg)),
-    idx_from_ego_sides_from_footprints(idx)
+  Point2d pt_on_ego;
+  Point2d pt_on_bound;
+  Segment2d nearest_bound_seg;
+  double lat_dist{std::numeric_limits<double>::max()};
+  size_t ego_sides_idx{0};
+  Projection() = default;
+  Projection(Point2d pt_on_ego, Point2d pt_on_bound, Segment2d seg, double dist, size_t idx)
+  : pt_on_ego(std::move(pt_on_ego)),
+    pt_on_bound(std::move(pt_on_bound)),
+    nearest_bound_seg(std::move(seg)),
+    lat_dist(dist),
+    ego_sides_idx(idx)
   {
   }
 };
 
+constexpr std::array<std::string_view, 2> side_keys = {"left", "right"};
 using SideProjOpt = Side<std::optional<Projection>>;
 using BoundarySide = Side<std::vector<Segment2d>>;
 using BoundarySideWithIdx = Side<std::vector<SegmentWithIdx>>;
-using SideToBoundPojections = Side<std::vector<ProjectionWithSegment>>;
+using SideToBoundPojections = Side<std::vector<Projection>>;
 using EgoSide = SideExt<Segment2d>;
 using EgoSides = std::vector<EgoSide>;
 

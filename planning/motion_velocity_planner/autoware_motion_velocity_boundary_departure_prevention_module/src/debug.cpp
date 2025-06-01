@@ -14,6 +14,11 @@
 
 #include "debug.hpp"
 
+#include "str_map.hpp"
+#include "type_alias.hpp"
+
+#include <std_msgs/msg/detail/color_rgba__struct.hpp>
+
 #include <string>
 #include <vector>
 
@@ -129,39 +134,30 @@ Marker create_departure_points_marker(
   return marker;
 }
 
-MarkerArray create_footprint_with_pose_marker(
-  const boundary_departure_checker::FootprintWithPose & fp_with_pose,
-  const rclcpp::Time & curr_time, std::string && ns, const double base_link_z)
+Marker create_footprint_marker(
+  const Footprints & footprints, const rclcpp::Time & curr_time,
+  const std::string_view abnormality_type, const double base_link_z,
+  const std_msgs::msg::ColorRGBA & color)
 {
   int32_t id{0};
   auto marker_ll = create_default_marker(
-    "map", curr_time, ns + "_footprint", id, visualization_msgs::msg::Marker::LINE_LIST,
-    create_marker_scale(0.05, 0, 0), color::aqua());
-  auto marker_p = create_default_marker(
-    "map", curr_time, ns + "_footprint_pose", id, visualization_msgs::msg::Marker::POINTS,
-    create_marker_scale(0.25, 0.25, 1.0), color::aqua());
-  if (!fp_with_pose.empty() && !fp_with_pose.front().first.empty()) {
-    marker_ll.points.reserve(fp_with_pose.size() * fp_with_pose.front().first.size() - 1);
-    marker_p.points.reserve(fp_with_pose.size());
+    "map", curr_time, "footprint_" + std::string(abnormality_type), id,
+    visualization_msgs::msg::Marker::LINE_LIST, create_marker_scale(0.05, 0, 0), color);
+  if (!footprints.empty()) {
+    marker_ll.points.reserve(footprints.size() * footprints.front().size());
   }
 
-  for (const auto & [footprint, fp_pose] : fp_with_pose) {
+  for (const auto & footprint : footprints) {
     for (size_t i = 0; i + 1 < footprint.size(); ++i) {
-      const auto p1 = footprint.at(i);
-      const auto p2 = footprint.at(i + 1);
+      const auto & p1 = footprint.at(i);
+      const auto & p2 = footprint.at(i + 1);
 
       marker_ll.points.push_back(autoware_utils::to_msg(p1.to_3d(base_link_z)));
       marker_ll.points.push_back(autoware_utils::to_msg(p2.to_3d(base_link_z)));
     }
-
-    marker_p.points.push_back(fp_pose.position);
   }
 
-  MarkerArray fp_with_pose_marker;
-  fp_with_pose_marker.markers.push_back(marker_ll);
-  fp_with_pose_marker.markers.push_back(marker_p);
-
-  return fp_with_pose_marker;
+  return marker_ll;
 }
 
 Marker create_boundary_segments_marker(
@@ -243,16 +239,10 @@ MarkerArray create_debug_marker_array(
     output.boundary_segments, marker, "boundary_segments", base_link_z));
   marker_array.markers.push_back(
     create_departure_interval_marker(output.departure_intervals, marker, "departure interval"));
-  autoware_utils::append_marker_array(
-    create_footprint_with_pose_marker(output.ab_enveloped_fp, curr_time, "envelop", base_link_z),
-    &marker_array);
-  autoware_utils::append_marker_array(
-    create_footprint_with_pose_marker(
-      output.ab_lon_tracking_fp, curr_time, "lon_tracking", base_link_z),
-    &marker_array);
-  autoware_utils::append_marker_array(
-    create_footprint_with_pose_marker(output.ab_steering_fp, curr_time, "steering", base_link_z),
-    &marker_array);
+  for (const std::string_view type : abnormality_keys) {
+    marker_array.markers.push_back(create_footprint_marker(
+      output.footprints[type], curr_time, type, base_link_z, color::aqua()));
+  }
   autoware_utils::append_marker_array(
     create_slow_down_interval(output.slow_down_interval, curr_time), &marker_array);
 

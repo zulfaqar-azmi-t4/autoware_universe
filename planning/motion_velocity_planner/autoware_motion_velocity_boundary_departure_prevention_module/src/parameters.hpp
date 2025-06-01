@@ -72,9 +72,8 @@ using DepartureTypeesIdx = Side<std::vector<DepartureTypeIdx>>;
 struct Output
 {
   std::unordered_map<std::string, double> processing_time_map;
-  boundary_departure_checker::FootprintWithPose ab_enveloped_fp;
-  boundary_departure_checker::FootprintWithPose ab_lon_tracking_fp;
-  boundary_departure_checker::FootprintWithPose ab_steering_fp;
+  AbnormalityType<Footprints> footprints;
+  AbnormalityType<EgoSides> ego_sides_from_fps;
   EgoSides ego_sides_from_footprints;
   BoundarySideWithIdx boundary_segments;
   SideToBoundPojections side_to_bound_projections;
