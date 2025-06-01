@@ -228,13 +228,12 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
 
     for (const auto & [status, idx] : departure_statuses) {
       const auto & curr_side = side_to_bound[idx];
-      const auto & projection = curr_side.projection;
 
       DeparturePoint point;
       point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
       point.type = status;
-      point.lat_dist_to_bound = projection.dist;
-      point.point = projection.proj;
+      point.lat_dist_to_bound = curr_side.lat_dist;
+      point.point = curr_side.pt_on_bound;
       point.direction = direction;
       point.th_dist_hysteresis = node_param_.th_dist_hysteresis_m;
       point.th_lat_dist_to_bounday_hyteresis = std::invoke([&]() -> double {
@@ -498,7 +497,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
 
     stopwatch.tic("lat_dist_to_bound_m");
     auto lat_dist_to_bound_m =
-      output_.side_to_bound_projections[departure_interval.direction].front().projection.dist;
+      output_.side_to_bound_projections[departure_interval.direction].front().lat_dist;
     time_print["lat_dist_to_bound_m"] = stopwatch.toc("lat_dist_to_bound_m");
     time_print["total"] += time_print["lat_dist_to_bound_m"];
 

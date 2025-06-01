@@ -104,16 +104,16 @@ Marker create_ego_sides_marker(
 }
 
 Marker create_side_to_boundary_marker(
-  const std::vector<ProjectionWithSegment> & side_to_boundary, Marker marker, std::string && ns,
+  const std::vector<Projection> & side_to_boundary, Marker marker, std::string && ns,
   const double base_link_z)
 {
   marker.ns = ns;
   const auto to_geom = [base_link_z](const auto & pt) { return to_msg(pt.to_3d(base_link_z)); };
-  for (const auto & [projection, segment, dist_from_start] : side_to_boundary) {
-    const auto & [orig, proj, dist] = projection;
+  for (const auto & [pt_on_ego, pt_on_bound, segment, lat_dist_m, idx_from_orig] :
+       side_to_boundary) {
     marker.color = color::blue();
-    marker.points.push_back(to_geom(orig));
-    marker.points.push_back(to_geom(proj));
+    marker.points.push_back(to_geom(pt_on_ego));
+    marker.points.push_back(to_geom(pt_on_bound));
     marker.points.push_back(to_geom(segment.first));
     marker.points.push_back(to_geom(segment.second));
   }

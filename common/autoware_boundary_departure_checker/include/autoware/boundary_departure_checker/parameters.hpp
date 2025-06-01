@@ -121,8 +121,8 @@ struct SideExt : Side<T>
 
 struct Projection
 {
-  Point2d pt_on_ego;
-  Point2d pt_on_bound;
+  Point2d pt_on_ego; // orig
+  Point2d pt_on_bound; // proj
   Segment2d nearest_bound_seg;
   double lat_dist{std::numeric_limits<double>::max()};
   size_t ego_sides_idx{0};

@@ -81,7 +81,6 @@ using boundary_departure_checker::DepartureIntervals;     // NOLINT
 using boundary_departure_checker::DeparturePoint;         // NOLINT
 using boundary_departure_checker::DeparturePoints;        // NOLINT
 using boundary_departure_checker::Projection;             // NOLINT
-using boundary_departure_checker::ProjectionWithSegment;  // NOLINT
 using boundary_departure_checker::UncrossableBoundRTree;  // NOLINT
 using vehicle_info_utils::VehicleInfo;                    // NOLINT
 

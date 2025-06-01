@@ -66,9 +66,8 @@ param::DepartureTypeesIdx check_departure_status(
   };
 
   for (const auto side_key : side_keys) {
-    for (const auto & [projection, departed_segment, idx_from_orig] :
+    for (const auto & [pt_on_ego, pg_on_bound, segment, lat_dist_m, idx_from_orig] :
          side_to_bound_projections[side_key]) {
-      const auto & [p_orig, p_proj, lat_dist_m] = projection;
       const auto status = assign_status(lat_dist_m, param, side_key);
       if (status != DepartureType::NONE && status != DepartureType::UNKNOWN) {
         stats[side_key].emplace_back(status, idx_from_orig);
