@@ -41,57 +41,59 @@ DeparturePoint create_departure_point(
 
 DeparturePoints get_departure_points(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const param::DepartureTypeesIdx & departure_types_idx,
+  const AbnormalityType<param::DepartureStatuses> & departure_types_idx,
   const AbnormalityType<SideToBoundPojections> & side_to_bound_projections,
   const param::NodeParam & node_param, const VehicleInfo & vehicle_info,
   const double ego_dist_from_traj_front)
 {
-  Side<DeparturePoints> dpts;
   DeparturePoints departure_points;
-  for (const auto direction : side_keys) {
-    auto & departure_statuses = departure_types_idx[direction];
-    const auto & side_to_bound = side_to_bound_projections["localization"][direction];
+  for (const auto abnormality_key : abnormality_keys) {
+    Side<DeparturePoints> dpts;
+    for (const auto direction : side_keys) {
+      auto & departure_statuses = departure_types_idx[abnormality_key][direction];
+      const auto & side_to_bound = side_to_bound_projections[abnormality_key][direction];
+      for (const auto & [status, idx] : departure_statuses) {
+        const auto & curr_side = side_to_bound[idx];
 
-    for (const auto & [status, idx] : departure_statuses) {
-      const auto & curr_side = side_to_bound[idx];
+        DeparturePoint point;
+        point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
+        point.lat_dist_to_bound = curr_side.lat_dist;
+        point.type = status;
+        point.point = curr_side.pt_on_bound;
+        point.direction = direction;
+        point.th_dist_hysteresis = node_param.th_dist_hysteresis_m;
+        point.th_lat_dist_to_bounday_hyteresis = std::invoke([&]() -> double {
+          if (point.type == DepartureType::CRITICAL_DEPARTURE) {
+            return node_param.stop_before_departure.th_dist_to_boundary_m[direction];
+          }
+          if (point.type == DepartureType::APPROACHING_DEPARTURE) {
+            return node_param.slow_down_before_departure.th_dist_to_boundary_m[direction];
+          }
 
-      DeparturePoint point;
-      point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
-      point.type = status;
-      point.lat_dist_to_bound = curr_side.lat_dist;
-      point.point = curr_side.pt_on_bound;
-      point.direction = direction;
-      point.th_dist_hysteresis = node_param.th_dist_hysteresis_m;
-      point.th_lat_dist_to_bounday_hyteresis = std::invoke([&]() -> double {
-        if (point.type == DepartureType::CRITICAL_DEPARTURE) {
-          return node_param.stop_before_departure.th_dist_to_boundary_m[direction];
+          if (point.type == DepartureType::NEAR_BOUNDARY) {
+            return node_param.slow_down_near_boundary.th_dist_to_boundary_m[direction];
+          }
+
+          return std::numeric_limits<double>::max();
+        });
+
+        point.dist_on_traj = trajectory::closest(aw_ref_traj, point.to_geom_pt(0.0));
+        point.dist_from_ego =
+          point.dist_on_traj - (ego_dist_from_traj_front + vehicle_info.max_longitudinal_offset_m);
+        point.can_be_removed = point.dist_from_ego < std::numeric_limits<double>::epsilon();
+
+        if (point.can_be_removed) {
+          continue;
         }
-        if (point.type == DepartureType::APPROACHING_DEPARTURE) {
-          return node_param.slow_down_before_departure.th_dist_to_boundary_m[direction];
-        }
 
-        if (point.type == DepartureType::NEAR_BOUNDARY) {
-          return node_param.slow_down_near_boundary.th_dist_to_boundary_m[direction];
-        }
-
-        return std::numeric_limits<double>::max();
-      });
-
-      point.dist_on_traj = trajectory::closest(aw_ref_traj, point.to_geom_pt(0.0));
-      point.dist_from_ego =
-        point.dist_on_traj - (ego_dist_from_traj_front + vehicle_info.max_longitudinal_offset_m);
-      point.can_be_removed = point.dist_from_ego < std::numeric_limits<double>::epsilon();
-
-      if (point.can_be_removed) {
-        continue;
+        point.point_on_prev_traj = aw_ref_traj.compute(point.dist_on_traj);
+        dpts[point.direction].push_back(point);
       }
-
-      point.point_on_prev_traj = aw_ref_traj.compute(point.dist_on_traj);
-      dpts[point.direction].push_back(point);
+      std::sort(dpts[direction].begin(), dpts[direction].end());
+      utils::erase_after_first_match(dpts[direction]);
+      std::move(
+        dpts[direction].begin(), dpts[direction].end(), std::back_inserter(departure_points));
     }
-    std::sort(dpts[direction].begin(), dpts[direction].end());
-    utils::erase_after_first_match(dpts[direction]);
-    std::move(dpts[direction].begin(), dpts[direction].end(), std::back_inserter(departure_points));
   }
   return departure_points;
 }
@@ -187,19 +189,25 @@ void update_departure_intervals(
   }
 }
 
-param::DepartureTypeesIdx check_departure_status(
-  const SideToBoundPojections & side_to_bound_projections, const param::NodeParam & param,
-  [[maybe_unused]] const double curr_vel)
+AbnormalityType<param::DepartureStatuses> check_departure_status(
+  const AbnormalityType<SideToBoundPojections> & side_to_bound_projections,
+  const param::NodeParam & param, [[maybe_unused]] const double curr_vel)
 {
-  param::DepartureTypeesIdx stats;
-  const auto assign_status =
-    [](const double lat_dist_m, const auto & param, const auto & side_key) -> DepartureType {
+  AbnormalityType<param::DepartureStatuses> stats;
+  const auto assign_status = [](
+                               const double lat_dist_m, const auto & param,
+                               const auto & abnormality_key,
+                               const auto & side_key) -> DepartureType {
     const auto stop_before_dpt = param.stop_before_departure.th_dist_to_boundary_m[side_key];
     const auto slow_before_dpt = param.slow_down_before_departure.th_dist_to_boundary_m[side_key];
     const auto slow_near_bound = param.slow_down_near_boundary.th_dist_to_boundary_m[side_key];
 
-    if (std::abs(lat_dist_m) < stop_before_dpt) {
+    if (std::abs(lat_dist_m) < stop_before_dpt && abnormality_key == "steering") {
       return DepartureType::CRITICAL_DEPARTURE;
+    }
+
+    if (abnormality_key == "steering") {
+      return DepartureType::NONE;
     }
 
     if (std::abs(lat_dist_m) < slow_before_dpt) {
@@ -213,12 +221,14 @@ param::DepartureTypeesIdx check_departure_status(
     return DepartureType::NONE;
   };
 
-  for (const auto side_key : side_keys) {
-    for (const auto & [pt_on_ego, pg_on_bound, segment, lat_dist_m, idx_from_orig] :
-         side_to_bound_projections[side_key]) {
-      const auto status = assign_status(lat_dist_m, param, side_key);
-      if (status != DepartureType::NONE && status != DepartureType::UNKNOWN) {
-        stats[side_key].emplace_back(status, idx_from_orig);
+  for (const auto abnormality_key : abnormality_keys) {
+    for (const auto side_key : side_keys) {
+      for (const auto & [pt_on_ego, pg_on_bound, segment, lat_dist_m, idx_from_orig] :
+           side_to_bound_projections[abnormality_key][side_key]) {
+        const auto status = assign_status(lat_dist_m, param, abnormality_key, side_key);
+        if (status != DepartureType::NONE && status != DepartureType::UNKNOWN) {
+          stats[abnormality_key][side_key].emplace_back(status, idx_from_orig);
+        }
       }
     }
   }

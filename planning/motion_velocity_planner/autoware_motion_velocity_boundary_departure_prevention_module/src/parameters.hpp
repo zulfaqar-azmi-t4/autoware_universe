@@ -67,7 +67,7 @@ struct PredictedPathFootprint
 };
 
 using DepartureTypeIdx = std::pair<DepartureType, size_t>;
-using DepartureTypeesIdx = Side<std::vector<DepartureTypeIdx>>;
+using DepartureStatuses = Side<std::vector<DepartureTypeIdx>>;
 
 struct Output
 {
@@ -76,7 +76,7 @@ struct Output
   AbnormalityType<EgoSides> ego_sides_from_fps;
   BoundarySideWithIdx boundary_segments;
   AbnormalityType<SideToBoundPojections> side_to_bound_projections;
-  DepartureTypeesIdx departure_statuses;
+  AbnormalityType<DepartureStatuses> departure_statuses;
   std::vector<std::pair<geometry_msgs::msg::Point, geometry_msgs::msg::Point>> slow_down_interval;
 
   trajectory::Trajectory<TrajectoryPoint> aw_ref_traj;

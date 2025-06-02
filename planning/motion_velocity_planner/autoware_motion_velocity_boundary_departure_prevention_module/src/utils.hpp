@@ -47,7 +47,7 @@ DeparturePoint create_departure_point(
 
 DeparturePoints get_departure_points(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const param::DepartureTypeesIdx & departure_types_idx,
+  const AbnormalityType<param::DepartureStatuses> & departure_types_idx,
   const AbnormalityType<SideToBoundPojections> & side_to_bound_projections,
   const param::NodeParam & node_param, const VehicleInfo & vehicle_info,
   const double ego_dist_from_traj_front);
@@ -60,9 +60,9 @@ void update_departure_intervals(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const VehicleInfo vehicle_info,
   const TrajectoryPoint & ref_traj_fr_pt, const double ego_dist_from_traj_front);
 
-param::DepartureTypeesIdx check_departure_status(
-  const SideToBoundPojections & side_to_bound_projections, const param::NodeParam & param,
-  const double curr_vel);
+AbnormalityType<param::DepartureStatuses> check_departure_status(
+  const AbnormalityType<SideToBoundPojections> & side_to_bound_projections,
+  const param::NodeParam & param, const double curr_vel);
 
 double calc_braking_distance(
   const double abs_velocity, const double max_deceleration, const double delay_time,

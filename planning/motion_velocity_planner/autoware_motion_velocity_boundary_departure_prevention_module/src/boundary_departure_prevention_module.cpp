@@ -209,20 +209,21 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
   }
   output_.aw_ego_traj = *aw_ego_pred_traj_opt;
   output_.aw_ref_traj = aw_ref_traj;
+  output_.ego_sides_from_fps = bdc_results->ego_sides_from_fps;
   output_.footprints = bdc_results->footprints;
   output_.boundary_segments = bdc_results->boundary_segments;
   output_.side_to_bound_projections = bdc_results->side_to_bound_projections;
 
   output_.processing_time_map["get_closest_boundary_segments_from_side;"] = stopwatch_ms.toc(true);
 
-  for (const auto abnormality_key : abnormality_keys) {
-    output_.departure_statuses = utils::check_departure_status(
-      output_.side_to_bound_projections[abnormality_key], node_param_, abs_velocity);
-  }
+  output_.departure_statuses =
+    utils::check_departure_status(output_.side_to_bound_projections, node_param_, abs_velocity);
 
   output_.departure_points = utils::get_departure_points(
     aw_ref_traj, output_.departure_statuses, output_.side_to_bound_projections, node_param_,
     vehicle_info, dist_to_ego);
+
+  fmt::print("Number of departure points: {}\n", output_.departure_points.size());
 
   if (output_.departure_intervals.empty()) {
     output_.departure_intervals =
@@ -234,6 +235,8 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
       departure_intervals_mut, departure_points_mut, aw_ref_traj, vehicle_info, ref_traj.front(),
       dist_to_ego);
   }
+
+  fmt::print("Number of departure intervals: {}\n", output_.departure_intervals.size());
 
   return output_;
 }
