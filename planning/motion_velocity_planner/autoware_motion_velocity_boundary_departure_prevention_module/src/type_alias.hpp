@@ -93,8 +93,8 @@ using boundary_departure_checker::Footprint;
 using boundary_departure_checker::FootprintMargin;  // NOLINT
 using boundary_departure_checker::Footprints;
 using BDCParam = boundary_departure_checker::Param;
-using boundary_departure_checker::AbnormalityType;
 using boundary_departure_checker::abnormality_keys;
+using boundary_departure_checker::AbnormalityType;
 }  // namespace autoware::motion_velocity_planner
 
 #endif  // TYPE_ALIAS_HPP_

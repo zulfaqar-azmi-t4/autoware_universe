@@ -215,146 +215,25 @@ tl::expected<param::Output, std::string> BoundaryDeparturePreventionModule::plan
 
   output_.processing_time_map["get_closest_boundary_segments_from_side;"] = stopwatch_ms.toc(true);
 
-  for(const auto abnormality_key:abnormality_keys){
-  output_.departure_statuses = utils::check_departure_status(
-    output_.side_to_bound_projections[abnormality_key], node_param_,
-    abs_velocity);
-
+  for (const auto abnormality_key : abnormality_keys) {
+    output_.departure_statuses = utils::check_departure_status(
+      output_.side_to_bound_projections[abnormality_key], node_param_, abs_velocity);
   }
 
-  Side<DeparturePoints> dpts;
-  DeparturePoints departure_points;
-  for (const auto direction : side_keys) {
-    auto & departure_statuses = output_.departure_statuses[direction];
-    const auto & side_to_bound = output_.side_to_bound_projections["localization"][direction];
+  output_.departure_points = utils::get_departure_points(
+    aw_ref_traj, output_.departure_statuses, output_.side_to_bound_projections, node_param_,
+    vehicle_info, dist_to_ego);
 
-    for (const auto & [status, idx] : departure_statuses) {
-      const auto & curr_side = side_to_bound[idx];
-
-      DeparturePoint point;
-      point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
-      point.type = status;
-      point.lat_dist_to_bound = curr_side.lat_dist;
-      point.point = curr_side.pt_on_bound;
-      point.direction = direction;
-      point.th_dist_hysteresis = node_param_.th_dist_hysteresis_m;
-      point.th_lat_dist_to_bounday_hyteresis = std::invoke([&]() -> double {
-        if (point.type == DepartureType::CRITICAL_DEPARTURE) {
-          return node_param_.stop_before_departure.th_dist_to_boundary_m[direction];
-        }
-        if (point.type == DepartureType::APPROACHING_DEPARTURE) {
-          return node_param_.slow_down_before_departure.th_dist_to_boundary_m[direction];
-        }
-
-        if (point.type == DepartureType::NEAR_BOUNDARY) {
-          return node_param_.slow_down_near_boundary.th_dist_to_boundary_m[direction];
-        }
-
-        return std::numeric_limits<double>::max();
-      });
-
-      point.dist_on_traj = trajectory::closest(output_.aw_ref_traj, point.to_geom_pt(0.0));
-      point.dist_from_ego =
-        point.dist_on_traj - (dist_to_ego + vehicle_info.max_longitudinal_offset_m);
-      point.can_be_removed = point.dist_from_ego < std::numeric_limits<double>::epsilon();
-
-      if (point.can_be_removed) {
-        continue;
-      }
-
-      point.point_on_prev_traj = output_.aw_ref_traj.compute(point.dist_on_traj);
-      dpts[point.direction].push_back(point);
-    }
-    std::sort(dpts[direction].begin(), dpts[direction].end());
-    utils::erase_after_first_match(dpts[direction]);
-    std::move(dpts[direction].begin(), dpts[direction].end(), std::back_inserter(departure_points));
-  }
-
-  auto & departure_intervals_mut = output_.departure_intervals;
-  if (departure_intervals_mut.empty()) {
-    size_t idx = 0;
-    while (idx < departure_points.size()) {
-      DepartureInterval interval;
-      interval.start = departure_points[idx].point_on_prev_traj;
-      interval.start_dist_on_traj = departure_points[idx].dist_on_traj;
-      interval.candidates.push_back(departure_points[idx]);
-      interval.direction = departure_points[idx].direction;
-
-      size_t idx_end = idx + 1;
-      while (idx_end < departure_points.size() &&
-             departure_points[idx_end].direction == interval.direction &&
-             departure_points[idx_end].type == DepartureType::NEAR_BOUNDARY) {
-        const auto & prev = departure_points[idx_end - 1];
-        const auto & curr = departure_points[idx_end];
-        const auto diff = std::abs(curr.dist_on_traj - prev.dist_on_traj);
-
-        if (diff < vehicle_info.max_longitudinal_offset_m && curr.direction == prev.direction) {
-          interval.candidates.push_back(curr);
-          ++idx_end;
-        } else {
-          break;
-        }
-      }
-
-      interval.end = interval.candidates.back().point_on_prev_traj;
-      interval.end_dist_on_traj = interval.candidates.back().dist_on_traj;
-      departure_intervals_mut.push_back(interval);
-      idx = idx_end;
-    }
+  if (output_.departure_intervals.empty()) {
+    output_.departure_intervals =
+      utils::init_departure_intervals(output_.departure_points, vehicle_info);
   } else {
-    // check if path is shifted
-    for (auto & departure_interval_mut : departure_intervals_mut) {
-      // update start end pose
-      if (!departure_interval_mut.start_at_traj_front) {
-        departure_interval_mut.start_dist_on_traj =
-          trajectory::closest(aw_ref_traj, departure_interval_mut.start);
-        constexpr auto th_dist_from_start{1.0};
-        departure_interval_mut.start_at_traj_front =
-          departure_interval_mut.start_dist_on_traj < th_dist_from_start;
-      } else {
-        departure_interval_mut.start_dist_on_traj = 0.0;
-        departure_interval_mut.start = ref_traj.front();
-      }
-      departure_interval_mut.end_dist_on_traj =
-        trajectory::closest(aw_ref_traj, departure_interval_mut.end);
-    }
-
-    // remove if ego already pass the end pose.
-    departure_intervals_mut.erase(
-      std::remove_if(
-        departure_intervals_mut.begin(), departure_intervals_mut.end(),
-        [&](const DepartureInterval & interval) {
-          if (interval.end_dist_on_traj < dist_to_ego) {
-            return true;
-          }
-          auto point_of_curr_traj = aw_ref_traj.compute(interval.end_dist_on_traj);
-          return autoware_utils::calc_distance2d(
-                   interval.end.pose.position, point_of_curr_traj.pose.position) > 0.25;
-        }),
-      departure_intervals_mut.end());
-
-    // check if departure point is in between any intervals.
-    // if close to end pose, update end pose.
-    for (auto & departure_interval_mut : departure_intervals_mut) {
-      for (auto & departure_point_mut : departure_points) {
-        if (departure_point_mut.can_be_removed) {
-          continue;
-        }
-
-        if (
-          departure_interval_mut.end_dist_on_traj <
-            departure_point_mut.dist_on_traj + vehicle_info.max_longitudinal_offset_m &&
-          departure_interval_mut.direction == departure_point_mut.direction) {
-          // althought name is point on prev traj, we already update them earlier
-          departure_interval_mut.end = departure_point_mut.point_on_prev_traj;
-          departure_point_mut.can_be_removed = true;
-        }
-      }
-    }
+    auto & departure_intervals_mut = output_.departure_intervals;
+    auto & departure_points_mut = output_.departure_points;
+    utils::update_departure_intervals(
+      departure_intervals_mut, departure_points_mut, aw_ref_traj, vehicle_info, ref_traj.front(),
+      dist_to_ego);
   }
-  output_.departure_points = std::move(departure_points);
-
-  fmt::print("total num of intervals {}\n", output_.departure_intervals.size());
 
   return output_;
 }
@@ -499,7 +378,9 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
 
     stopwatch.tic("lat_dist_to_bound_m");
     auto lat_dist_to_bound_m =
-      output_.side_to_bound_projections["localization"][departure_interval.direction].front().lat_dist;
+      output_.side_to_bound_projections["localization"][departure_interval.direction]
+        .front()
+        .lat_dist;
     time_print["lat_dist_to_bound_m"] = stopwatch.toc("lat_dist_to_bound_m");
     time_print["total"] += time_print["lat_dist_to_bound_m"];
 
