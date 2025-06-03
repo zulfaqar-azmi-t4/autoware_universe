@@ -359,7 +359,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
   output_.is_critical_departing = std::any_of(
     output_.departure_points.begin(), output_.departure_points.end(),
     [abs_vel](const DeparturePoint & pt) {
-      const auto braking_dist = utils::compute_braking_distance(abs_vel, 0.0, -2.5, -1.5);
+      const auto braking_dist = utils::compute_braking_distance(std::min(5.0/3.6, abs_vel), 0.0, -2.5, -1.5, 0.5);
       fmt::print("braking_dist = {} [m]\n", braking_dist);
       return braking_dist < pt.dist_from_ego && pt.type == DepartureType::CRITICAL_DEPARTURE;
     });

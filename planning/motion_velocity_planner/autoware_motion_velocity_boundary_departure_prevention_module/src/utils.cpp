@@ -297,7 +297,7 @@ void erase_after_first_match(DeparturePoints & departure_points)
     departure_points.erase(std::next(crit_dpt_finder), departure_points.end());
   }
 }
-double compute_braking_distance(double v_init, double v_end, double a, double j)
+double compute_braking_distance(double v_init, double v_end, double a, double j, double t_braking_delay)
 {
   // Phase 1: jerk phase
   const double t1 = a / j;
@@ -311,7 +311,7 @@ double compute_braking_distance(double v_init, double v_end, double a, double j)
   const double t2 = dv2 / a;
   const double d2 = ((v_mid + v_end) / 2.0) * t2;
 
-  return d1 + d2;
+  return d1 + d2 + (5.0/3.6) * t_braking_delay;
 }
 
 }  // namespace autoware::motion_velocity_planner::utils

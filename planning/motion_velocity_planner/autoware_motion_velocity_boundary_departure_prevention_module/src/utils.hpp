@@ -73,6 +73,7 @@ std::vector<std::pair<size_t, size_t>> get_traj_indices_candidates(
   const double ego_length);
 void erase_after_first_match(DeparturePoints & departure_points);
 
-double compute_braking_distance(double v_init, double v_end, double a, double j);
+double compute_braking_distance(
+  double v_init, double v_end, double a, double j, double t_braking_delay);
 }  // namespace autoware::motion_velocity_planner::utils
 #endif  // UTILS_HPP_
