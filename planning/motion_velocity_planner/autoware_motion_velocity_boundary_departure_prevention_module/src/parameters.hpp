@@ -23,7 +23,7 @@
 #ifndef PARAMETERS_HPP_
 #define PARAMETERS_HPP_
 
-namespace autoware::motion_velocity_planner::param
+namespace autoware::motion_velocity_planner
 {
 using SegmentWithIdx = boundary_departure_checker::SegmentWithIdx;
 using UncrossableBoundRTree = boundary_departure_checker::UncrossableBoundRTree;
@@ -173,6 +173,6 @@ struct NodeParam
       get_or_declare_parameter<double>(node, ns_lon_tracking + "extra_margin_m");
   }
 };
-}  // namespace autoware::motion_velocity_planner::param
+}  // namespace autoware::motion_velocity_planner
 
 #endif  // PARAMETERS_HPP_

@@ -43,13 +43,13 @@ inline geometry_msgs::msg::Point to_geom_pt(const Point2d & point)
 
 DeparturePoint create_departure_point(
   const Point2d & candidate_point, const DepartureType & departure_type,
-  const param::NodeParam & node_param, std::string_view direction);
+  const NodeParam & node_param, std::string_view direction);
 
 DeparturePoints get_departure_points(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const AbnormalityType<param::DepartureStatuses> & departure_types_idx,
+  const AbnormalityType<DepartureStatuses> & departure_types_idx,
   const AbnormalityType<SideToBoundPojections> & side_to_bound_projections,
-  const param::NodeParam & node_param, const VehicleInfo & vehicle_info,
+  const NodeParam & node_param, const VehicleInfo & vehicle_info,
   const double ego_dist_from_traj_front);
 
 DepartureIntervals init_departure_intervals(
@@ -60,16 +60,16 @@ void update_departure_intervals(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const VehicleInfo vehicle_info,
   const TrajectoryPoint & ref_traj_fr_pt, const double ego_dist_from_traj_front);
 
-AbnormalityType<param::DepartureStatuses> check_departure_status(
-  const AbnormalityType<SideToBoundPojections> & side_to_bound_projections,
-  const param::NodeParam & param, const double curr_vel);
+AbnormalityType<DepartureStatuses> check_departure_status(
+  const AbnormalityType<SideToBoundPojections> & side_to_bound_projections, const NodeParam & param,
+  const double curr_vel);
 
 double calc_braking_distance(
   const double abs_velocity, const double max_deceleration, const double delay_time,
   const double dist_error);
 
 std::vector<std::pair<size_t, size_t>> get_traj_indices_candidates(
-  const std::vector<param::DepartureTypeIdx> & departure_stats, const EgoSides & ego_sides,
+  const std::vector<DepartureTypeIdx> & departure_stats, const EgoSides & ego_sides,
   const double ego_length);
 void erase_after_first_match(DeparturePoints & departure_points);
 

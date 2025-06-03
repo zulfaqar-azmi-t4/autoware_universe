@@ -217,8 +217,7 @@ Marker create_departure_interval_marker(
 }
 
 MarkerArray create_debug_marker_array(
-  const param::Output & output, const rclcpp::Clock::SharedPtr & clock_ptr,
-  const double base_link_z)
+  const Output & output, const rclcpp::Clock::SharedPtr & clock_ptr, const double base_link_z)
 {
   const auto line_list = visualization_msgs::msg::Marker::LINE_LIST;
   const auto curr_time = clock_ptr->now();

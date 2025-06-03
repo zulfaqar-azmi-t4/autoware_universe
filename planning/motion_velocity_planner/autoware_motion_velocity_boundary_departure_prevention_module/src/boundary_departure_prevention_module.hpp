@@ -47,7 +47,7 @@ public:
 private:
   void subscribe_topics(rclcpp::Node & node);
   void publish_topics(rclcpp::Node & node);
-  tl::expected<param::Output, std::string> plan(
+  tl::expected<Output, std::string> plan(
     const PoseWithCovariance & pose_with_covariance, const double abs_velocity,
     const TrajectoryPoints & ref_traj, const TrajectoryPoints & ego_pred_traj,
     const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
@@ -67,8 +67,8 @@ private:
 
   bool is_critical_departing_{false};
   std::string module_name_;
-  param::Output output_;
-  param::NodeParam node_param_;
+  Output output_;
+  NodeParam node_param_;
   rclcpp::Clock::SharedPtr clock_ptr_;
   rclcpp::TimerBase::SharedPtr timer_ptr_;
   MarkerArray slow_down_wall_marker_;

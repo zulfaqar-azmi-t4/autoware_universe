@@ -14,12 +14,13 @@
 
 #include "utils.hpp"
 
-#include "fmt/format.h"
 #include "str_map.hpp"
 
 #include <autoware/trajectory/utils/closest.hpp>
 #include <magic_enum.hpp>
 
+#include <algorithm>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,7 +29,7 @@ namespace autoware::motion_velocity_planner::utils
 {
 DeparturePoint create_departure_point(
   const Point2d & candidate_point, const DepartureType & departure_type,
-  const param::NodeParam & node_param, std::string_view direction)
+  const NodeParam & node_param, std::string_view direction)
 {
   DeparturePoint point;
   point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
@@ -41,9 +42,9 @@ DeparturePoint create_departure_point(
 
 DeparturePoints get_departure_points(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const AbnormalityType<param::DepartureStatuses> & departure_types_idx,
+  const AbnormalityType<DepartureStatuses> & departure_types_idx,
   const AbnormalityType<SideToBoundPojections> & side_to_bound_projections,
-  const param::NodeParam & node_param, const VehicleInfo & vehicle_info,
+  const NodeParam & node_param, const VehicleInfo & vehicle_info,
   const double ego_dist_from_traj_front)
 {
   DeparturePoints departure_points;
@@ -189,11 +190,11 @@ void update_departure_intervals(
   }
 }
 
-AbnormalityType<param::DepartureStatuses> check_departure_status(
-  const AbnormalityType<SideToBoundPojections> & side_to_bound_projections,
-  const param::NodeParam & param, [[maybe_unused]] const double curr_vel)
+AbnormalityType<DepartureStatuses> check_departure_status(
+  const AbnormalityType<SideToBoundPojections> & side_to_bound_projections, const NodeParam & param,
+  [[maybe_unused]] const double curr_vel)
 {
-  AbnormalityType<param::DepartureStatuses> stats;
+  AbnormalityType<DepartureStatuses> stats;
   const auto assign_status = [](
                                const double lat_dist_m, const auto & param,
                                const auto & abnormality_key,
@@ -245,7 +246,7 @@ double calc_braking_distance(
 }
 
 std::vector<std::pair<size_t, size_t>> get_traj_indices_candidates(
-  const std::vector<param::DepartureTypeIdx> & departure_stats, const EgoSides & ego_sides,
+  const std::vector<DepartureTypeIdx> & departure_stats, const EgoSides & ego_sides,
   const double ego_length)
 {
   if (departure_stats.empty()) {
@@ -297,7 +298,8 @@ void erase_after_first_match(DeparturePoints & departure_points)
     departure_points.erase(std::next(crit_dpt_finder), departure_points.end());
   }
 }
-double compute_braking_distance(double v_init, double v_end, double a, double j, double t_braking_delay)
+double compute_braking_distance(
+  double v_init, double v_end, double a, double j, double t_braking_delay)
 {
   // Phase 1: jerk phase
   const double t1 = a / j;
@@ -311,7 +313,7 @@ double compute_braking_distance(double v_init, double v_end, double a, double j,
   const double t2 = dv2 / a;
   const double d2 = ((v_mid + v_end) / 2.0) * t2;
 
-  return d1 + d2 + (5.0/3.6) * t_braking_delay;
+  return d1 + d2 + (5.0 / 3.6) * t_braking_delay;
 }
 
 }  // namespace autoware::motion_velocity_planner::utils

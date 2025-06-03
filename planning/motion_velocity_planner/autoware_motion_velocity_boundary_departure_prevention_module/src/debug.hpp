@@ -25,8 +25,7 @@ Marker create_departure_points_marker(
   const double base_link_z);
 
 MarkerArray create_debug_marker_array(
-  const param::Output & output, const rclcpp::Clock::SharedPtr & clock_ptr,
-  const double base_link_z);
+  const Output & output, const rclcpp::Clock::SharedPtr & clock_ptr, const double base_link_z);
 }  // namespace autoware::motion_velocity_planner::debug
 
 #endif  // DEBUG_HPP_
