@@ -198,10 +198,11 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
     return tl::unexpected<std::string>(bdc_results.error());
   }
 
+  std::map<const char *, double> processing_time_map;
   stopwatch_ms.tic(convert_raw_traj_to_aw_traj);
   const auto aw_ego_pred_traj_opt =
     trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(ego_pred_traj_ptr_->points);
-  processing_times_ms_[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
+  processing_time_map[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
 
   if (!aw_ego_pred_traj_opt) {
     return tl::unexpected<std::string>(aw_ego_pred_traj_opt.error().what);
@@ -213,20 +214,47 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
   output_.boundary_segments = bdc_results->boundary_segments;
   output_.side_to_bound_projections = bdc_results->side_to_bound_projections;
 
-  output_.processing_time_map["get_closest_boundary_segments_from_side;"] = stopwatch_ms.toc(true);
-
+  stopwatch_ms.tic(check_departure_status);
   output_.departure_statuses =
     utils::check_departure_status(output_.side_to_bound_projections, node_param_, abs_velocity);
+  processing_time_map[check_departure_status] = stopwatch_ms.toc(check_departure_status);
 
+  stopwatch_ms.tic(get_departure_points);
   output_.departure_points = utils::get_departure_points(
     aw_ref_traj, output_.departure_statuses, output_.side_to_bound_projections, node_param_,
     vehicle_info, ego_dist_on_traj);
+  processing_time_map[get_departure_points] = stopwatch_ms.toc(get_departure_points);
 
-  fmt::print("Number of departure points: {}\n", output_.departure_points.size());
+  stopwatch_ms.tic(process_critical_departure);
+  auto & crit_dpt_pts_mut = output_.critical_departure_points;
+  for (auto & crit_dpt_pt_mut : crit_dpt_pts_mut) {
+    crit_dpt_pt_mut.dist_on_traj =
+      trajectory::closest(aw_ref_traj, crit_dpt_pt_mut.point_on_prev_traj);
+    crit_dpt_pt_mut.dist_from_ego =
+      crit_dpt_pt_mut.dist_on_traj - (ego_dist_on_traj + vehicle_info.max_longitudinal_offset_m);
+    const auto updated_point = aw_ref_traj.compute(crit_dpt_pt_mut.dist_on_traj);
+    crit_dpt_pt_mut.can_be_removed =
+      autoware_utils::calc_distance2d(
+        updated_point.pose.position, crit_dpt_pt_mut.point_on_prev_traj.pose.position) > 1.0;
+  }
 
+  utils::erase_if(crit_dpt_pts_mut, [](const DeparturePoint & pt) { return pt.can_be_removed; });
+
+  for (const auto & dpt_pt : output_.departure_points) {
+    if (dpt_pt.type == DepartureType::CRITICAL_DEPARTURE) {
+      boundary_departure_checker::CriticalDeparturePoint crit_pt(dpt_pt);
+      crit_pt.point_on_prev_traj = aw_ref_traj.compute(crit_pt.dist_on_traj);
+      crit_dpt_pts_mut.push_back(crit_pt);
+    }
+  }
+
+  std::sort(crit_dpt_pts_mut.begin(), crit_dpt_pts_mut.end());
+  processing_time_map[process_critical_departure] = stopwatch_ms.toc(process_critical_departure);
+
+  stopwatch_ms.tic(update_departure_interval);
   if (output_.departure_intervals.empty()) {
     output_.departure_intervals =
-      utils::init_departure_intervals(output_.departure_points, vehicle_info);
+      utils::init_departure_intervals(aw_ref_traj, output_.departure_points, vehicle_info);
   } else {
     auto & departure_intervals_mut = output_.departure_intervals;
     auto & departure_points_mut = output_.departure_points;
@@ -234,8 +262,11 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
       departure_intervals_mut, departure_points_mut, aw_ref_traj, vehicle_info, ref_traj.front(),
       ego_dist_on_traj);
   }
+  processing_time_map[update_departure_interval] = stopwatch_ms.toc(update_departure_interval);
 
-  fmt::print("Number of departure intervals: {}\n", output_.departure_intervals.size());
+  for (const auto & [name, time] : processing_time_map) {
+    fmt::print("{}: {}\n", name, time);
+  }
 
   return output_;
 }
@@ -340,7 +371,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
   }
 
   const auto ego_dist_on_traj_m =
-    experimental::trajectory::closest(*aw_raw_traj_opt, ego_pred_traj_ptr_->points.front().pose);
+    experimental::trajectory::closest(*aw_raw_traj_opt, curr_pose.pose);
 
   stopwatch_ms.tic(find_slow_down_points);
   const auto output_opt = plan(
@@ -356,12 +387,11 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
   SlowDownInterpolator interpolator(planner_data, 0.25, 0.5, 5.0 / 3.6, 35.0 / 3.6, -1.5);
 
   output_.is_critical_departing = std::any_of(
-    output_.departure_points.begin(), output_.departure_points.end(),
+    output_.critical_departure_points.begin(), output_.critical_departure_points.end(),
     [abs_vel_mps](const DeparturePoint & pt) {
       const auto braking_dist =
         utils::compute_braking_distance(std::min(5.0 / 3.6, abs_vel_mps), 0.0, -2.5, -1.5, 0.5);
-      fmt::print("braking_dist = {} [m]\n", braking_dist);
-      return braking_dist < pt.dist_from_ego && pt.type == DepartureType::CRITICAL_DEPARTURE;
+      return braking_dist > pt.dist_from_ego;
     });
 
   if (output_.is_critical_departing) {
@@ -400,13 +430,6 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
 
     if (!vel_opt) {
       fmt::print("{}\n", vel_opt.error());
-
-      for (const auto & [key, duration] : time_print) {
-        if (key == "total") {
-          continue;
-        }
-        fmt::print("idx: {}, key: {}, time: {}\n", idx, key, duration);
-      }
       continue;
     }
 
@@ -429,13 +452,6 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
       fmt::print(
         "Slow down distance exceeded distance to slow down point by {} [m]\n",
         ego_dist_on_traj_m - dist_to_departure_point);
-
-      for (const auto & [key, duration] : time_print) {
-        if (key == "total") {
-          continue;
-        }
-        fmt::print("idx: {}, key: {}, time: {}\n", idx, key, duration);
-      }
       continue;
     }
 
@@ -459,13 +475,6 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
     slowdown_intervals.emplace_back(start_pose.pose.position, end_pose, vel);
     time_print["inserting_point"] = stopwatch.toc("inserting_point");
     time_print["total"] += time_print["inserting_point"];
-
-    for (const auto & [key, duration] : time_print) {
-      if (key == "total") {
-        continue;
-      }
-      fmt::print("idx: {}, key: {}, time: {}\n", idx, key, duration);
-    }
   }
 
   fmt::print("Total time {} ms\n", time_print["total"]);

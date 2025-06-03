@@ -122,14 +122,12 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
     if (abnormality_type == "steering") {
       footprints[abnormality_type] =
         utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, current_steering);
-      auto ego_side = utils::get_ego_side_from_footprint(
-        footprints[abnormality_type].front(), poses_with_dist_opt->front());
-      ego_sides_from_fps[abnormality_type].push_back(ego_side);
-      continue;
+
+    } else {
+      footprints[abnormality_type] =
+        utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, margin);
     }
 
-    footprints[abnormality_type] =
-      utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, margin);
     if (
       const auto sides_opt =
         utils::get_ego_sides_from_footprints(footprints[abnormality_type], *poses_with_dist_opt)) {
@@ -149,6 +147,25 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
     bdc_data.side_to_bound_projections[abnormality_key] =
       utils::get_closest_boundary_segments_from_side(
         bdc_data.boundary_segments, bdc_data.ego_sides_from_fps[abnormality_key]);
+  }
+
+  for (const auto side_key : side_keys) {
+    for (auto && [normal, steering, localization, longitudinal] : ranges::views::zip(
+           bdc_data.side_to_bound_projections["normal"][side_key],
+           bdc_data.side_to_bound_projections["steering"][side_key],
+           bdc_data.side_to_bound_projections["localization"][side_key],
+           bdc_data.side_to_bound_projections["longitudinal"][side_key])) {
+      auto pt_with_min_lat = normal;
+      if (steering.lat_dist < pt_with_min_lat.lat_dist) {
+        pt_with_min_lat = steering;
+      } else if (localization.lat_dist < pt_with_min_lat.lat_dist) {
+        pt_with_min_lat = localization;
+      } else if (longitudinal.lat_dist < pt_with_min_lat.lat_dist) {
+        pt_with_min_lat = longitudinal;
+      }
+
+      bdc_data.min_side_to_bound_projections[side_key].push_back(pt_with_min_lat);
+    }
   }
 
   return bdc_data;

@@ -84,6 +84,7 @@ struct Output
 
   DepartureIntervals departure_intervals;
   DeparturePoints departure_points;
+  CriticalDeparturePoints critical_departure_points;
   bool is_critical_departing{false};
 };
 

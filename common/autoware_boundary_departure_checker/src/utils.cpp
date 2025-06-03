@@ -110,23 +110,7 @@ std::vector<LinearRing2d> create_vehicle_footprints(
       return transform_vector(local_vehicle_footprint, pose2transform(p.pose));
     });
 
-  if (vehicle_footprints.empty() || vehicle_footprints.front().size() < 6) {
-    return vehicle_footprints;
-  }
-
-  LinearRing2d footprint{vehicle_footprints.back()[6]};
-
-  for (const auto & fp : vehicle_footprints | ranges::views::reverse) {
-    footprint.push_back(fp[1]);
-  }
-  footprint.push_back(vehicle_footprints.front()[3]);
-  footprint.push_back(vehicle_footprints.front()[4]);
-
-  for (const auto & fp : vehicle_footprints) {
-    footprint.push_back(fp[6]);
-  }
-
-  return {footprint};
+  return vehicle_footprints;
 }
 
 TrajectoryPoints cutTrajectory(const TrajectoryPoints & trajectory, const double length)
@@ -484,17 +468,21 @@ tl::expected<Projection, std::string> find_closest_segment(
     // we can assume that before front touches boundary, either left or right side will touch
     // boundary first
     if (
+      const auto proj_opt = segment_to_segment_nearest_projection(ego_side_seg, seg, curr_fp_idx)) {
+      if (!closest_proj || proj_opt->lat_dist < closest_proj->lat_dist) {
+        closest_proj = *proj_opt;
+      }
+    }
+    if (closest_proj) {
+      continue;
+    }
+
+    if (
       const auto is_intersecting_rear = autoware_utils::intersect(
         to_msg(ego_lr.to_3d()), to_msg(ego_rr.to_3d()), to_msg(seg_f.to_3d()),
         to_msg(seg_r.to_3d()))) {
       Point2d point(is_intersecting_rear->x, is_intersecting_rear->y);
       return Projection{point, point, seg, 0.0, curr_fp_idx};
-    }
-    if (
-      const auto proj_opt = segment_to_segment_nearest_projection(ego_side_seg, seg, curr_fp_idx)) {
-      if (!closest_proj || proj_opt->lat_dist < closest_proj->lat_dist) {
-        closest_proj = *proj_opt;
-      }
     }
   }
 
@@ -658,7 +646,8 @@ EgoSide get_ego_side_from_footprint(
 }
 
 tl::expected<EgoSides, std::string> get_ego_sides_from_footprints(
-  const Footprints & footprints, const std::vector<PoseWithDist> & poses_on_traj)
+  const Footprints & footprints, const std::vector<PoseWithDist> & poses_on_traj,
+  const bool use_center_right, const bool use_center_left)
 {
   if (footprints.empty() || poses_on_traj.empty()) {
     return tl::make_unexpected("Footprint or trajectory is empty");
@@ -670,8 +659,6 @@ tl::expected<EgoSides, std::string> get_ego_sides_from_footprints(
 
   EgoSides footprints_sides;
   footprints_sides.reserve(footprints.size());
-  constexpr bool use_center_right = true;
-  constexpr bool use_center_left = true;
 
   for (const auto & [fp, pose_with_dist] : ranges::views::zip(footprints, poses_on_traj)) {
     auto ego_side =

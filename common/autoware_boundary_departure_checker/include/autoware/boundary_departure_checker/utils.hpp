@@ -150,7 +150,8 @@ EgoSide get_ego_side_from_footprint(
   const bool use_center_left = true);
 
 tl::expected<EgoSides, std::string> get_ego_sides_from_footprints(
-  const Footprints & footprints, const std::vector<PoseWithDist> & poses_on_traj);
+  const Footprints & footprints, const std::vector<PoseWithDist> & poses_on_traj,
+  const bool use_center_right = false, const bool use_center_left = false);
 }  // namespace autoware::boundary_departure_checker::utils
 
 #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__UTILS_HPP_

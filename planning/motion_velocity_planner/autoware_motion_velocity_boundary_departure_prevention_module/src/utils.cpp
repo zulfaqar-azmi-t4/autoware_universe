@@ -14,6 +14,7 @@
 
 #include "utils.hpp"
 
+#include "fmt/format.h"
 #include "str_map.hpp"
 
 #include <autoware/trajectory/utils/closest.hpp>
@@ -48,9 +49,9 @@ DeparturePoints get_departure_points(
   const double ego_dist_from_traj_front)
 {
   DeparturePoints departure_points;
-  for (const auto abnormality_key : abnormality_keys) {
-    Side<DeparturePoints> dpts;
-    for (const auto direction : side_keys) {
+  Side<DeparturePoints> dpts;
+  for (const auto direction : side_keys) {
+    for (const auto abnormality_key : abnormality_keys) {
       auto & departure_statuses = departure_types_idx[abnormality_key][direction];
       const auto & side_to_bound = side_to_bound_projections[abnormality_key][direction];
       for (const auto & [status, idx] : departure_statuses) {
@@ -87,26 +88,26 @@ DeparturePoints get_departure_points(
           continue;
         }
 
-        point.point_on_prev_traj = aw_ref_traj.compute(point.dist_on_traj);
         dpts[point.direction].push_back(point);
       }
-      std::sort(dpts[direction].begin(), dpts[direction].end());
-      utils::erase_after_first_match(dpts[direction]);
-      std::move(
-        dpts[direction].begin(), dpts[direction].end(), std::back_inserter(departure_points));
     }
+
+    std::sort(dpts[direction].begin(), dpts[direction].end());
+    utils::erase_after_first_match(dpts[direction]);
+    std::move(dpts[direction].begin(), dpts[direction].end(), std::back_inserter(departure_points));
   }
   return departure_points;
 }
 
 DepartureIntervals init_departure_intervals(
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
   const DeparturePoints & departure_points, const VehicleInfo & vehicle_info)
 {
   DepartureIntervals departure_intervals;
   size_t idx = 0;
   while (idx < departure_points.size()) {
     DepartureInterval interval;
-    interval.start = departure_points[idx].point_on_prev_traj;
+    interval.start = aw_ref_traj.compute(departure_points[idx].dist_on_traj);
     interval.start_dist_on_traj = departure_points[idx].dist_on_traj;
     interval.candidates.push_back(departure_points[idx]);
     interval.direction = departure_points[idx].direction;
@@ -127,7 +128,7 @@ DepartureIntervals init_departure_intervals(
       }
     }
 
-    interval.end = interval.candidates.back().point_on_prev_traj;
+    interval.end = aw_ref_traj.compute(interval.candidates.back().dist_on_traj);
     interval.end_dist_on_traj = interval.candidates.back().dist_on_traj;
     departure_intervals.push_back(interval);
     idx = idx_end;
@@ -183,10 +184,47 @@ void update_departure_intervals(
           departure_point_mut.dist_on_traj + vehicle_info.max_longitudinal_offset_m &&
         departure_interval_mut.direction == departure_point_mut.direction) {
         // althought name is point on prev traj, we already update them earlier
-        departure_interval_mut.end = departure_point_mut.point_on_prev_traj;
+        departure_interval_mut.end = aw_ref_traj.compute(departure_point_mut.dist_on_traj);
         departure_point_mut.can_be_removed = true;
       }
     }
+  }
+
+  if (!departure_intervals.empty()) {
+    DepartureIntervals merged;
+    merged.push_back(departure_intervals.front());
+
+    for (size_t i = 1; i < departure_intervals.size(); ++i) {
+      auto & next_interval_mut = departure_intervals[i];
+      auto & curr_interval_mut = merged.back();
+      const auto is_same_direction = curr_interval_mut.direction == next_interval_mut.direction;
+      if (!is_same_direction) {
+        merged.push_back(next_interval_mut);
+      }
+
+      const auto is_end_in_between =
+        curr_interval_mut.start_dist_on_traj < next_interval_mut.end_dist_on_traj &&
+        next_interval_mut.end_dist_on_traj < curr_interval_mut.end_dist_on_traj;
+      const auto is_start_in_between =
+        curr_interval_mut.start_dist_on_traj < next_interval_mut.start_dist_on_traj &&
+        next_interval_mut.start_dist_on_traj < curr_interval_mut.end_dist_on_traj;
+
+      if (is_start_in_between && !is_end_in_between) {
+        curr_interval_mut.end = next_interval_mut.end;
+        curr_interval_mut.end_dist_on_traj = next_interval_mut.end_dist_on_traj;
+        next_interval_mut.has_merged = true;
+      } else if (!is_start_in_between && is_end_in_between) {
+        curr_interval_mut.start = next_interval_mut.start;
+        curr_interval_mut.start_dist_on_traj = next_interval_mut.start_dist_on_traj;
+        next_interval_mut.has_merged = true;
+      } else if (is_start_in_between && is_end_in_between) {
+        next_interval_mut.has_merged = true;
+      } else {
+        merged.push_back(next_interval_mut);
+      }
+    }
+
+    departure_intervals = merged;
   }
 }
 
@@ -203,11 +241,11 @@ AbnormalityType<DepartureStatuses> check_departure_status(
     const auto slow_before_dpt = param.slow_down_before_departure.th_dist_to_boundary_m[side_key];
     const auto slow_near_bound = param.slow_down_near_boundary.th_dist_to_boundary_m[side_key];
 
-    if (std::abs(lat_dist_m) < stop_before_dpt && abnormality_key == "steering") {
+    if (std::abs(lat_dist_m) < stop_before_dpt && abnormality_key == "normal") {
       return DepartureType::CRITICAL_DEPARTURE;
     }
 
-    if (abnormality_key == "steering") {
+    if (abnormality_key == "normal") {
       return DepartureType::NONE;
     }
 
@@ -285,8 +323,7 @@ std::vector<std::pair<size_t, size_t>> get_traj_indices_candidates(
 void erase_after_first_match(DeparturePoints & departure_points)
 {
   const auto find_cri_dpt = [](const DeparturePoint & point) {
-    return point.type == DepartureType::CRITICAL_DEPARTURE ||
-           point.type == DepartureType::APPROACHING_DEPARTURE;
+    return point.type == DepartureType::CRITICAL_DEPARTURE;
   };
 
   auto crit_dpt_finder =
@@ -303,13 +340,13 @@ double compute_braking_distance(
 {
   // Phase 1: jerk phase
   const double t1 = a / j;
-  const double d1 = v_init * t1 - (a / 6.0) * t1 * t1;
+  const double d1 = std::max(v_init * t1 - (a / 6.0) * t1 * t1, 0.0);
 
   // Midpoint velocity after jerk phase
-  const double v_mid = v_init - (a / 2.0) * t1;
+  const double v_mid = std::max(v_init - (a / 2.0) * t1, 0.0);
 
   // Phase 2: constant deceleration
-  const double dv2 = v_mid - v_end;
+  const double dv2 = std::max(v_mid - v_end, 0.0);
   const double t2 = dv2 / a;
   const double d2 = ((v_mid + v_end) / 2.0) * t2;
 

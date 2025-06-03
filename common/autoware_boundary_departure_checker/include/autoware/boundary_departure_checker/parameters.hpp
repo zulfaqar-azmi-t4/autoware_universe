@@ -158,7 +158,6 @@ struct DeparturePoint
   double dist_from_ego{0.0};
   double velocity{0.0};
   bool can_be_removed{false};
-  TrajectoryPoint point_on_prev_traj;
 
   [[nodiscard]] bool is_nearby(const Pose & pose) const { return is_nearby(pose.position); }
 
@@ -186,7 +185,27 @@ struct DeparturePoint
   bool operator<(const DeparturePoint & other) const { return dist_on_traj < other.dist_on_traj; }
 };
 
+  struct CriticalDeparturePoint : DeparturePoint{
+    TrajectoryPoint point_on_prev_traj;
+    CriticalDeparturePoint() = default;
+    explicit CriticalDeparturePoint(const DeparturePoint & base)
+    {
+      uuid = base.uuid;
+      type = base.type;
+      point = base.point;
+      direction = base.direction;
+      th_dist_hysteresis = base.th_dist_hysteresis;
+      th_lat_dist_to_bounday_hyteresis = base.th_lat_dist_to_bounday_hyteresis;
+      lat_dist_to_bound = base.lat_dist_to_bound;
+      dist_on_traj = base.dist_on_traj;
+      dist_from_ego = base.dist_from_ego;
+      velocity = base.velocity;
+      can_be_removed = base.can_be_removed;
+    }
+  };
+
 using DeparturePoints = std::vector<DeparturePoint>;
+  using CriticalDeparturePoints = std::vector<CriticalDeparturePoint>;
 
 struct DepartureInterval
 {
@@ -197,6 +216,7 @@ struct DepartureInterval
   double end_dist_on_traj;
 
   bool start_at_traj_front{false};
+  bool has_merged{false};
 
   DeparturePoints candidates;
 };
@@ -233,6 +253,7 @@ struct BDCData
   AbnormalityType<Footprints> footprints;
   BoundarySideWithIdx boundary_segments;
   AbnormalityType<SideToBoundPojections> side_to_bound_projections;
+  SideToBoundPojections min_side_to_bound_projections;
 };
 }  // namespace autoware::boundary_departure_checker
 

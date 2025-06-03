@@ -53,6 +53,7 @@ DeparturePoints get_departure_points(
   const double ego_dist_from_traj_front);
 
 DepartureIntervals init_departure_intervals(
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
   const DeparturePoints & departure_points, const VehicleInfo & vehicle_info);
 
 void update_departure_intervals(
