@@ -153,7 +153,7 @@ struct DeparturePoint
 {
   std::string uuid;
   DepartureType type = DepartureType::NONE;
-  std::string_view direction;
+  SideKeys direction = SideKeys::LEFT;
   Point2d point;
   double th_dist_hysteresis{2.0};
   double th_lat_dist_to_bounday_hyteresis{0.01};
@@ -216,7 +216,7 @@ struct DepartureInterval
 {
   TrajectoryPoint start;
   TrajectoryPoint end;
-  std::string_view direction;
+  SideKeys direction;
   double start_dist_on_traj;
   double end_dist_on_traj;
 

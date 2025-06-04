@@ -30,7 +30,7 @@ namespace autoware::motion_velocity_planner::utils
 {
 DeparturePoint create_departure_point(
   const Point2d & candidate_point, const DepartureType & departure_type,
-  const NodeParam & node_param, std::string_view direction)
+  const NodeParam & node_param, const SideKeys direction)
 {
   DeparturePoint point;
   point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
@@ -241,11 +241,11 @@ AbnormalityType<DepartureStatuses> check_departure_status(
     const auto slow_before_dpt = param.slow_down_before_departure.th_dist_to_boundary_m[side_key];
     const auto slow_near_bound = param.slow_down_near_boundary.th_dist_to_boundary_m[side_key];
 
-    if (std::abs(lat_dist_m) < stop_before_dpt && abnormality_key == "normal") {
+    if (std::abs(lat_dist_m) < stop_before_dpt && abnormality_key == AbnormalityKeys::NORMAL) {
       return DepartureType::CRITICAL_DEPARTURE;
     }
 
-    if (abnormality_key == "normal") {
+    if (abnormality_key == AbnormalityKeys::NORMAL) {
       return DepartureType::NONE;
     }
 
@@ -260,8 +260,8 @@ AbnormalityType<DepartureStatuses> check_departure_status(
     return DepartureType::NONE;
   };
 
-  for (const auto abnormality_key : abnormality_keys) {
-    for (const auto side_key : side_keys) {
+  for (const auto abnormality_key : param.bdc_param.abnormality_types_to_compensate) {
+    for (const auto side_key : g_side_keys) {
       for (const auto & [pt_on_ego, pg_on_bound, segment, lat_dist_m, idx_from_orig] :
            side_to_bound_projections[abnormality_key][side_key]) {
         const auto status = assign_status(lat_dist_m, param, abnormality_key, side_key);

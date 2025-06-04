@@ -93,6 +93,7 @@ using boundary_departure_checker::DepartureType;                                
 using boundary_departure_checker::FootprintMargin;                                      // NOLINT
 using boundary_departure_checker::Projection;                                           // NOLINT
 using boundary_departure_checker::Side;                                                 // NOLINT
+using boundary_departure_checker::SideKeys;                                             // NOLINT
 using boundary_departure_checker::UncrossableBoundRTree;                                // NOLINT
 using vehicle_info_utils::VehicleInfo;                                                  // NOLINT
 using BoundaryDepartureChecker = boundary_departure_checker::BoundaryDepartureChecker;  // NOLINT

@@ -411,7 +411,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
 
     stopwatch.tic("lat_dist_to_bound_m");
     auto lat_dist_to_bound_m =
-      output_.side_to_bound_projections["localization"][departure_interval.direction]
+      output_.side_to_bound_projections[AbnormalityKeys::LOCALIZATION][departure_interval.direction]
         .front()
         .lat_dist;
     time_print["lat_dist_to_bound_m"] = stopwatch.toc("lat_dist_to_bound_m");
@@ -482,7 +482,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
   if (debug_publisher_) {
     slow_down_wall_marker_.markers.clear();
     autoware_utils::append_marker_array(
-      debug::create_debug_marker_array(output_, clock_ptr_, curr_pose.pose.position.z),
+      debug::create_debug_marker_array(output_, clock_ptr_, curr_pose.pose.position.z, node_param_),
       &slow_down_wall_marker_);
     debug_publisher_->publish(slow_down_wall_marker_);
   }
