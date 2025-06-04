@@ -29,7 +29,6 @@ static constexpr const char * find_slow_down_points = "find_slow_down_points";
 static constexpr const char * process_critical_departure = "process_critical_departure";
 static constexpr const char * update_departure_interval = "update_departure_interval";
 static constexpr const char * find_slow_down_intervals = "find_slow_down_intervals";
-constexpr std::array<std::string_view, 2> side_keys = {"left", "right"};
 }  // namespace autoware::motion_velocity_planner
 
 #endif  // STR_MAP_HPP_

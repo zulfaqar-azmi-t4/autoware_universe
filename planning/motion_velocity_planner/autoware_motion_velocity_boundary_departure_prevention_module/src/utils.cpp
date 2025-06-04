@@ -50,8 +50,8 @@ DeparturePoints get_departure_points(
 {
   DeparturePoints departure_points;
   Side<DeparturePoints> dpts;
-  for (const auto direction : side_keys) {
-    for (const auto abnormality_key : abnormality_keys) {
+  for (const auto direction : g_side_keys) {
+    for (const auto abnormality_key : node_param.bdc_param.abnormality_types_to_compensate) {
       auto & departure_statuses = departure_types_idx[abnormality_key][direction];
       const auto & side_to_bound = side_to_bound_projections[abnormality_key][direction];
       for (const auto & [status, idx] : departure_statuses) {

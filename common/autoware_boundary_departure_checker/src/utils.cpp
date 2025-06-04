@@ -497,7 +497,7 @@ SideToBoundPojections get_closest_boundary_segments_from_side(
   const BoundarySideWithIdx & boundaries, const EgoSides & ego_sides_from_footprints)
 {
   SideToBoundPojections side;
-  for (const std::string_view side_key : side_keys) {
+  for (const auto & side_key : g_side_keys) {
     side[side_key].reserve(ego_sides_from_footprints.size());
   }
   for (size_t i = 0; i < ego_sides_from_footprints.size(); ++i) {
@@ -508,7 +508,7 @@ SideToBoundPojections get_closest_boundary_segments_from_side(
 
     const auto rear_seg = Segment2d(ego_lb, ego_rb);
 
-    for (const std::string_view side_key : side_keys) {
+    for (const auto & side_key : g_side_keys) {
       if (
         const auto segment_opt =
           find_closest_segment(fp[side_key], rear_seg, i, boundaries[side_key])) {

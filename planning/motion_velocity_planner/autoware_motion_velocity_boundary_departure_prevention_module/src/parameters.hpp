@@ -25,9 +25,6 @@
 
 namespace autoware::motion_velocity_planner
 {
-using SegmentWithIdx = boundary_departure_checker::SegmentWithIdx;
-using UncrossableBoundRTree = boundary_departure_checker::UncrossableBoundRTree;
-
 struct BehaviorTriggerThreshold
 {
   double decel_mp2{-1.0};
@@ -65,9 +62,6 @@ struct PredictedPathFootprint
   double extra_margin_m{0.0};
   double resample_interval_m{0.3};
 };
-
-using DepartureTypeIdx = std::pair<DepartureType, size_t>;
-using DepartureStatuses = Side<std::vector<DepartureTypeIdx>>;
 
 struct Output
 {
@@ -111,6 +105,37 @@ struct NodeParam
       node, module_name + "boundary_types_to_detect");
     bdc_param.th_max_lateral_query_num =
       get_or_declare_parameter<int>(node, module_name + "th_max_lateral_query_num");
+    bdc_param.abnormality_types_to_compensate = std::invoke([&node, &module_name]() {
+      const std::string abnormality_ns{module_name + "abnormality_types_to_compensate."};
+      const auto compensate_normal =
+        get_or_declare_parameter<bool>(node, abnormality_ns + "normal");
+      const auto compensate_steering =
+        get_or_declare_parameter<bool>(node, abnormality_ns + "steering");
+      const auto compensate_localization =
+        get_or_declare_parameter<bool>(node, abnormality_ns + "localization");
+      const auto compensate_longitudinal =
+        get_or_declare_parameter<bool>(node, abnormality_ns + "longitudinal");
+
+      std::vector<AbnormalityKeys> abnormality_types_to_compensate;
+      abnormality_types_to_compensate.reserve(4);
+      if (compensate_normal) {
+        abnormality_types_to_compensate.emplace_back(AbnormalityKeys::NORMAL);
+      }
+
+      if (compensate_steering) {
+        abnormality_types_to_compensate.emplace_back(AbnormalityKeys::STEERING);
+      }
+
+      if (compensate_localization) {
+        abnormality_types_to_compensate.emplace_back(AbnormalityKeys::LOCALIZATION);
+      }
+
+      if (compensate_longitudinal) {
+        abnormality_types_to_compensate.emplace_back(AbnormalityKeys::LONGITUDINAL);
+      }
+
+      return abnormality_types_to_compensate;
+    });
 
     auto boundary_behaviour_trigger_param = [&node,
                                              &module_name](const std::string & trigger_type_str) {

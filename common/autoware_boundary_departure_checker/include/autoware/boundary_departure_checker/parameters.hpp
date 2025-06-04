@@ -23,6 +23,7 @@
 #include <autoware_utils/ros/uuid_helper.hpp>
 #include <autoware_utils/system/stop_watch.hpp>
 #include <autoware_utils_geometry/boost_geometry.hpp>
+#include <magic_enum.hpp>
 
 #include <nav_msgs/msg/odometry.hpp>
 
@@ -64,6 +65,7 @@ struct LonTracking
   double extra_margin_m{0.25};
 };
 
+enum class AbnormalityKeys { NORMAL, LOCALIZATION, LONGITUDINAL, STEERING };
 template <typename T>
 struct AbnormalityType
 {
@@ -71,44 +73,45 @@ struct AbnormalityType
   T longitudinal;
   T localization;
   T steering;
-  T & operator[](const std::string_view key)
+  T & operator[](const AbnormalityKeys key)
   {
-    if (key == "normal") return normal;
-    if (key == "localization") return localization;
-    if (key == "longitudinal") return longitudinal;
-    if (key == "steering") return steering;
-    throw std::out_of_range(std::string("Invalid key: ") + std::string(key));
+    if (key == AbnormalityKeys::NORMAL) return normal;
+    if (key == AbnormalityKeys::LOCALIZATION) return localization;
+    if (key == AbnormalityKeys::LONGITUDINAL) return longitudinal;
+    if (key == AbnormalityKeys::STEERING) return steering;
+    throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
   }
 
-  const T & operator[](const std::string_view key) const
+  const T & operator[](const AbnormalityKeys key) const
   {
-    if (key == "normal") return normal;
-    if (key == "localization") return localization;
-    if (key == "longitudinal") return longitudinal;
-    if (key == "steering") return steering;
-    throw std::out_of_range(std::string("Invalid key: ") + std::string(key));
+    if (key == AbnormalityKeys::NORMAL) return normal;
+    if (key == AbnormalityKeys::LOCALIZATION) return localization;
+    if (key == AbnormalityKeys::LONGITUDINAL) return longitudinal;
+    if (key == AbnormalityKeys::STEERING) return steering;
+    throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
   }
 };
-constexpr std::array<std::string_view, 4> abnormality_keys = {
-  "normal", "longitudinal", "localization", "steering"};
+
+enum class SideKeys { LEFT, RIGHT };
+constexpr std::array<SideKeys, 2> g_side_keys = {SideKeys::LEFT, SideKeys::RIGHT};
 
 template <typename T>
 struct Side
 {
   T right;
   T left;
-  T & operator[](const std::string_view key)
+  T & operator[](const SideKeys key)
   {
-    if (key == "left") return left;
-    if (key == "right") return right;
-    throw std::out_of_range(std::string("Invalid key: ") + std::string(key));
+    if (key == SideKeys::LEFT) return left;
+    if (key == SideKeys::RIGHT) return right;
+    throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
   }
 
-  const T & operator[](const std::string_view key) const
+  const T & operator[](const SideKeys key) const
   {
-    if (key == "left") return left;
-    if (key == "right") return right;
-    throw std::out_of_range(std::string("Invalid key: ") + std::string(key));
+    if (key == SideKeys::LEFT) return left;
+    if (key == SideKeys::RIGHT) return right;
+    throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
   }
 };
 
@@ -137,20 +140,21 @@ struct Projection
   }
 };
 
-constexpr std::array<std::string_view, 2> side_keys = {"left", "right"};
 using SideProjOpt = Side<std::optional<Projection>>;
 using BoundarySide = Side<std::vector<Segment2d>>;
 using BoundarySideWithIdx = Side<std::vector<SegmentWithIdx>>;
 using SideToBoundPojections = Side<std::vector<Projection>>;
 using EgoSide = SideExt<Segment2d>;
 using EgoSides = std::vector<EgoSide>;
+using DepartureTypeIdx = std::pair<DepartureType, size_t>;
+using DepartureStatuses = Side<std::vector<DepartureTypeIdx>>;
 
 struct DeparturePoint
 {
   std::string uuid;
   DepartureType type = DepartureType::NONE;
-  Point2d point;
   std::string_view direction;
+  Point2d point;
   double th_dist_hysteresis{2.0};
   double th_lat_dist_to_bounday_hyteresis{0.01};
   double lat_dist_to_bound{1000.0};
@@ -185,27 +189,28 @@ struct DeparturePoint
   bool operator<(const DeparturePoint & other) const { return dist_on_traj < other.dist_on_traj; }
 };
 
-  struct CriticalDeparturePoint : DeparturePoint{
-    TrajectoryPoint point_on_prev_traj;
-    CriticalDeparturePoint() = default;
-    explicit CriticalDeparturePoint(const DeparturePoint & base)
-    {
-      uuid = base.uuid;
-      type = base.type;
-      point = base.point;
-      direction = base.direction;
-      th_dist_hysteresis = base.th_dist_hysteresis;
-      th_lat_dist_to_bounday_hyteresis = base.th_lat_dist_to_bounday_hyteresis;
-      lat_dist_to_bound = base.lat_dist_to_bound;
-      dist_on_traj = base.dist_on_traj;
-      dist_from_ego = base.dist_from_ego;
-      velocity = base.velocity;
-      can_be_removed = base.can_be_removed;
-    }
-  };
+struct CriticalDeparturePoint : DeparturePoint
+{
+  TrajectoryPoint point_on_prev_traj;
+  CriticalDeparturePoint() = default;
+  explicit CriticalDeparturePoint(const DeparturePoint & base)
+  {
+    uuid = base.uuid;
+    type = base.type;
+    point = base.point;
+    direction = base.direction;
+    th_dist_hysteresis = base.th_dist_hysteresis;
+    th_lat_dist_to_bounday_hyteresis = base.th_lat_dist_to_bounday_hyteresis;
+    lat_dist_to_bound = base.lat_dist_to_bound;
+    dist_on_traj = base.dist_on_traj;
+    dist_from_ego = base.dist_from_ego;
+    velocity = base.velocity;
+    can_be_removed = base.can_be_removed;
+  }
+};
 
 using DeparturePoints = std::vector<DeparturePoint>;
-  using CriticalDeparturePoints = std::vector<CriticalDeparturePoint>;
+using CriticalDeparturePoints = std::vector<CriticalDeparturePoint>;
 
 struct DepartureInterval
 {
@@ -228,6 +233,7 @@ struct Param
   double footprint_extra_margin{};
   FootprintMargin footprint_envelop;
   std::vector<std::string> boundary_types_to_detect;
+  std::vector<AbnormalityKeys> abnormality_types_to_compensate;
   LonTracking lon_tracking;
 };
 

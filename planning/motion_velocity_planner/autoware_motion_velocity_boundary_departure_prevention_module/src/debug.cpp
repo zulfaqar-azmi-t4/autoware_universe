@@ -104,11 +104,11 @@ Marker create_ego_sides_marker(
 }
 
 Marker create_side_to_boundary_marker(
-  const SideToBoundPojections & side_to_boundary, Marker marker, const std::string & ns,
+  const SideToBoundPojections & side_to_boundary, Marker marker, const std::string & type_str,
   const double base_link_z)
 {
-  marker.ns = "side_to_boundary_marker_" + ns;
-  for (const auto side_key : side_keys) {
+  marker.ns = "side_to_boundary_marker_" + type_str;
+  for (const auto side_key : g_side_keys) {
     const auto to_geom = [base_link_z](const auto & pt) { return to_msg(pt.to_3d(base_link_z)); };
     for (const auto & [pt_on_ego, pt_on_bound, segment, lat_dist_m, idx_from_orig] :
          side_to_boundary[side_key]) {
@@ -137,14 +137,13 @@ Marker create_departure_points_marker(
 }
 
 Marker create_footprint_marker(
-  const Footprints & footprints, const rclcpp::Time & curr_time,
-  const std::string_view abnormality_type, const double base_link_z,
-  const std_msgs::msg::ColorRGBA & color)
+  const Footprints & footprints, const rclcpp::Time & curr_time, const std::string & type_str,
+  const double base_link_z, const std_msgs::msg::ColorRGBA & color)
 {
   int32_t id{0};
   auto marker_ll = create_default_marker(
-    "map", curr_time, "footprint_" + std::string(abnormality_type), id,
-    visualization_msgs::msg::Marker::LINE_LIST, create_marker_scale(0.05, 0, 0), color);
+    "map", curr_time, "footprint_" + type_str, id, visualization_msgs::msg::Marker::LINE_LIST,
+    create_marker_scale(0.05, 0, 0), color);
   if (!footprints.empty()) {
     marker_ll.points.reserve(footprints.size() * footprints.front().size());
   }
@@ -217,7 +216,8 @@ Marker create_departure_interval_marker(
 }
 
 MarkerArray create_debug_marker_array(
-  const Output & output, const rclcpp::Clock::SharedPtr & clock_ptr, const double base_link_z)
+  const Output & output, const rclcpp::Clock::SharedPtr & clock_ptr, const double base_link_z,
+  const NodeParam & node_param)
 {
   const auto line_list = visualization_msgs::msg::Marker::LINE_LIST;
   const auto curr_time = clock_ptr->now();
@@ -234,11 +234,12 @@ MarkerArray create_debug_marker_array(
     output.boundary_segments, marker, "boundary_segments", base_link_z));
   marker_array.markers.push_back(
     create_departure_interval_marker(output.departure_intervals, marker, "departure interval"));
-  for (const std::string_view type : abnormality_keys) {
+  for (const auto type : node_param.bdc_param.abnormality_types_to_compensate) {
+    const auto type_str = std::string(magic_enum::enum_name(type));
     marker_array.markers.push_back(create_footprint_marker(
-      output.footprints[type], curr_time, type, base_link_z, color::aqua()));
+      output.footprints[type], curr_time, type_str, base_link_z, color::aqua()));
     marker_array.markers.push_back(create_side_to_boundary_marker(
-      output.side_to_bound_projections[type], marker, std::string(type), base_link_z));
+      output.side_to_bound_projections[type], marker, type_str, base_link_z));
   }
   autoware_utils::append_marker_array(
     create_slow_down_interval(output.slow_down_interval, curr_time), &marker_array);

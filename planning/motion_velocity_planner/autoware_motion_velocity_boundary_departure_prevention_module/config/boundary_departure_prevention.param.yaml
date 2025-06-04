@@ -5,6 +5,12 @@
       boundary_types_to_detect: [road_border]
       th_max_lateral_query_num: 5
 
+      abnormality:
+        normal: true
+        localization: true
+        longitudinal: true
+        steering: false
+
       slow_down_near_boundary:
         enable: true
         th_trigger:

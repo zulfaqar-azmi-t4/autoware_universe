@@ -102,24 +102,24 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
 
   AbnormalityType<EgoSides> ego_sides_from_fps;
   AbnormalityType<Footprints> footprints;
-  for (const std::string_view abnormality_type : abnormality_keys) {
+  for (const auto abnormality_type : param_ptr_->abnormality_types_to_compensate) {
     FootprintMargin margin;
 
-    if (abnormality_type == "normal") {
+    if (abnormality_type == AbnormalityKeys::NORMAL) {
       margin = uncertainty_fp_margin;
-    } else if (abnormality_type == "longitudinal") {
+    } else if (abnormality_type == AbnormalityKeys::STEERING) {
       margin = std::invoke([&]() {
         FootprintMargin lon_tracking;
+        const auto p_lon_tracking = param_ptr_->lon_tracking;
         lon_tracking.lat_m = 0.0;
-        lon_tracking.lon_m =
-          (curr_vel * param_ptr_->lon_tracking.scale) + param_ptr_->lon_tracking.extra_margin_m;
+        lon_tracking.lon_m = (curr_vel * p_lon_tracking.scale) + p_lon_tracking.extra_margin_m;
         return uncertainty_fp_margin + lon_tracking;
       });
-    } else if (abnormality_type == "localization") {
+    } else if (abnormality_type == AbnormalityKeys::LOCALIZATION) {
       margin = uncertainty_fp_margin + param_ptr_->footprint_envelop;
     }
 
-    if (abnormality_type == "steering") {
+    if (abnormality_type == AbnormalityKeys::STEERING) {
       footprints[abnormality_type] =
         utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, current_steering);
 
@@ -141,20 +141,21 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
   // boundary segments is the same for all, so use normal
   bdc_data.boundary_segments = utils::get_boundary_segments_from_side(
     *uncrossable_boundaries_rtree_ptr_, lanelet_map_ptr_->lineStringLayer,
-    bdc_data.ego_sides_from_fps["normal"], param_ptr_->th_max_lateral_query_num);
+    bdc_data.ego_sides_from_fps[AbnormalityKeys::NORMAL], param_ptr_->th_max_lateral_query_num);
 
-  for (const auto abnormality_key : abnormality_keys) {
-    bdc_data.side_to_bound_projections[abnormality_key] =
+  for (const auto abnormality_type : param_ptr_->abnormality_types_to_compensate) {
+    bdc_data.side_to_bound_projections[abnormality_type] =
       utils::get_closest_boundary_segments_from_side(
-        bdc_data.boundary_segments, bdc_data.ego_sides_from_fps[abnormality_key]);
+        bdc_data.boundary_segments, bdc_data.ego_sides_from_fps[abnormality_type]);
   }
 
-  for (const auto side_key : side_keys) {
+  const auto & side_to_bound = bdc_data.side_to_bound_projections;
+  for (const auto side_key : g_side_keys) {
     for (auto && [normal, steering, localization, longitudinal] : ranges::views::zip(
-           bdc_data.side_to_bound_projections["normal"][side_key],
-           bdc_data.side_to_bound_projections["steering"][side_key],
-           bdc_data.side_to_bound_projections["localization"][side_key],
-           bdc_data.side_to_bound_projections["longitudinal"][side_key])) {
+           side_to_bound[AbnormalityKeys::NORMAL][side_key],
+           side_to_bound[AbnormalityKeys::STEERING][side_key],
+           side_to_bound[AbnormalityKeys::LOCALIZATION][side_key],
+           side_to_bound[AbnormalityKeys::LONGITUDINAL][side_key])) {
       auto pt_with_min_lat = normal;
       if (steering.lat_dist < pt_with_min_lat.lat_dist) {
         pt_with_min_lat = steering;
@@ -163,7 +164,6 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
       } else if (longitudinal.lat_dist < pt_with_min_lat.lat_dist) {
         pt_with_min_lat = longitudinal;
       }
-
       bdc_data.min_side_to_bound_projections[side_key].push_back(pt_with_min_lat);
     }
   }
