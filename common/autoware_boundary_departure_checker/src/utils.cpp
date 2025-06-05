@@ -82,7 +82,6 @@ std::vector<LinearRing2d> create_vehicle_footprints(
 
   return vehicle_footprints;
 }
-
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
   const SteeringReport & current_steering)
@@ -111,6 +110,26 @@ std::vector<LinearRing2d> create_vehicle_footprints(
     });
 
   return vehicle_footprints;
+}
+
+std::vector<LinearRing2d> create_ego_footprints(
+  const AbnormalityType abnormality_type, const FootprintMargin & uncertainty_fp_margin,
+  const double curr_vel, const TrajectoryPoints & ego_pred_traj,
+  const SteeringReport & current_steering, const VehicleInfo & vehicle_info, const Param & param)
+{
+  FootprintMargin margin;
+
+  if (abnormality_type == AbnormalityType::LONGITUDINAL) {
+    const auto & p = param.lon_tracking;
+    margin.lon_m += (curr_vel * p.scale) + p.extra_margin_m;
+  } else if (abnormality_type == AbnormalityType::LOCALIZATION) {
+    margin = uncertainty_fp_margin + param.footprint_envelop;
+  } else if (abnormality_type == AbnormalityType::STEERING) {
+    return utils::create_vehicle_footprints(ego_pred_traj, vehicle_info, current_steering);
+  } else {
+    margin = uncertainty_fp_margin;
+  }
+  return utils::create_vehicle_footprints(ego_pred_traj, vehicle_info, margin);
 }
 
 TrajectoryPoints cutTrajectory(const TrajectoryPoints & trajectory, const double length)
@@ -325,7 +344,7 @@ tl::expected<std::tuple<Point2d, Point2d, double>, std::string> point_to_segment
   return result(p, projection_point);
 }
 
-tl::expected<Projection, std::string> segment_to_segment_nearest_projection(
+tl::expected<ProjectionToBound, std::string> segment_to_segment_nearest_projection(
   const Segment2d & ego_seg, const Segment2d & lane_seg, const size_t ego_sides_idx)
 {
   const auto & [ego_f, ego_b] = ego_seg;
@@ -336,10 +355,10 @@ tl::expected<Projection, std::string> segment_to_segment_nearest_projection(
       autoware_utils::to_msg(ego_f.to_3d()), autoware_utils::to_msg(ego_b.to_3d()),
       autoware_utils::to_msg(lane_pt1.to_3d()), autoware_utils::to_msg(lane_pt2.to_3d()))) {
     Point2d point(is_intersecting->x, is_intersecting->y);
-    return Projection{point, point, lane_seg, 0.0, ego_sides_idx};
+    return ProjectionToBound{point, point, lane_seg, 0.0, ego_sides_idx};
   }
 
-  std::vector<Projection> projections;
+  std::vector<ProjectionToBound> projections;
   projections.reserve(4);
   constexpr bool swap_result = true;
   if (const auto projection_opt = point_to_segment_projection(ego_f, lane_seg, swap_result)) {
@@ -367,7 +386,7 @@ tl::expected<Projection, std::string> segment_to_segment_nearest_projection(
   if (projections.size() == 1) return projections.front();
 
   const auto min_elem = std::min_element(
-    projections.begin(), projections.end(), [](const Projection & proj1, const Projection & proj2) {
+    projections.begin(), projections.end(), [](const ProjectionToBound & proj1, const ProjectionToBound & proj2) {
       return std::abs(proj1.lat_dist) < std::abs(proj2.lat_dist);
     });
 
@@ -456,12 +475,12 @@ BoundarySideWithIdx get_boundary_segments_from_side(
   return output;
 }
 
-tl::expected<Projection, std::string> find_closest_segment(
+tl::expected<ProjectionToBound, std::string> find_closest_segment(
   const Segment2d & ego_side_seg, const Segment2d & ego_rear_seg, const size_t curr_fp_idx,
   const std::vector<SegmentWithIdx> & boundary_segments)
 {
   using autoware_utils::to_msg;
-  std::optional<Projection> closest_proj;
+  std::optional<ProjectionToBound> closest_proj;
   for (const auto & [seg, ll_id, idx_curr, idx_next] : boundary_segments) {
     const auto & [ego_lr, ego_rr] = ego_rear_seg;
     const auto & [seg_f, seg_r] = seg;
@@ -482,7 +501,7 @@ tl::expected<Projection, std::string> find_closest_segment(
         to_msg(ego_lr.to_3d()), to_msg(ego_rr.to_3d()), to_msg(seg_f.to_3d()),
         to_msg(seg_r.to_3d()))) {
       Point2d point(is_intersecting_rear->x, is_intersecting_rear->y);
-      return Projection{point, point, seg, 0.0, curr_fp_idx};
+      return ProjectionToBound{point, point, seg, 0.0, curr_fp_idx};
     }
   }
 
@@ -493,10 +512,10 @@ tl::expected<Projection, std::string> find_closest_segment(
   return tl::make_unexpected("Couldn't find any nearest point.");
 }
 
-SideToBoundPojections get_closest_boundary_segments_from_side(
+ProjectionsToBound get_closest_boundary_segments_from_side(
   const BoundarySideWithIdx & boundaries, const EgoSides & ego_sides_from_footprints)
 {
-  SideToBoundPojections side;
+  ProjectionsToBound side;
   for (const auto & side_key : g_side_keys) {
     side[side_key].reserve(ego_sides_from_footprints.size());
   }
@@ -645,7 +664,7 @@ EgoSide get_ego_side_from_footprint(
   return ego_side;
 }
 
-tl::expected<EgoSides, std::string> get_ego_sides_from_footprints(
+tl::expected<EgoSides, std::string> get_sides_from_footprints(
   const Footprints & footprints, const std::vector<PoseWithDist> & poses_on_traj,
   const bool use_center_right, const bool use_center_left)
 {

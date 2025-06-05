@@ -104,7 +104,7 @@ Marker create_ego_sides_marker(
 }
 
 Marker create_side_to_boundary_marker(
-  const SideToBoundPojections & side_to_boundary, Marker marker, const std::string & type_str,
+  const ProjectionsToBound & side_to_boundary, Marker marker, const std::string & type_str,
   const double base_link_z)
 {
   marker.ns = "side_to_boundary_marker_" + type_str;
@@ -239,10 +239,10 @@ MarkerArray create_debug_marker_array(
     marker_array.markers.push_back(create_footprint_marker(
       output.footprints[type], curr_time, type_str, base_link_z, color::aqua()));
     marker_array.markers.push_back(create_side_to_boundary_marker(
-      output.side_to_bound_projections[type], marker, type_str, base_link_z));
+      output.projections_to_bound[type], marker, type_str, base_link_z));
   }
   autoware_utils::append_marker_array(
-    create_slow_down_interval(output.slow_down_interval, curr_time), &marker_array);
+    create_slow_down_interval(output.slow_down_intervals, curr_time), &marker_array);
 
   return marker_array;
 }

@@ -132,6 +132,9 @@ private:
   autoware_utils::Polygon2d toPolygon2D(const lanelet::BasicPolygon2d & poly) const;
 
   mutable std::shared_ptr<autoware_utils::TimeKeeper> time_keeper_;
+
+  Footprint get_ego_footprints(
+    const AbnormalityType abnormality_type, const FootprintMargin uncertainty_fp_margin);
 };
 }  // namespace autoware::boundary_departure_checker
 

@@ -35,6 +35,10 @@ std::vector<LinearRing2d> create_vehicle_footprints(
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
   const FootprintMargin & margin = {0.0, 0.0});
+std::vector<LinearRing2d> create_ego_footprints(
+  const AbnormalityType abnormality_type, const FootprintMargin & uncertainty_fp_margin,
+  const double curr_vel, const TrajectoryPoints & ego_pred_traj,
+  const SteeringReport & current_steering, const VehicleInfo & vehicle_info, const Param & param);
 /**
  * @brief cut trajectory by length
  * @param trajectory input trajectory
@@ -119,7 +123,7 @@ BoundarySideWithIdx get_boundary_segments_from_side(
   const UncrossableBoundRTree & rtree, const lanelet::LineStringLayer & linestring_layer,
   const EgoSides & ego_sides_from_footprints, const int max_lat_query_num);
 
-SideToBoundPojections get_closest_boundary_segments_from_side(
+ProjectionsToBound get_closest_boundary_segments_from_side(
   const BoundarySideWithIdx & boundaries, const EgoSides & ego_sides_from_footprints);
 
 lanelet::BasicPolygon2d toBasicPolygon2D(const LinearRing2d & footprint_hull);
@@ -149,7 +153,7 @@ EgoSide get_ego_side_from_footprint(
   const Footprint & fp, const PoseWithDist & pose_with_dist, const bool use_center_right = true,
   const bool use_center_left = true);
 
-tl::expected<EgoSides, std::string> get_ego_sides_from_footprints(
+tl::expected<EgoSides, std::string> get_sides_from_footprints(
   const Footprints & footprints, const std::vector<PoseWithDist> & poses_on_traj,
   const bool use_center_right = false, const bool use_center_left = false);
 }  // namespace autoware::boundary_departure_checker::utils

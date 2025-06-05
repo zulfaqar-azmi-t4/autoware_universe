@@ -30,7 +30,7 @@ namespace autoware::motion_velocity_planner::utils
 {
 DeparturePoint create_departure_point(
   const Point2d & candidate_point, const DepartureType & departure_type,
-  const NodeParam & node_param, const SideKeys direction)
+  const NodeParam & node_param, const SideKey direction)
 {
   DeparturePoint point;
   point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
@@ -43,8 +43,8 @@ DeparturePoint create_departure_point(
 
 DeparturePoints get_departure_points(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const AbnormalityType<DepartureStatuses> & departure_types_idx,
-  const AbnormalityType<SideToBoundPojections> & side_to_bound_projections,
+  const Abnormalities<DepartureStatuses> & departure_types_idx,
+  const Abnormalities<ProjectionsToBound> & projections_to_bound,
   const NodeParam & node_param, const VehicleInfo & vehicle_info,
   const double ego_dist_from_traj_front)
 {
@@ -53,7 +53,7 @@ DeparturePoints get_departure_points(
   for (const auto direction : g_side_keys) {
     for (const auto abnormality_key : node_param.bdc_param.abnormality_types_to_compensate) {
       auto & departure_statuses = departure_types_idx[abnormality_key][direction];
-      const auto & side_to_bound = side_to_bound_projections[abnormality_key][direction];
+      const auto & side_to_bound = projections_to_bound[abnormality_key][direction];
       for (const auto & [status, idx] : departure_statuses) {
         const auto & curr_side = side_to_bound[idx];
 
@@ -228,11 +228,11 @@ void update_departure_intervals(
   }
 }
 
-AbnormalityType<DepartureStatuses> check_departure_status(
-  const AbnormalityType<SideToBoundPojections> & side_to_bound_projections, const NodeParam & param,
+Abnormalities<DepartureStatuses> check_departure_status(
+  const Abnormalities<ProjectionsToBound> & projections_to_bound, const NodeParam & param,
   [[maybe_unused]] const double curr_vel)
 {
-  AbnormalityType<DepartureStatuses> stats;
+  Abnormalities<DepartureStatuses> stats;
   const auto assign_status = [](
                                const double lat_dist_m, const auto & param,
                                const auto & abnormality_key,
@@ -241,11 +241,11 @@ AbnormalityType<DepartureStatuses> check_departure_status(
     const auto slow_before_dpt = param.slow_down_before_departure.th_dist_to_boundary_m[side_key];
     const auto slow_near_bound = param.slow_down_near_boundary.th_dist_to_boundary_m[side_key];
 
-    if (std::abs(lat_dist_m) < stop_before_dpt && abnormality_key == AbnormalityKeys::NORMAL) {
+    if (std::abs(lat_dist_m) < stop_before_dpt && abnormality_key == AbnormalityType::NORMAL) {
       return DepartureType::CRITICAL_DEPARTURE;
     }
 
-    if (abnormality_key == AbnormalityKeys::NORMAL) {
+    if (abnormality_key == AbnormalityType::NORMAL) {
       return DepartureType::NONE;
     }
 
@@ -263,7 +263,7 @@ AbnormalityType<DepartureStatuses> check_departure_status(
   for (const auto abnormality_key : param.bdc_param.abnormality_types_to_compensate) {
     for (const auto side_key : g_side_keys) {
       for (const auto & [pt_on_ego, pg_on_bound, segment, lat_dist_m, idx_from_orig] :
-           side_to_bound_projections[abnormality_key][side_key]) {
+           projections_to_bound[abnormality_key][side_key]) {
         const auto status = assign_status(lat_dist_m, param, abnormality_key, side_key);
         if (status != DepartureType::NONE && status != DepartureType::UNKNOWN) {
           stats[abnormality_key][side_key].emplace_back(status, idx_from_orig);

@@ -31,10 +31,8 @@
 
 #include <lanelet2_core/LaneletMap.h>
 
-#include <map>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -65,52 +63,52 @@ struct LonTracking
   double extra_margin_m{0.25};
 };
 
-enum class AbnormalityKeys { NORMAL, LOCALIZATION, LONGITUDINAL, STEERING };
+enum class AbnormalityType { NORMAL, LOCALIZATION, LONGITUDINAL, STEERING };
 template <typename T>
-struct AbnormalityType
+struct Abnormalities
 {
   T normal;
   T longitudinal;
   T localization;
   T steering;
-  T & operator[](const AbnormalityKeys key)
+  T & operator[](const AbnormalityType key)
   {
-    if (key == AbnormalityKeys::NORMAL) return normal;
-    if (key == AbnormalityKeys::LOCALIZATION) return localization;
-    if (key == AbnormalityKeys::LONGITUDINAL) return longitudinal;
-    if (key == AbnormalityKeys::STEERING) return steering;
+    if (key == AbnormalityType::NORMAL) return normal;
+    if (key == AbnormalityType::LOCALIZATION) return localization;
+    if (key == AbnormalityType::LONGITUDINAL) return longitudinal;
+    if (key == AbnormalityType::STEERING) return steering;
     throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
   }
 
-  const T & operator[](const AbnormalityKeys key) const
+  const T & operator[](const AbnormalityType key) const
   {
-    if (key == AbnormalityKeys::NORMAL) return normal;
-    if (key == AbnormalityKeys::LOCALIZATION) return localization;
-    if (key == AbnormalityKeys::LONGITUDINAL) return longitudinal;
-    if (key == AbnormalityKeys::STEERING) return steering;
+    if (key == AbnormalityType::NORMAL) return normal;
+    if (key == AbnormalityType::LOCALIZATION) return localization;
+    if (key == AbnormalityType::LONGITUDINAL) return longitudinal;
+    if (key == AbnormalityType::STEERING) return steering;
     throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
   }
 };
 
-enum class SideKeys { LEFT, RIGHT };
-constexpr std::array<SideKeys, 2> g_side_keys = {SideKeys::LEFT, SideKeys::RIGHT};
+enum class SideKey { LEFT, RIGHT };
+constexpr std::array<SideKey, 2> g_side_keys = {SideKey::LEFT, SideKey::RIGHT};
 
 template <typename T>
 struct Side
 {
   T right;
   T left;
-  T & operator[](const SideKeys key)
+  T & operator[](const SideKey key)
   {
-    if (key == SideKeys::LEFT) return left;
-    if (key == SideKeys::RIGHT) return right;
+    if (key == SideKey::LEFT) return left;
+    if (key == SideKey::RIGHT) return right;
     throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
   }
 
-  const T & operator[](const SideKeys key) const
+  const T & operator[](const SideKey key) const
   {
-    if (key == SideKeys::LEFT) return left;
-    if (key == SideKeys::RIGHT) return right;
+    if (key == SideKey::LEFT) return left;
+    if (key == SideKey::RIGHT) return right;
     throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
   }
 };
@@ -122,15 +120,15 @@ struct SideExt : Side<T>
   double dist_from_start{0.0};
 };
 
-struct Projection
+struct ProjectionToBound
 {
   Point2d pt_on_ego;    // orig
   Point2d pt_on_bound;  // proj
   Segment2d nearest_bound_seg;
   double lat_dist{std::numeric_limits<double>::max()};
   size_t ego_sides_idx{0};
-  Projection() = default;
-  Projection(Point2d pt_on_ego, Point2d pt_on_bound, Segment2d seg, double dist, size_t idx)
+  ProjectionToBound() = default;
+  ProjectionToBound(Point2d pt_on_ego, Point2d pt_on_bound, Segment2d seg, double dist, size_t idx)
   : pt_on_ego(std::move(pt_on_ego)),
     pt_on_bound(std::move(pt_on_bound)),
     nearest_bound_seg(std::move(seg)),
@@ -140,10 +138,9 @@ struct Projection
   }
 };
 
-using SideProjOpt = Side<std::optional<Projection>>;
 using BoundarySide = Side<std::vector<Segment2d>>;
 using BoundarySideWithIdx = Side<std::vector<SegmentWithIdx>>;
-using SideToBoundPojections = Side<std::vector<Projection>>;
+using ProjectionsToBound = Side<std::vector<ProjectionToBound>>;
 using EgoSide = SideExt<Segment2d>;
 using EgoSides = std::vector<EgoSide>;
 using DepartureTypeIdx = std::pair<DepartureType, size_t>;
@@ -153,7 +150,7 @@ struct DeparturePoint
 {
   std::string uuid;
   DepartureType type = DepartureType::NONE;
-  SideKeys direction = SideKeys::LEFT;
+  SideKey direction = SideKey::LEFT;
   Point2d point;
   double th_dist_hysteresis{2.0};
   double th_lat_dist_to_bounday_hyteresis{0.01};
@@ -188,6 +185,7 @@ struct DeparturePoint
 
   bool operator<(const DeparturePoint & other) const { return dist_on_traj < other.dist_on_traj; }
 };
+using DeparturePoints = std::vector<DeparturePoint>;
 
 struct CriticalDeparturePoint : DeparturePoint
 {
@@ -209,14 +207,13 @@ struct CriticalDeparturePoint : DeparturePoint
   }
 };
 
-using DeparturePoints = std::vector<DeparturePoint>;
 using CriticalDeparturePoints = std::vector<CriticalDeparturePoint>;
 
 struct DepartureInterval
 {
   TrajectoryPoint start;
   TrajectoryPoint end;
-  SideKeys direction;
+  SideKey direction;
   double start_dist_on_traj;
   double end_dist_on_traj;
 
@@ -233,7 +230,7 @@ struct Param
   double footprint_extra_margin{};
   FootprintMargin footprint_envelop;
   std::vector<std::string> boundary_types_to_detect;
-  std::vector<AbnormalityKeys> abnormality_types_to_compensate;
+  std::vector<AbnormalityType> abnormality_types_to_compensate;
   LonTracking lon_tracking;
 };
 
@@ -255,11 +252,11 @@ using PoseWithDist = std::pair<Pose, double>;
 
 struct BDCData
 {
-  AbnormalityType<EgoSides> ego_sides_from_fps;
-  AbnormalityType<Footprints> footprints;
+  Abnormalities<EgoSides> footprints_sides;
+  Abnormalities<Footprints> footprints;
+  Abnormalities<ProjectionsToBound> projections_to_bound;
   BoundarySideWithIdx boundary_segments;
-  AbnormalityType<SideToBoundPojections> side_to_bound_projections;
-  SideToBoundPojections min_side_to_bound_projections;
+  ProjectionsToBound min_projections_to_bound;
 };
 }  // namespace autoware::boundary_departure_checker
 

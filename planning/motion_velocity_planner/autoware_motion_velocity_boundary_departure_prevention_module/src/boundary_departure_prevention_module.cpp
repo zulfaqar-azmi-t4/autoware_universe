@@ -209,19 +209,19 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
   }
   output_.aw_ego_traj = *aw_ego_pred_traj_opt;
   output_.aw_ref_traj = aw_ref_traj;
-  output_.ego_sides_from_fps = bdc_results->ego_sides_from_fps;
+  output_.footprints_sides = bdc_results->footprints_sides;
   output_.footprints = bdc_results->footprints;
   output_.boundary_segments = bdc_results->boundary_segments;
-  output_.side_to_bound_projections = bdc_results->side_to_bound_projections;
+  output_.projections_to_bound = bdc_results->projections_to_bound;
 
   stopwatch_ms.tic(check_departure_status);
   output_.departure_statuses =
-    utils::check_departure_status(output_.side_to_bound_projections, node_param_, abs_velocity);
+    utils::check_departure_status(output_.projections_to_bound, node_param_, abs_velocity);
   processing_time_map[check_departure_status] = stopwatch_ms.toc(check_departure_status);
 
   stopwatch_ms.tic(get_departure_points);
   output_.departure_points = utils::get_departure_points(
-    aw_ref_traj, output_.departure_statuses, output_.side_to_bound_projections, node_param_,
+    aw_ref_traj, output_.departure_statuses, output_.projections_to_bound, node_param_,
     vehicle_info, ego_dist_on_traj);
   processing_time_map[get_departure_points] = stopwatch_ms.toc(get_departure_points);
 
@@ -400,7 +400,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
 
   updater_ptr_->force_update();
 
-  output_.slow_down_interval.clear();
+  output_.slow_down_intervals.clear();
 
   StopWatch<std::chrono::milliseconds> stopwatch;
   std::map<std::string, double> time_print;
@@ -411,7 +411,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
 
     stopwatch.tic("lat_dist_to_bound_m");
     auto lat_dist_to_bound_m =
-      output_.side_to_bound_projections[AbnormalityKeys::LOCALIZATION][departure_interval.direction]
+      output_.projections_to_bound[AbnormalityType::LOCALIZATION][departure_interval.direction]
         .front()
         .lat_dist;
     time_print["lat_dist_to_bound_m"] = stopwatch.toc("lat_dist_to_bound_m");
@@ -471,7 +471,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
     time_print["total"] += time_print["find_start_pose"];
 
     stopwatch.tic("inserting_point");
-    output_.slow_down_interval.emplace_back(start_pose.pose.position, end_pose);
+    output_.slow_down_intervals.emplace_back(start_pose.pose.position, end_pose);
     slowdown_intervals.emplace_back(start_pose.pose.position, end_pose, vel);
     time_print["inserting_point"] = stopwatch.toc("inserting_point");
     time_print["total"] += time_print["inserting_point"];

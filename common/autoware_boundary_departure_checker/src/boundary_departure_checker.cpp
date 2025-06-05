@@ -86,7 +86,6 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
     return tl::unexpected<std::string>("No rtree available.");
   }
 
-  BDCData bdc_data;
   if (!lanelet_map_ptr_) {
     return tl::unexpected<std::string>("lanelet_map_ptr is null");
   }
@@ -100,62 +99,36 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
   const auto uncertainty_fp_margin =
     utils::calc_extra_margin_from_pose_covariance(curr_pose_with_cov, uncertainty_fp_margin_scale);
 
-  AbnormalityType<EgoSides> ego_sides_from_fps;
-  AbnormalityType<Footprints> footprints;
+  BDCData bdc_data;
   for (const auto abnormality_type : param_ptr_->abnormality_types_to_compensate) {
-    FootprintMargin margin;
+    auto & fps = bdc_data.footprints[abnormality_type];
+    fps = utils::create_ego_footprints(
+      abnormality_type, uncertainty_fp_margin, curr_vel, ego_pred_traj, current_steering,
+      *vehicle_info_ptr_, *param_ptr_);
 
-    if (abnormality_type == AbnormalityKeys::NORMAL) {
-      margin = uncertainty_fp_margin;
-    } else if (abnormality_type == AbnormalityKeys::STEERING) {
-      margin = std::invoke([&]() {
-        FootprintMargin lon_tracking;
-        const auto p_lon_tracking = param_ptr_->lon_tracking;
-        lon_tracking.lat_m = 0.0;
-        lon_tracking.lon_m = (curr_vel * p_lon_tracking.scale) + p_lon_tracking.extra_margin_m;
-        return uncertainty_fp_margin + lon_tracking;
-      });
-    } else if (abnormality_type == AbnormalityKeys::LOCALIZATION) {
-      margin = uncertainty_fp_margin + param_ptr_->footprint_envelop;
-    }
-
-    if (abnormality_type == AbnormalityKeys::STEERING) {
-      footprints[abnormality_type] =
-        utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, current_steering);
-
-    } else {
-      footprints[abnormality_type] =
-        utils::create_vehicle_footprints(ego_pred_traj, *vehicle_info_ptr_, margin);
-    }
-
-    if (
-      const auto sides_opt =
-        utils::get_ego_sides_from_footprints(footprints[abnormality_type], *poses_with_dist_opt)) {
-      ego_sides_from_fps[abnormality_type] = *sides_opt;
+    auto & footprints_sides = bdc_data.footprints_sides[abnormality_type];
+    if (const auto sides_opt = utils::get_sides_from_footprints(fps, *poses_with_dist_opt)) {
+      footprints_sides = *sides_opt;
     }
   }
 
-  bdc_data.footprints = footprints;
-  bdc_data.ego_sides_from_fps = ego_sides_from_fps;
-
-  // boundary segments is the same for all, so use normal
   bdc_data.boundary_segments = utils::get_boundary_segments_from_side(
     *uncrossable_boundaries_rtree_ptr_, lanelet_map_ptr_->lineStringLayer,
-    bdc_data.ego_sides_from_fps[AbnormalityKeys::NORMAL], param_ptr_->th_max_lateral_query_num);
+    bdc_data.footprints_sides[AbnormalityType::NORMAL], param_ptr_->th_max_lateral_query_num);
 
   for (const auto abnormality_type : param_ptr_->abnormality_types_to_compensate) {
-    bdc_data.side_to_bound_projections[abnormality_type] =
+    bdc_data.projections_to_bound[abnormality_type] =
       utils::get_closest_boundary_segments_from_side(
-        bdc_data.boundary_segments, bdc_data.ego_sides_from_fps[abnormality_type]);
+        bdc_data.boundary_segments, bdc_data.footprints_sides[abnormality_type]);
   }
 
-  const auto & side_to_bound = bdc_data.side_to_bound_projections;
+  const auto & side_to_bound = bdc_data.projections_to_bound;
   for (const auto side_key : g_side_keys) {
     for (auto && [normal, steering, localization, longitudinal] : ranges::views::zip(
-           side_to_bound[AbnormalityKeys::NORMAL][side_key],
-           side_to_bound[AbnormalityKeys::STEERING][side_key],
-           side_to_bound[AbnormalityKeys::LOCALIZATION][side_key],
-           side_to_bound[AbnormalityKeys::LONGITUDINAL][side_key])) {
+           side_to_bound[AbnormalityType::NORMAL][side_key],
+           side_to_bound[AbnormalityType::STEERING][side_key],
+           side_to_bound[AbnormalityType::LOCALIZATION][side_key],
+           side_to_bound[AbnormalityType::LONGITUDINAL][side_key])) {
       auto pt_with_min_lat = normal;
       if (steering.lat_dist < pt_with_min_lat.lat_dist) {
         pt_with_min_lat = steering;
@@ -164,7 +137,7 @@ BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
       } else if (longitudinal.lat_dist < pt_with_min_lat.lat_dist) {
         pt_with_min_lat = longitudinal;
       }
-      bdc_data.min_side_to_bound_projections[side_key].push_back(pt_with_min_lat);
+      bdc_data.min_projections_to_bound[side_key].push_back(pt_with_min_lat);
     }
   }
 
@@ -437,5 +410,4 @@ autoware_utils::Polygon2d BoundaryDepartureChecker::toPolygon2D(
   boost::geometry::correct(polygon);
   return polygon;
 }
-
 }  // namespace autoware::boundary_departure_checker

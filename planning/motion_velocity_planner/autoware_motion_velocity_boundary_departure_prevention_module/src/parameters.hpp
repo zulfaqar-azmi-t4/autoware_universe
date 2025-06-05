@@ -66,12 +66,12 @@ struct PredictedPathFootprint
 struct Output
 {
   std::unordered_map<std::string, double> processing_time_map;
-  AbnormalityType<Footprints> footprints;
-  AbnormalityType<EgoSides> ego_sides_from_fps;
+  Abnormalities<Footprints> footprints;
+  Abnormalities<EgoSides> footprints_sides;
   BoundarySideWithIdx boundary_segments;
-  AbnormalityType<SideToBoundPojections> side_to_bound_projections;
-  AbnormalityType<DepartureStatuses> departure_statuses;
-  std::vector<std::pair<geometry_msgs::msg::Point, geometry_msgs::msg::Point>> slow_down_interval;
+  Abnormalities<ProjectionsToBound> projections_to_bound;
+  Abnormalities<DepartureStatuses> departure_statuses;
+  std::vector<std::pair<Point, Point>> slow_down_intervals;
 
   trajectory::Trajectory<TrajectoryPoint> aw_ref_traj;
   trajectory::Trajectory<TrajectoryPoint> aw_ego_traj;
@@ -116,22 +116,22 @@ struct NodeParam
       const auto compensate_longitudinal =
         get_or_declare_parameter<bool>(node, abnormality_ns + "longitudinal");
 
-      std::vector<AbnormalityKeys> abnormality_types_to_compensate;
+      std::vector<AbnormalityType> abnormality_types_to_compensate;
       abnormality_types_to_compensate.reserve(4);
       if (compensate_normal) {
-        abnormality_types_to_compensate.emplace_back(AbnormalityKeys::NORMAL);
+        abnormality_types_to_compensate.emplace_back(AbnormalityType::NORMAL);
       }
 
       if (compensate_steering) {
-        abnormality_types_to_compensate.emplace_back(AbnormalityKeys::STEERING);
+        abnormality_types_to_compensate.emplace_back(AbnormalityType::STEERING);
       }
 
       if (compensate_localization) {
-        abnormality_types_to_compensate.emplace_back(AbnormalityKeys::LOCALIZATION);
+        abnormality_types_to_compensate.emplace_back(AbnormalityType::LOCALIZATION);
       }
 
       if (compensate_longitudinal) {
-        abnormality_types_to_compensate.emplace_back(AbnormalityKeys::LONGITUDINAL);
+        abnormality_types_to_compensate.emplace_back(AbnormalityType::LONGITUDINAL);
       }
 
       return abnormality_types_to_compensate;

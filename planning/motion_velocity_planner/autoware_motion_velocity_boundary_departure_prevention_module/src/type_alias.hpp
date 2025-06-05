@@ -49,6 +49,7 @@ using autoware_planning_msgs::msg::Trajectory;
 using autoware_planning_msgs::msg::TrajectoryPoint;
 using geometry_msgs::msg::Pose;
 using geometry_msgs::msg::PoseWithCovariance;
+  using geometry_msgs::msg::Point;
 using nav_msgs::msg::Odometry;
 using TrajectoryPoints = std::vector<TrajectoryPoint>;
 using autoware_adapi_v1_msgs::msg::OperationModeState;
@@ -63,7 +64,7 @@ using boundary_departure_checker::EgoSides;
 using boundary_departure_checker::Footprint;
 using boundary_departure_checker::Footprints;
 using boundary_departure_checker::g_side_keys;  // NOLINT
-using boundary_departure_checker::SideToBoundPojections;
+using boundary_departure_checker::ProjectionsToBound;
 using visualization_msgs::msg::Marker;
 using visualization_msgs::msg::MarkerArray;
 using BDCParam = boundary_departure_checker::Param;
@@ -84,6 +85,7 @@ using autoware_utils::ProcessingTimePublisher;                                  
 using autoware_utils::StopWatch;                                                        // NOLINT
 using autoware_utils::to_msg;                                                           // NOLINT
 using autoware_utils_geometry::Point2d;                                                 // NOLINT
+using vehicle_info_utils::VehicleInfo;                                                  // NOLINT
 using boundary_departure_checker::CriticalDeparturePoints;                              // NOLINT
 using boundary_departure_checker::DepartureInterval;                                    // NOLINT
 using boundary_departure_checker::DepartureIntervals;                                   // NOLINT
@@ -91,14 +93,13 @@ using boundary_departure_checker::DeparturePoint;                               
 using boundary_departure_checker::DeparturePoints;                                      // NOLINT
 using boundary_departure_checker::DepartureType;                                        // NOLINT
 using boundary_departure_checker::FootprintMargin;                                      // NOLINT
-using boundary_departure_checker::Projection;                                           // NOLINT
+using boundary_departure_checker::ProjectionToBound;                                           // NOLINT
 using boundary_departure_checker::Side;                                                 // NOLINT
-using boundary_departure_checker::SideKeys;                                             // NOLINT
+using boundary_departure_checker::SideKey;                                             // NOLINT
 using boundary_departure_checker::UncrossableBoundRTree;                                // NOLINT
-using vehicle_info_utils::VehicleInfo;                                                  // NOLINT
-using BoundaryDepartureChecker = boundary_departure_checker::BoundaryDepartureChecker;  // NOLINT
-using boundary_departure_checker::AbnormalityKeys;                                      // NOLINT
+using boundary_departure_checker::BoundaryDepartureChecker;  // NOLINT
 using boundary_departure_checker::AbnormalityType;                                      // NOLINT
+using boundary_departure_checker::Abnormalities;                                      // NOLINT
 using boundary_departure_checker::DepartureStatuses;                                    // NOLINT
 
 }  // namespace autoware::motion_velocity_planner
