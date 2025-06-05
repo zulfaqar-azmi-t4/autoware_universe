@@ -74,14 +74,24 @@ public:
     std::shared_ptr<autoware_utils::TimeKeeper> time_keeper =
       std::make_shared<autoware_utils::TimeKeeper>());
 
+  tl::expected<AbnormalitiesData, std::string> get_abnormalities_data(
+    const TrajectoryPoints & predicted_traj,
+    const trajectory::Trajectory<TrajectoryPoint> & aw_raw_traj,
+    const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov,
+    const double uncertainty_fp_margin_scale, const SteeringReport & current_steering);
+
+  tl::expected<BoundarySideWithIdx, std::string> get_boundary_segments_from_side(
+    const EgoSides & ego_sides_from_footprints);
+
   tl::expected<UncrossableBoundRTree, std::string> build_uncrossable_boundaries_tree(
     const lanelet::LaneletMapPtr & lanelet_map_ptr);
 
-  tl::expected<BDCData, std::string> get_projections_to_closest_uncrossable_boundaries(
-    const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov, const double curr_vel,
-    const TrajectoryPoints & ego_pred_traj,
-    const trajectory::Trajectory<TrajectoryPoint> & aw_raw_traj,
-    const double uncertainty_fp_margin_scale, const SteeringReport & current_steering);
+  tl::expected<std::vector<ProjectionToBound>, std::string> get_closest_projections_to_boundaries(
+    const Abnormalities<ProjectionsToBound> & projections_to_bound, const SideKey side_key);
+
+  tl::expected<Side<std::vector<ProjectionToBound>>, std::string>
+  get_closest_projections_to_boundaries(
+    const Abnormalities<ProjectionsToBound> & projections_to_bound);
 
   bool checkPathWillLeaveLane(
     const lanelet::ConstLanelets & lanelets, const PathWithLaneId & path) const;
@@ -119,7 +129,6 @@ private:
   std::unique_ptr<Param> param_ptr_;
   std::shared_ptr<VehicleInfo> vehicle_info_ptr_;
   std::unique_ptr<UncrossableBoundRTree> uncrossable_boundaries_rtree_ptr_;
-  BDCData bdc_data_;
 
   bool willLeaveLane(
     const lanelet::ConstLanelets & candidate_lanelets,

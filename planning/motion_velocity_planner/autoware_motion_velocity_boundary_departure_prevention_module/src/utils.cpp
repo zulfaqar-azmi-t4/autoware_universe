@@ -42,54 +42,33 @@ DeparturePoint create_departure_point(
 }
 
 DeparturePoints get_departure_points(
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const Abnormalities<DepartureStatuses> & departure_types_idx,
-  const Abnormalities<ProjectionsToBound> & projections_to_bound,
-  const NodeParam & node_param, const VehicleInfo & vehicle_info,
-  const double ego_dist_from_traj_front)
+  const ProjectionsToBound & projections_to_bound, const NodeParam & node_param,
+  const VehicleInfo & vehicle_info, const double ego_dist_from_traj_front)
 {
   DeparturePoints departure_points;
   Side<DeparturePoints> dpts;
   for (const auto direction : g_side_keys) {
-    for (const auto abnormality_key : node_param.bdc_param.abnormality_types_to_compensate) {
-      auto & departure_statuses = departure_types_idx[abnormality_key][direction];
-      const auto & side_to_bound = projections_to_bound[abnormality_key][direction];
-      for (const auto & [status, idx] : departure_statuses) {
-        const auto & curr_side = side_to_bound[idx];
+    for (const auto & side_to_bound : projections_to_bound[direction]) {
+      DeparturePoint point;
+      point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
+      point.lat_dist_to_bound = side_to_bound.lat_dist;
+      point.type = side_to_bound.departure_type;
+      point.point = side_to_bound.pt_on_bound;
+      point.direction = direction;
+      point.th_dist_hysteresis = node_param.th_dist_hysteresis_m;
+      point.dist_on_traj = side_to_bound.lon_dist_on_ref_traj;
+      point.idx_from_ego_traj = side_to_bound.ego_sides_idx;
+      point.dist_from_ego =
+        point.dist_on_traj - (ego_dist_from_traj_front + vehicle_info.max_longitudinal_offset_m);
+      point.can_be_removed = point.dist_from_ego < std::numeric_limits<double>::epsilon() ||
+                             point.type == DepartureType::NONE ||
+                             point.type == DepartureType::UNKNOWN;
 
-        DeparturePoint point;
-        point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
-        point.lat_dist_to_bound = curr_side.lat_dist;
-        point.type = status;
-        point.point = curr_side.pt_on_bound;
-        point.direction = direction;
-        point.th_dist_hysteresis = node_param.th_dist_hysteresis_m;
-        point.th_lat_dist_to_bounday_hyteresis = std::invoke([&]() -> double {
-          if (point.type == DepartureType::CRITICAL_DEPARTURE) {
-            return node_param.stop_before_departure.th_dist_to_boundary_m[direction];
-          }
-          if (point.type == DepartureType::APPROACHING_DEPARTURE) {
-            return node_param.slow_down_before_departure.th_dist_to_boundary_m[direction];
-          }
-
-          if (point.type == DepartureType::NEAR_BOUNDARY) {
-            return node_param.slow_down_near_boundary.th_dist_to_boundary_m[direction];
-          }
-
-          return std::numeric_limits<double>::max();
-        });
-
-        point.dist_on_traj = trajectory::closest(aw_ref_traj, point.to_geom_pt(0.0));
-        point.dist_from_ego =
-          point.dist_on_traj - (ego_dist_from_traj_front + vehicle_info.max_longitudinal_offset_m);
-        point.can_be_removed = point.dist_from_ego < std::numeric_limits<double>::epsilon();
-
-        if (point.can_be_removed) {
-          continue;
-        }
-
-        dpts[point.direction].push_back(point);
+      if (point.can_be_removed) {
+        continue;
       }
+
+      dpts[point.direction].push_back(point);
     }
 
     std::sort(dpts[direction].begin(), dpts[direction].end());
@@ -228,96 +207,12 @@ void update_departure_intervals(
   }
 }
 
-Abnormalities<DepartureStatuses> check_departure_status(
-  const Abnormalities<ProjectionsToBound> & projections_to_bound, const NodeParam & param,
-  [[maybe_unused]] const double curr_vel)
-{
-  Abnormalities<DepartureStatuses> stats;
-  const auto assign_status = [](
-                               const double lat_dist_m, const auto & param,
-                               const auto & abnormality_key,
-                               const auto & side_key) -> DepartureType {
-    const auto stop_before_dpt = param.stop_before_departure.th_dist_to_boundary_m[side_key];
-    const auto slow_before_dpt = param.slow_down_before_departure.th_dist_to_boundary_m[side_key];
-    const auto slow_near_bound = param.slow_down_near_boundary.th_dist_to_boundary_m[side_key];
-
-    if (std::abs(lat_dist_m) < stop_before_dpt && abnormality_key == AbnormalityType::NORMAL) {
-      return DepartureType::CRITICAL_DEPARTURE;
-    }
-
-    if (abnormality_key == AbnormalityType::NORMAL) {
-      return DepartureType::NONE;
-    }
-
-    if (std::abs(lat_dist_m) < slow_before_dpt) {
-      return DepartureType::APPROACHING_DEPARTURE;
-    }
-
-    if (std::abs(lat_dist_m) < slow_near_bound) {
-      return DepartureType::NEAR_BOUNDARY;
-    }
-
-    return DepartureType::NONE;
-  };
-
-  for (const auto abnormality_key : param.bdc_param.abnormality_types_to_compensate) {
-    for (const auto side_key : g_side_keys) {
-      for (const auto & [pt_on_ego, pg_on_bound, segment, lat_dist_m, idx_from_orig] :
-           projections_to_bound[abnormality_key][side_key]) {
-        const auto status = assign_status(lat_dist_m, param, abnormality_key, side_key);
-        if (status != DepartureType::NONE && status != DepartureType::UNKNOWN) {
-          stats[abnormality_key][side_key].emplace_back(status, idx_from_orig);
-        }
-      }
-    }
-  }
-
-  return stats;
-}
-
 double calc_braking_distance(
   const double abs_velocity, const double max_deceleration, const double delay_time,
   const double dist_error)
 {
   return (abs_velocity * abs_velocity) / (2.0 * max_deceleration) + delay_time * abs_velocity +
          dist_error;
-}
-
-std::vector<std::pair<size_t, size_t>> get_traj_indices_candidates(
-  const std::vector<DepartureTypeIdx> & departure_stats, const EgoSides & ego_sides,
-  const double ego_length)
-{
-  if (departure_stats.empty()) {
-    return {};
-  }
-  std::vector<std::pair<size_t, size_t>> slow_down_candidate_idx;
-  size_t p1 = 0;
-  size_t p2 = 0;
-  for (; p2 + 1 < departure_stats.size(); ++p2) {
-    const auto [stat1, idx1] = departure_stats.at(p2);
-    const auto [stat2, idx2] = departure_stats.at(p2 + 1);
-    if (idx1 >= ego_sides.size() || idx2 >= ego_sides.size()) {
-      break;
-    }
-    const auto diff =
-      std::abs(ego_sides.at(idx2).dist_from_start - ego_sides.at(idx1).dist_from_start);
-    // have to compare between two arrays
-    const auto cond1 = diff < ego_length;
-    const auto cond2 = p2 < departure_stats.size() - 1;
-    if (cond1 && cond2) {
-      ++p2;
-      continue;
-    }
-    slow_down_candidate_idx.emplace_back(
-      departure_stats.at(p1).second, departure_stats.at(p2).second);
-    p1 = p2;
-  }
-
-  if (p1 <= p2 && p2 != 0UL) {
-    slow_down_candidate_idx.emplace_back(
-      departure_stats.at(p1).second, departure_stats.at(p2 - 1).second);
-  }
-  return slow_down_candidate_idx;
 }
 
 void erase_after_first_match(DeparturePoints & departure_points)
@@ -350,7 +245,7 @@ double compute_braking_distance(
   const double t2 = dv2 / a;
   const double d2 = ((v_mid + v_end) / 2.0) * t2;
 
-  return d1 + d2 + (5.0 / 3.6) * t_braking_delay;
+  return d1 + d2 + v_init * t_braking_delay;
 }
 
 }  // namespace autoware::motion_velocity_planner::utils

@@ -14,7 +14,6 @@
 
 #include "type_alias.hpp"
 
-#include <limits>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -25,37 +24,6 @@
 
 namespace autoware::motion_velocity_planner
 {
-struct BehaviorTriggerThreshold
-{
-  double decel_mp2{-1.0};
-  double brake_delay_s{1.0};
-  double dist_error_m{0.25};
-};
-
-struct SlowDownBehavior
-{
-  double velocity_mps{0.0};
-};
-
-struct BoundaryBehaviorTrigger
-{
-  bool enable{true};
-  BoundaryThreshold th_dist_to_boundary_m{
-    std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
-  BehaviorTriggerThreshold th_trigger;
-};
-
-struct SlowDownNearBoundaryTrigger : BoundaryBehaviorTrigger
-{
-  SlowDownBehavior slow_down_behavior;
-
-  SlowDownNearBoundaryTrigger() = default;
-  explicit SlowDownNearBoundaryTrigger(BoundaryBehaviorTrigger bound_behavior)
-  : BoundaryBehaviorTrigger(bound_behavior)
-  {
-  }
-};
-
 struct PredictedPathFootprint
 {
   double scale{1.0};
@@ -66,11 +34,10 @@ struct PredictedPathFootprint
 struct Output
 {
   std::unordered_map<std::string, double> processing_time_map;
+  AbnormalitiesData abnormalities_data;
   Abnormalities<Footprints> footprints;
   Abnormalities<EgoSides> footprints_sides;
-  BoundarySideWithIdx boundary_segments;
   Abnormalities<ProjectionsToBound> projections_to_bound;
-  Abnormalities<DepartureStatuses> departure_statuses;
   std::vector<std::pair<Point, Point>> slow_down_intervals;
 
   trajectory::Trajectory<TrajectoryPoint> aw_ref_traj;
@@ -89,10 +56,6 @@ struct NodeParam
 
   double th_departure_point_lifetime_s{1.0};
   double th_dist_hysteresis_m{2.0};
-
-  SlowDownNearBoundaryTrigger slow_down_near_boundary;
-  BoundaryBehaviorTrigger slow_down_before_departure;
-  BoundaryBehaviorTrigger stop_before_departure;
 
   PredictedPathFootprint pred_path_footprint;
 
@@ -172,9 +135,12 @@ struct NodeParam
           get_or_declare_parameter<double>(node, ns_slow + "velocity_kmh") / 3.6;
         return trigger;
       };
-    slow_down_near_boundary = slow_down_behaviour_trigger_param("slow_down_near_boundary");
-    slow_down_before_departure = boundary_behaviour_trigger_param("slow_down_before_departure");
-    stop_before_departure = boundary_behaviour_trigger_param("stop_before_departure");
+
+    bdc_param.slow_down_near_boundary =
+      slow_down_behaviour_trigger_param("slow_down_near_boundary");
+    bdc_param.slow_down_before_departure =
+      boundary_behaviour_trigger_param("slow_down_before_departure");
+    bdc_param.stop_before_departure = boundary_behaviour_trigger_param("stop_before_departure");
 
     pred_path_footprint = std::invoke([&node, &module_name]() {
       PredictedPathFootprint param;

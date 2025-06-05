@@ -24,21 +24,33 @@
 #include <lanelet2_core/primitives/Polygon.h>
 
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace autoware::boundary_departure_checker::utils
 {
+Point2d to_point2d(const Eigen::Matrix<double, 3, 1> & ll_pt);
+
+Segment2d to_segment2d(
+  const Eigen::Matrix<double, 3, 1> & ll_pt1, const Eigen::Matrix<double, 3, 1> & ll_pt2);
+
+DepartureType check_departure_type(
+  const double lateral_dist_m, const Param & param, const AbnormalityType abnormality_type,
+  const SideKey side_key);
+
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
   const SteeringReport & current_steering);
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
+  const FootprintMargin & uncertainty_fp_margin, const LonTracking & lon_tracking);
+std::vector<LinearRing2d> create_vehicle_footprints(
+  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
   const FootprintMargin & margin = {0.0, 0.0});
+
 std::vector<LinearRing2d> create_ego_footprints(
   const AbnormalityType abnormality_type, const FootprintMargin & uncertainty_fp_margin,
-  const double curr_vel, const TrajectoryPoints & ego_pred_traj,
-  const SteeringReport & current_steering, const VehicleInfo & vehicle_info, const Param & param);
+  const TrajectoryPoints & ego_pred_traj, const SteeringReport & current_steering,
+  const VehicleInfo & vehicle_info, const Param & param);
 /**
  * @brief cut trajectory by length
  * @param trajectory input trajectory
@@ -119,11 +131,8 @@ UncrossableBoundRTree build_uncrossable_boundaries_rtree(
   const lanelet::LaneletMap & lanelet_map,
   const std::vector<std::string> & boundary_types_to_detect);
 
-BoundarySideWithIdx get_boundary_segments_from_side(
-  const UncrossableBoundRTree & rtree, const lanelet::LineStringLayer & linestring_layer,
-  const EgoSides & ego_sides_from_footprints, const int max_lat_query_num);
-
 ProjectionsToBound get_closest_boundary_segments_from_side(
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
   const BoundarySideWithIdx & boundaries, const EgoSides & ego_sides_from_footprints);
 
 lanelet::BasicPolygon2d toBasicPolygon2D(const LinearRing2d & footprint_hull);
@@ -145,17 +154,13 @@ std::vector<lanelet::ConstLineString3d> get_linestrings_near_footprint(
 FootprintMargin calc_extra_margin_from_pose_covariance(
   const geometry_msgs::msg::PoseWithCovariance & covariance, const double scale);
 
-tl::expected<std::vector<PoseWithDist>, std::string> get_poses_with_dist_on_trajectory(
-  const TrajectoryPoints & ego_pred_traj,
-  const trajectory::Trajectory<TrajectoryPoint> & aw_raw_traj);
-
 EgoSide get_ego_side_from_footprint(
-  const Footprint & fp, const PoseWithDist & pose_with_dist, const bool use_center_right = true,
+  const Footprint & footprint, const bool use_center_right = true,
   const bool use_center_left = true);
 
-tl::expected<EgoSides, std::string> get_sides_from_footprints(
-  const Footprints & footprints, const std::vector<PoseWithDist> & poses_on_traj,
-  const bool use_center_right = false, const bool use_center_left = false);
+EgoSides get_sides_from_footprints(
+  const Footprints & footprints, const bool use_center_right = false,
+  const bool use_center_left = false);
 }  // namespace autoware::boundary_departure_checker::utils
 
 #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__UTILS_HPP_

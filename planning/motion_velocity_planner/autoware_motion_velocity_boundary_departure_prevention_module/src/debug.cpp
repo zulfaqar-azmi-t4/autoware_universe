@@ -107,16 +107,15 @@ Marker create_side_to_boundary_marker(
   const ProjectionsToBound & side_to_boundary, Marker marker, const std::string & type_str,
   const double base_link_z)
 {
-  marker.ns = "side_to_boundary_marker_" + type_str;
+  marker.ns = type_str + "_side_to_boundary_marker";
   for (const auto side_key : g_side_keys) {
     const auto to_geom = [base_link_z](const auto & pt) { return to_msg(pt.to_3d(base_link_z)); };
-    for (const auto & [pt_on_ego, pt_on_bound, segment, lat_dist_m, idx_from_orig] :
-         side_to_boundary[side_key]) {
+    for (const auto & pt : side_to_boundary[side_key]) {
       marker.color = color::blue();
-      marker.points.push_back(to_geom(pt_on_ego));
-      marker.points.push_back(to_geom(pt_on_bound));
-      marker.points.push_back(to_geom(segment.first));
-      marker.points.push_back(to_geom(segment.second));
+      marker.points.push_back(to_geom(pt.pt_on_ego));
+      marker.points.push_back(to_geom(pt.pt_on_bound));
+      marker.points.push_back(to_geom(pt.nearest_bound_seg.first));
+      marker.points.push_back(to_geom(pt.nearest_bound_seg.second));
     }
   }
   return marker;
@@ -142,7 +141,7 @@ Marker create_footprint_marker(
 {
   int32_t id{0};
   auto marker_ll = create_default_marker(
-    "map", curr_time, "footprint_" + type_str, id, visualization_msgs::msg::Marker::LINE_LIST,
+    "map", curr_time, "_footprint" + type_str, id, visualization_msgs::msg::Marker::LINE_LIST,
     create_marker_scale(0.05, 0, 0), color);
   if (!footprints.empty()) {
     marker_ll.points.reserve(footprints.size() * footprints.front().size());
@@ -231,11 +230,18 @@ MarkerArray create_debug_marker_array(
   marker_array.markers.push_back(
     create_departure_points_marker(output.departure_points, curr_time, base_link_z));
   marker_array.markers.push_back(create_boundary_segments_marker(
-    output.boundary_segments, marker, "boundary_segments", base_link_z));
+    output.abnormalities_data.boundary_segments, marker, "boundary_segments", base_link_z));
   marker_array.markers.push_back(
     create_departure_interval_marker(output.departure_intervals, marker, "departure interval"));
   for (const auto type : node_param.bdc_param.abnormality_types_to_compensate) {
-    const auto type_str = std::string(magic_enum::enum_name(type));
+    const auto type_str = std::invoke([&]() {
+      auto type_str = std::string(magic_enum::enum_name(type));
+      std::transform(type_str.begin(), type_str.end(), type_str.begin(), [](unsigned char c) {
+        return std::tolower(c);
+      });
+      return type_str;
+    });
+
     marker_array.markers.push_back(create_footprint_marker(
       output.footprints[type], curr_time, type_str, base_link_z, color::aqua()));
     marker_array.markers.push_back(create_side_to_boundary_marker(

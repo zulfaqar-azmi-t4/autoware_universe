@@ -105,8 +105,9 @@ void BoundaryDeparturePreventionModule::update_parameters(
 
     return trigger;
   };
-  pp.slow_down_before_departure = boundary_behaviour_trigger_param("slow_down_before_departure");
-  pp.stop_before_departure = boundary_behaviour_trigger_param("stop_before_departure");
+  pp.bdc_param.slow_down_before_departure =
+    boundary_behaviour_trigger_param("slow_down_before_departure");
+  pp.bdc_param.stop_before_departure = boundary_behaviour_trigger_param("stop_before_departure");
 
   auto slow_down_behaviour_trigger_param =
     [&](const std::string & trigger_type_str, const SlowDownNearBoundaryTrigger slow) {
@@ -120,8 +121,8 @@ void BoundaryDeparturePreventionModule::update_parameters(
       slow_behavior.velocity_mps = velocity_kmh / 3.6;
       return trigger;
     };
-  pp.slow_down_near_boundary =
-    slow_down_behaviour_trigger_param("slow_down_near_boundary", pp.slow_down_near_boundary);
+  pp.bdc_param.slow_down_near_boundary = slow_down_behaviour_trigger_param(
+    "slow_down_near_boundary", pp.bdc_param.slow_down_near_boundary);
 
   const auto pred_path_fp_ns = module_name + "pred_path_footprint.";
   update_param(parameters, pred_path_fp_ns + "scale", pp.pred_path_footprint.scale);
@@ -183,46 +184,39 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
 }
 
 tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
-  const PoseWithCovariance & pose_with_covariance, const double abs_velocity,
-  const TrajectoryPoints & ref_traj, const TrajectoryPoints & ego_pred_traj,
+  const PoseWithCovariance & pose_with_covariance, const TrajectoryPoints & ref_traj,
+  const TrajectoryPoints & ego_pred_traj,
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double footprint_margin_scale,
   const double ego_dist_on_traj, const VehicleInfo & vehicle_info)
 {
   autoware_utils::StopWatch<std::chrono::milliseconds> stopwatch_ms;
-  const auto bdc_results =
-    boundary_departure_checker_ptr_->get_projections_to_closest_uncrossable_boundaries(
-      pose_with_covariance, abs_velocity, ego_pred_traj, aw_ref_traj, footprint_margin_scale,
-      *steering_angle_ptr_);
-
-  if (!bdc_results) {
-    return tl::unexpected<std::string>(bdc_results.error());
-  }
-
   std::map<const char *, double> processing_time_map;
+
   stopwatch_ms.tic(convert_raw_traj_to_aw_traj);
   const auto aw_ego_pred_traj_opt =
     trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(ego_pred_traj_ptr_->points);
   processing_time_map[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
 
   if (!aw_ego_pred_traj_opt) {
-    return tl::unexpected<std::string>(aw_ego_pred_traj_opt.error().what);
+    return tl::make_unexpected(aw_ego_pred_traj_opt.error().what);
   }
-  output_.aw_ego_traj = *aw_ego_pred_traj_opt;
-  output_.aw_ref_traj = aw_ref_traj;
-  output_.footprints_sides = bdc_results->footprints_sides;
-  output_.footprints = bdc_results->footprints;
-  output_.boundary_segments = bdc_results->boundary_segments;
-  output_.projections_to_bound = bdc_results->projections_to_bound;
 
-  stopwatch_ms.tic(check_departure_status);
-  output_.departure_statuses =
-    utils::check_departure_status(output_.projections_to_bound, node_param_, abs_velocity);
-  processing_time_map[check_departure_status] = stopwatch_ms.toc(check_departure_status);
+  const auto abnormality_data_opt = boundary_departure_checker_ptr_->get_abnormalities_data(
+    ego_pred_traj, aw_ref_traj, pose_with_covariance, footprint_margin_scale, *steering_angle_ptr_);
+
+  if (!abnormality_data_opt) {
+    return tl::make_unexpected(abnormality_data_opt.error());
+  }
+
+  output_.abnormalities_data = *abnormality_data_opt;
+
+  const auto closest_projections_to_bound =
+    boundary_departure_checker_ptr_->get_closest_projections_to_boundaries(
+      output_.abnormalities_data.projections_to_bound);
 
   stopwatch_ms.tic(get_departure_points);
   output_.departure_points = utils::get_departure_points(
-    aw_ref_traj, output_.departure_statuses, output_.projections_to_bound, node_param_,
-    vehicle_info, ego_dist_on_traj);
+    *closest_projections_to_bound, node_param_, vehicle_info, ego_dist_on_traj);
   processing_time_map[get_departure_points] = stopwatch_ms.toc(get_departure_points);
 
   stopwatch_ms.tic(process_critical_departure);
@@ -360,9 +354,10 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
   }
 
   stopwatch_ms.tic(convert_raw_traj_to_aw_traj);
+  processing_times_ms_[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
+
   const auto aw_raw_traj_opt =
     trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(raw_trajectory_points);
-  processing_times_ms_[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
 
   if (!aw_raw_traj_opt) {
     fmt::print(
@@ -375,7 +370,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
 
   stopwatch_ms.tic(find_slow_down_points);
   const auto output_opt = plan(
-    curr_pose, abs_vel_mps, raw_trajectory_points, ego_pred_traj_ptr_->points, *aw_raw_traj_opt,
+    curr_pose, raw_trajectory_points, ego_pred_traj_ptr_->points, *aw_raw_traj_opt,
     node_param_.pred_path_footprint.scale, ego_dist_on_traj_m, vehicle_info);
   processing_times_ms_[find_slow_down_points] = stopwatch_ms.toc(find_slow_down_points);
 

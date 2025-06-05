@@ -31,7 +31,6 @@
 
 #include <lanelet2_core/LaneletMap.h>
 
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -113,27 +112,28 @@ struct Side
   }
 };
 
-template <typename T>
-struct SideExt : Side<T>
-{
-  Pose pose;
-  double dist_from_start{0.0};
-};
-
 struct ProjectionToBound
 {
   Point2d pt_on_ego;    // orig
   Point2d pt_on_bound;  // proj
   Segment2d nearest_bound_seg;
   double lat_dist{std::numeric_limits<double>::max()};
+  double lon_dist_on_ref_traj{std::numeric_limits<double>::max()};
   size_t ego_sides_idx{0};
+  DepartureType departure_type = DepartureType::UNKNOWN;
   ProjectionToBound() = default;
-  ProjectionToBound(Point2d pt_on_ego, Point2d pt_on_bound, Segment2d seg, double dist, size_t idx)
+  explicit ProjectionToBound(size_t idx) : ego_sides_idx(idx) {}
+  ProjectionToBound(
+    Point2d pt_on_ego, Point2d pt_on_bound, Segment2d seg, double lat_dist, size_t idx,
+    const double lon_dist = std::numeric_limits<double>::max(),
+    const DepartureType departure_type = DepartureType::NONE)
   : pt_on_ego(std::move(pt_on_ego)),
     pt_on_bound(std::move(pt_on_bound)),
     nearest_bound_seg(std::move(seg)),
-    lat_dist(dist),
-    ego_sides_idx(idx)
+    lat_dist(lat_dist),
+    lon_dist_on_ref_traj(lon_dist),
+    ego_sides_idx(idx),
+    departure_type(departure_type)
   {
   }
 };
@@ -141,41 +141,31 @@ struct ProjectionToBound
 using BoundarySide = Side<std::vector<Segment2d>>;
 using BoundarySideWithIdx = Side<std::vector<SegmentWithIdx>>;
 using ProjectionsToBound = Side<std::vector<ProjectionToBound>>;
-using EgoSide = SideExt<Segment2d>;
+using EgoSide = Side<Segment2d>;
 using EgoSides = std::vector<EgoSide>;
-using DepartureTypeIdx = std::pair<DepartureType, size_t>;
-using DepartureStatuses = Side<std::vector<DepartureTypeIdx>>;
 
 struct DeparturePoint
 {
   std::string uuid;
   DepartureType type = DepartureType::NONE;
-  SideKey direction = SideKey::LEFT;
   Point2d point;
+  SideKey direction = SideKey::LEFT;
   double th_dist_hysteresis{2.0};
-  double th_lat_dist_to_bounday_hyteresis{0.01};
   double lat_dist_to_bound{1000.0};
   double dist_on_traj{1000.0};
   double dist_from_ego{0.0};
   double velocity{0.0};
+  size_t idx_from_ego_traj{};
   bool can_be_removed{false};
 
   [[nodiscard]] bool is_nearby(const Pose & pose) const { return is_nearby(pose.position); }
 
   [[nodiscard]] bool is_nearby(const Point & point) const { return is_nearby({point.x, point.y}); }
 
-  [[nodiscard]] bool is_close_to_bound() const
-  {
-    return (
-      (type == DepartureType::CRITICAL_DEPARTURE || type == DepartureType::APPROACHING_DEPARTURE) &&
-      std::abs(lat_dist_to_bound) < th_lat_dist_to_bounday_hyteresis);
-  }
-
   [[nodiscard]] bool is_nearby(const Point2d & candidate_point) const
   {
     const auto diff = boost::geometry::distance(point, candidate_point);
-
-    return !is_close_to_bound() && diff < th_dist_hysteresis;
+    return type != DepartureType::CRITICAL_DEPARTURE && diff < th_dist_hysteresis;
   }
 
   [[nodiscard]] Point to_geom_pt(const double z = 0.0) const
@@ -198,7 +188,6 @@ struct CriticalDeparturePoint : DeparturePoint
     point = base.point;
     direction = base.direction;
     th_dist_hysteresis = base.th_dist_hysteresis;
-    th_lat_dist_to_bounday_hyteresis = base.th_lat_dist_to_bounday_hyteresis;
     lat_dist_to_bound = base.lat_dist_to_bound;
     dist_on_traj = base.dist_on_traj;
     dist_from_ego = base.dist_from_ego;
@@ -224,6 +213,37 @@ struct DepartureInterval
 };
 using DepartureIntervals = std::vector<DepartureInterval>;
 
+struct BehaviorTriggerThreshold
+{
+  double decel_mp2{-1.0};
+  double brake_delay_s{1.0};
+  double dist_error_m{0.25};
+};
+
+struct SlowDownBehavior
+{
+  double velocity_mps{0.0};
+};
+
+struct BoundaryBehaviorTrigger
+{
+  bool enable{true};
+  Side<double> th_dist_to_boundary_m{
+    std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
+  BehaviorTriggerThreshold th_trigger;
+};
+
+struct SlowDownNearBoundaryTrigger : BoundaryBehaviorTrigger
+{
+  SlowDownBehavior slow_down_behavior;
+
+  SlowDownNearBoundaryTrigger() = default;
+  explicit SlowDownNearBoundaryTrigger(BoundaryBehaviorTrigger bound_behavior)
+  : BoundaryBehaviorTrigger(bound_behavior)
+  {
+  }
+};
+
 struct Param
 {
   int th_max_lateral_query_num{5};
@@ -231,6 +251,11 @@ struct Param
   FootprintMargin footprint_envelop;
   std::vector<std::string> boundary_types_to_detect;
   std::vector<AbnormalityType> abnormality_types_to_compensate;
+
+  SlowDownNearBoundaryTrigger slow_down_near_boundary;
+  BoundaryBehaviorTrigger slow_down_before_departure;
+  BoundaryBehaviorTrigger stop_before_departure;
+
   LonTracking lon_tracking;
 };
 
@@ -248,15 +273,13 @@ struct Input
 
 using Footprint = LinearRing2d;
 using Footprints = std::vector<Footprint>;
-using PoseWithDist = std::pair<Pose, double>;
 
-struct BDCData
+struct AbnormalitiesData
 {
   Abnormalities<EgoSides> footprints_sides;
   Abnormalities<Footprints> footprints;
-  Abnormalities<ProjectionsToBound> projections_to_bound;
   BoundarySideWithIdx boundary_segments;
-  ProjectionsToBound min_projections_to_bound;
+  Abnormalities<ProjectionsToBound> projections_to_bound;
 };
 }  // namespace autoware::boundary_departure_checker
 

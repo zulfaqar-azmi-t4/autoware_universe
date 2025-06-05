@@ -48,8 +48,8 @@ private:
   void subscribe_topics(rclcpp::Node & node);
   void publish_topics(rclcpp::Node & node);
   tl::expected<Output, std::string> plan(
-    const PoseWithCovariance & pose_with_covariance, const double abs_velocity,
-    const TrajectoryPoints & ref_traj, const TrajectoryPoints & ego_pred_traj,
+    const PoseWithCovariance & pose_with_covariance, const TrajectoryPoints & ref_traj,
+    const TrajectoryPoints & ego_pred_traj,
     const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
     const double footprint_margin_scale, const double dist_to_ego,
     const VehicleInfo & vehicle_info);

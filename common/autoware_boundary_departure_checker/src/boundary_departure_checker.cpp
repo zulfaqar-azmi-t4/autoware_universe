@@ -75,73 +75,202 @@ BoundaryDepartureChecker::BoundaryDepartureChecker(
     std::make_unique<UncrossableBoundRTree>(*try_uncrossable_boundaries_rtree);
 }
 
-tl::expected<BDCData, std::string>
-BoundaryDepartureChecker::get_projections_to_closest_uncrossable_boundaries(
-  const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov, const double curr_vel,
-  const TrajectoryPoints & ego_pred_traj,
+tl::expected<AbnormalitiesData, std::string> BoundaryDepartureChecker::get_abnormalities_data(
+  const TrajectoryPoints & predicted_traj,
   const trajectory::Trajectory<TrajectoryPoint> & aw_raw_traj,
+  const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov,
   const double uncertainty_fp_margin_scale, const SteeringReport & current_steering)
 {
-  if (!uncrossable_boundaries_rtree_ptr_) {
-    return tl::unexpected<std::string>("No rtree available.");
+  if (predicted_traj.empty()) {
+    return tl::make_unexpected("Ego predicted trajectory is empty");
   }
 
-  if (!lanelet_map_ptr_) {
-    return tl::unexpected<std::string>("lanelet_map_ptr is null");
-  }
-
-  const auto poses_with_dist_opt =
-    utils::get_poses_with_dist_on_trajectory(ego_pred_traj, aw_raw_traj);
-  if (!poses_with_dist_opt) {
-    return tl::unexpected<std::string>(poses_with_dist_opt.error());
+  const auto underlying_bases = aw_raw_traj.get_underlying_bases();
+  if (underlying_bases.size() < 4) {
+    return tl::make_unexpected("trajectory too short");
   }
 
   const auto uncertainty_fp_margin =
     utils::calc_extra_margin_from_pose_covariance(curr_pose_with_cov, uncertainty_fp_margin_scale);
 
-  BDCData bdc_data;
+  AbnormalitiesData abnormalities_data;
   for (const auto abnormality_type : param_ptr_->abnormality_types_to_compensate) {
-    auto & fps = bdc_data.footprints[abnormality_type];
+    auto & fps = abnormalities_data.footprints[abnormality_type];
     fps = utils::create_ego_footprints(
-      abnormality_type, uncertainty_fp_margin, curr_vel, ego_pred_traj, current_steering,
-      *vehicle_info_ptr_, *param_ptr_);
+      abnormality_type, uncertainty_fp_margin, predicted_traj, current_steering, *vehicle_info_ptr_,
+      *param_ptr_);
 
-    auto & footprints_sides = bdc_data.footprints_sides[abnormality_type];
-    if (const auto sides_opt = utils::get_sides_from_footprints(fps, *poses_with_dist_opt)) {
-      footprints_sides = *sides_opt;
-    }
+    abnormalities_data.footprints_sides[abnormality_type] = utils::get_sides_from_footprints(fps);
   }
 
-  bdc_data.boundary_segments = utils::get_boundary_segments_from_side(
-    *uncrossable_boundaries_rtree_ptr_, lanelet_map_ptr_->lineStringLayer,
-    bdc_data.footprints_sides[AbnormalityType::NORMAL], param_ptr_->th_max_lateral_query_num);
+  const auto & normal_footprints = abnormalities_data.footprints_sides[AbnormalityType::NORMAL];
+
+  const auto boundary_segments_opt = get_boundary_segments_from_side(normal_footprints);
+
+  if (!boundary_segments_opt) {
+    return tl::make_unexpected(boundary_segments_opt.error());
+  }
 
   for (const auto abnormality_type : param_ptr_->abnormality_types_to_compensate) {
-    bdc_data.projections_to_bound[abnormality_type] =
+    abnormalities_data.projections_to_bound[abnormality_type] =
       utils::get_closest_boundary_segments_from_side(
-        bdc_data.boundary_segments, bdc_data.footprints_sides[abnormality_type]);
+        aw_raw_traj, abnormalities_data.boundary_segments,
+        abnormalities_data.footprints_sides[abnormality_type]);
   }
 
-  const auto & side_to_bound = bdc_data.projections_to_bound;
-  for (const auto side_key : g_side_keys) {
-    for (auto && [normal, steering, localization, longitudinal] : ranges::views::zip(
-           side_to_bound[AbnormalityType::NORMAL][side_key],
-           side_to_bound[AbnormalityType::STEERING][side_key],
-           side_to_bound[AbnormalityType::LOCALIZATION][side_key],
-           side_to_bound[AbnormalityType::LONGITUDINAL][side_key])) {
-      auto pt_with_min_lat = normal;
-      if (steering.lat_dist < pt_with_min_lat.lat_dist) {
-        pt_with_min_lat = steering;
-      } else if (localization.lat_dist < pt_with_min_lat.lat_dist) {
-        pt_with_min_lat = localization;
-      } else if (longitudinal.lat_dist < pt_with_min_lat.lat_dist) {
-        pt_with_min_lat = longitudinal;
+  return abnormalities_data;
+}
+
+tl::expected<BoundarySideWithIdx, std::string>
+BoundaryDepartureChecker::get_boundary_segments_from_side(
+  const EgoSides & ego_sides_from_footprints)
+{
+  if (!lanelet_map_ptr_) {
+    return tl::make_unexpected(std::string(__func__) + ": invalid lanelet_map_ptr");
+  }
+
+  if (!uncrossable_boundaries_rtree_ptr_) {
+    return tl::make_unexpected(std::string(__func__) + ": invalid uncrossable boundaries rtree");
+  }
+
+  if (!param_ptr_) {
+    return tl::make_unexpected(std::string(__func__) + ": invalid param_ptr");
+  }
+
+  const auto max_lat_query_num = param_ptr_->th_max_lateral_query_num;
+
+  const auto & rtree = *uncrossable_boundaries_rtree_ptr_;
+  const auto & linestring_layer = lanelet_map_ptr_->lineStringLayer;
+
+  const auto closest_segment =
+    [&](const auto & ego_seg, const auto & compare_seg, auto & output_side) {
+      std::vector<SegmentWithIdx> nearest_raw;
+
+      const lanelet::BasicPoint2d ego_start{ego_seg.first.x(), ego_seg.first.y()};
+      rtree.query(bgi::nearest(ego_start, max_lat_query_num), std::back_inserter(nearest_raw));
+
+      for (const auto & nearest : nearest_raw) {
+        const auto ll_id = std::get<1>(nearest);
+        const auto basic_ls = linestring_layer.get(ll_id).basicLineString();
+
+        const auto idx_curr = std::get<2>(nearest);
+        const auto idx_next = std::get<3>(nearest);
+        const auto seg = utils::to_segment2d(basic_ls.at(idx_curr), basic_ls.at(idx_next));
+
+        const auto dist_from_curr_side = bg::comparable_distance(ego_seg, seg);
+        const auto dist_from_compare_side = bg::comparable_distance(compare_seg, seg);
+
+        if (dist_from_compare_side < dist_from_curr_side) {
+          continue;
+        }
+
+        const auto found = [&](const SegmentWithIdx & output_seg) {
+          const auto & [out_seg, out_ll_id, out_ls_idx_curr, out_ls_idx_next] = output_seg;
+          return out_ll_id == ll_id && out_ls_idx_curr == idx_curr;
+        };
+
+        if (!std::any_of(output_side.begin(), output_side.end(), found)) {
+          output_side.push_back(std::make_tuple(seg, ll_id, idx_curr, idx_next));
+        }
       }
-      bdc_data.min_projections_to_bound[side_key].push_back(pt_with_min_lat);
+    };
+
+  BoundarySideWithIdx boundary_sides_with_idx;
+  for (const auto & fp : ego_sides_from_footprints) {
+    closest_segment(fp.left, fp.right, boundary_sides_with_idx.left);   // Left side
+    closest_segment(fp.right, fp.left, boundary_sides_with_idx.right);  // Right side
+  }
+
+  return boundary_sides_with_idx;
+}
+
+tl::expected<std::vector<ProjectionToBound>, std::string>
+BoundaryDepartureChecker::get_closest_projections_to_boundaries(
+  const Abnormalities<ProjectionsToBound> & projections_to_bound, const SideKey side_key)
+{
+  const auto & abnormality_to_check = param_ptr_->abnormality_types_to_compensate;
+
+  if (abnormality_to_check.empty()) {
+    return tl::make_unexpected(std::string(__func__) + ": Nothing to check.");
+  }
+
+  const auto is_empty = std::any_of(
+    abnormality_to_check.begin(), abnormality_to_check.end(),
+    [&projections_to_bound, &side_key](const AbnormalityType abnormality_type) {
+      return projections_to_bound[abnormality_type][side_key].empty();
+    });
+
+  if (is_empty) {
+    return tl::make_unexpected(std::string(__func__) + ": projections to bound is empty.");
+  }
+
+  if (abnormality_to_check.size() == 1) {
+    return projections_to_bound[abnormality_to_check.front()][side_key];
+  }
+
+  const auto & fr_proj_to_bound = projections_to_bound[abnormality_to_check.front()][side_key];
+
+  const auto check_size = [&](const AbnormalityType abnormality_type) {
+    return fr_proj_to_bound.size() != projections_to_bound[abnormality_type][side_key].size();
+  };
+
+  const auto has_size_diff =
+    std::any_of(std::next(abnormality_to_check.begin()), abnormality_to_check.end(), check_size);
+
+  if (has_size_diff) {
+    return tl::make_unexpected(
+      std::string(__func__) + ": Some abnormality type has incorrect size.");
+  }
+
+  std::vector<ProjectionToBound> min_to_bound;
+
+  const auto fp_size = projections_to_bound[abnormality_to_check.front()][side_key].size();
+  min_to_bound.reserve(fp_size);
+  for (size_t idx = 0; idx < fp_size; ++idx) {
+    std::unique_ptr<ProjectionToBound> min_pt;
+    for (const auto abnormality_type : abnormality_to_check) {
+      const auto pt = projections_to_bound[abnormality_type][side_key][idx];
+      if (pt.ego_sides_idx != idx) {
+        continue;
+      }
+
+      if (pt.departure_type == DepartureType::NONE || pt.departure_type == DepartureType::UNKNOWN) {
+        continue;
+      }
+
+      if (!min_pt || pt.lat_dist < min_pt->lat_dist) {
+        min_pt = std::make_unique<ProjectionToBound>(pt);
+      }
+    }
+    if (!min_pt) {
+      continue;
+    }
+    min_to_bound.push_back(*min_pt);
+    if (min_pt->departure_type == DepartureType::CRITICAL_DEPARTURE) {
+      break;
     }
   }
 
-  return bdc_data;
+  return min_to_bound;
+}
+
+tl::expected<Side<std::vector<ProjectionToBound>>, std::string>
+BoundaryDepartureChecker::get_closest_projections_to_boundaries(
+  const Abnormalities<ProjectionsToBound> & projections_to_bound)
+{
+  Side<std::vector<ProjectionToBound>> min_to_bound;
+
+  for (const auto side_key : g_side_keys) {
+    const auto min_to_bound_opt =
+      get_closest_projections_to_boundaries(projections_to_bound, side_key);
+
+    if (!min_to_bound_opt) {
+      return tl::make_unexpected(min_to_bound_opt.error());
+    }
+    min_to_bound[side_key] = *min_to_bound_opt;
+  }
+
+  return min_to_bound;
 }
 
 tl::expected<UncrossableBoundRTree, std::string>
