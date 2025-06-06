@@ -71,7 +71,7 @@ Segment2d to_segment2d(
 
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
-  const FootprintMargin & uncertainty_fp_margin, const LonTracking & lon_tracking)
+  const FootprintMargin & uncertainty_fp_margin, const LongitudinalConfig & longitudinal_config)
 {
   std::vector<LinearRing2d> vehicle_footprints;
   vehicle_footprints.reserve(trajectory.size());
@@ -82,6 +82,7 @@ std::vector<LinearRing2d> create_vehicle_footprints(
       using autoware_utils::pose2transform;
 
       auto margin = uncertainty_fp_margin;
+      const auto & lon_tracking = longitudinal_config.lon_tracking;
       margin.lon_m +=
         (p.longitudinal_velocity_mps * lon_tracking.scale) + lon_tracking.extra_margin_m;
       const auto local_vehicle_footprint = vehicle_info.createFootprint(margin.lat_m, margin.lon_m);
@@ -146,8 +147,10 @@ std::vector<LinearRing2d> create_ego_footprints(
   const VehicleInfo & vehicle_info, const Param & param)
 {
   if (abnormality_type == AbnormalityType::LONGITUDINAL) {
+    const auto longitudinal_config_opt =
+      param.get_abnormality_config<LongitudinalConfig>(abnormality_type);
     return create_vehicle_footprints(
-      ego_pred_traj, vehicle_info, uncertainty_fp_margin, param.lon_tracking);
+      ego_pred_traj, vehicle_info, uncertainty_fp_margin, longitudinal_config_opt->get());
   }
 
   if (abnormality_type == AbnormalityType::STEERING) {
@@ -156,7 +159,9 @@ std::vector<LinearRing2d> create_ego_footprints(
 
   FootprintMargin margin = uncertainty_fp_margin;
   if (abnormality_type == AbnormalityType::LOCALIZATION) {
-    margin = margin + param.footprint_envelop;
+    const auto loc_config_opt = param.get_abnormality_config<LocalizationConfig>(abnormality_type);
+    const auto & footprint_envelop = loc_config_opt->get().footprint_envelop;
+    margin = margin + footprint_envelop;
   }
 
   return utils::create_vehicle_footprints(ego_pred_traj, vehicle_info, margin);
@@ -238,8 +243,7 @@ std::vector<std::pair<LinearRing2d, Pose>> createVehicleFootprints(
   const double footprint_margin_scale)
 {
   // Calculate longitudinal and lateral margin based on covariance
-  const auto margin =
-    utils::calc_extra_margin_from_pose_covariance(covariance, footprint_margin_scale);
+  const auto margin = utils::calc_margin_from_covariance(covariance, footprint_margin_scale);
 
   // Create vehicle footprint in base_link coordinate
   const auto local_vehicle_footprint = vehicle_info.createFootprint(margin.lat_m, margin.lon_m);
@@ -387,7 +391,8 @@ tl::expected<ProjectionToBound, std::string> segment_to_segment_nearest_projecti
       autoware_utils::to_msg(lane_pt1.to_3d()), autoware_utils::to_msg(lane_pt2.to_3d()))) {
     Point2d point(is_intersecting->x, is_intersecting->y);
     const auto dist_on_traj = calc_dist_on_traj(aw_ref_traj, point);
-    return ProjectionToBound{point, point, lane_seg, 0.0, ego_sides_idx, dist_on_traj};
+    return ProjectionToBound{
+      point, point, lane_seg, 0.0, ego_sides_idx, dist_on_traj, DepartureType::CRITICAL_DEPARTURE};
   }
 
   std::vector<ProjectionToBound> projections;
@@ -463,26 +468,22 @@ UncrossableBoundRTree build_uncrossable_boundaries_rtree(
 }
 
 DepartureType check_departure_type(
-  const double lateral_dist_m, const Param & param, const AbnormalityType abnormality_type,
-  const SideKey side_key)
+  const double lateral_dist_m, const Param & param, const SideKey side_key)
 {
-  const auto stop_before_dpt = param.slow_down_before_departure.th_dist_to_boundary_m[side_key];
-  const auto slow_before_dpt = param.slow_down_before_departure.th_dist_to_boundary_m[side_key];
-  const auto slow_near_bound = param.slow_down_near_boundary.th_dist_to_boundary_m[side_key];
+  const auto th_dist_to_boundary_m = param.th_trigger.th_dist_to_boundary_m[side_key];
 
-  if (std::abs(lateral_dist_m) < stop_before_dpt && abnormality_type == AbnormalityType::NORMAL) {
+  // const auto vel_mps = param.th_trigger.max_slow_down_vel_mps;
+  // const auto acc_mps2 = param.th_trigger.th_acc_mps2.max;
+  // const auto jerk_mps3 = param.th_trigger.th_jerk_mps3.max;
+  // const auto braking_delay_s = param.th_trigger.brake_delay_s;
+  // const auto braking_dist = compute_braking_distance(vel_mps, 0.0, acc_mps2, jerk_mps3,
+  // braking_delay_s);
+
+  if (std::abs(lateral_dist_m) < th_dist_to_boundary_m.min) {
     return DepartureType::CRITICAL_DEPARTURE;
   }
 
-  if (abnormality_type == AbnormalityType::NORMAL) {
-    return DepartureType::NONE;
-  }
-
-  if (std::abs(lateral_dist_m) < slow_before_dpt) {
-    return DepartureType::APPROACHING_DEPARTURE;
-  }
-
-  if (std::abs(lateral_dist_m) < slow_near_bound) {
+  if (std::abs(lateral_dist_m) < th_dist_to_boundary_m.max) {
     return DepartureType::NEAR_BOUNDARY;
   }
 
@@ -518,7 +519,8 @@ ProjectionToBound find_closest_segment(
         to_msg(seg_r.to_3d()))) {
       Point2d point(is_intersecting_rear->x, is_intersecting_rear->y);
       const auto dist_on_traj = calc_dist_on_traj(aw_ref_traj, point);
-      closest_proj = ProjectionToBound{point, point, seg, 0.0, curr_fp_idx, dist_on_traj};
+      closest_proj = ProjectionToBound{
+        point, point, seg, 0.0, curr_fp_idx, dist_on_traj, DepartureType::CRITICAL_DEPARTURE};
       break;
     }
   }
@@ -538,6 +540,7 @@ ProjectionsToBound get_closest_boundary_segments_from_side(
   for (const auto & side_key : g_side_keys) {
     side[side_key].reserve(ego_sides_from_footprints.size());
   }
+
   for (size_t i = 0; i < ego_sides_from_footprints.size(); ++i) {
     const auto & fp = ego_sides_from_footprints[i];
 
@@ -623,7 +626,7 @@ std::vector<lanelet::ConstLineString3d> get_linestrings_near_footprint(
   return nearby_linestrings;
 }
 
-FootprintMargin calc_extra_margin_from_pose_covariance(
+FootprintMargin calc_margin_from_covariance(
   const geometry_msgs::msg::PoseWithCovariance & covariance, const double scale)
 {
   const auto cov_in_map = covariance.covariance;
@@ -667,6 +670,24 @@ EgoSides get_sides_from_footprints(
   }
 
   return footprints_sides;
+}
+
+double compute_braking_distance(
+  double v_init, double v_end, double acc, double jerk, double t_braking_delay)
+{
+  // Phase 1: jerk phase
+  const double t1 = acc / jerk;
+  const double d1 = std::max(v_init * t1 - (acc / 6.0) * t1 * t1, 0.0);
+
+  // Midpoint velocity after jerk phase
+  const double v_mid = std::max(v_init - (acc / 2.0) * t1, 0.0);
+
+  // Phase 2: constant deceleration
+  const double dv2 = std::max(v_mid - v_end, 0.0);
+  const double t2 = dv2 / acc;
+  const double d2 = ((v_mid + v_end) / 2.0) * t2;
+
+  return d1 + d2 + v_init * t_braking_delay;
 }
 
 }  // namespace autoware::boundary_departure_checker::utils

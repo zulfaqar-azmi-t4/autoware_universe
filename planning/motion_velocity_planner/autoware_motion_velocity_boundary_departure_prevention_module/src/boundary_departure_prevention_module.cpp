@@ -175,6 +175,8 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
   }
   processing_times_ms_[init_bdc_ptr] = stopwatch_ms.toc(init_bdc_ptr);
 
+  fmt::print("BoundaryDeparturePreventionModule::plan called.\n");
+
   stopwatch_ms.tic("plan_slow_down");
   auto result =
     plan_slow_down_intervals(raw_trajectory_points, smoothed_trajectory_points, planner_data);
@@ -192,15 +194,6 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
   autoware_utils::StopWatch<std::chrono::milliseconds> stopwatch_ms;
   std::map<const char *, double> processing_time_map;
 
-  stopwatch_ms.tic(convert_raw_traj_to_aw_traj);
-  const auto aw_ego_pred_traj_opt =
-    trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(ego_pred_traj_ptr_->points);
-  processing_time_map[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
-
-  if (!aw_ego_pred_traj_opt) {
-    return tl::make_unexpected(aw_ego_pred_traj_opt.error().what);
-  }
-
   const auto abnormality_data_opt = boundary_departure_checker_ptr_->get_abnormalities_data(
     ego_pred_traj, aw_ref_traj, pose_with_covariance, footprint_margin_scale, *steering_angle_ptr_);
 
@@ -213,6 +206,14 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
   const auto closest_projections_to_bound =
     boundary_departure_checker_ptr_->get_closest_projections_to_boundaries(
       output_.abnormalities_data.projections_to_bound);
+
+  if (!closest_projections_to_bound) {
+    return tl::make_unexpected(closest_projections_to_bound.error());
+  }
+
+  fmt::print(
+    "closest projection to bound size: {}\n",
+    closest_projections_to_bound->left.size() + closest_projections_to_bound->right.size());
 
   stopwatch_ms.tic(get_departure_points);
   output_.departure_points = utils::get_departure_points(
@@ -353,11 +354,11 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
     return {};
   }
 
-  stopwatch_ms.tic(convert_raw_traj_to_aw_traj);
-  processing_times_ms_[convert_raw_traj_to_aw_traj] = stopwatch_ms.toc(convert_raw_traj_to_aw_traj);
-
+  stopwatch_ms.tic("convert_raw_traj_to_aw_traj");
   const auto aw_raw_traj_opt =
     trajectory::Trajectory<TrajectoryPoint>::Builder{}.build(raw_trajectory_points);
+  processing_times_ms_["convert_raw_traj_to_aw_traj"] =
+    stopwatch_ms.toc("convert_raw_traj_to_aw_traj");
 
   if (!aw_raw_traj_opt) {
     fmt::print(

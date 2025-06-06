@@ -62,8 +62,5 @@ double calc_braking_distance(
   const double dist_error);
 
 void erase_after_first_match(DeparturePoints & departure_points);
-
-double compute_braking_distance(
-  double v_init, double v_end, double a, double j, double t_braking_delay);
 }  // namespace autoware::motion_velocity_planner::utils
 #endif  // UTILS_HPP_

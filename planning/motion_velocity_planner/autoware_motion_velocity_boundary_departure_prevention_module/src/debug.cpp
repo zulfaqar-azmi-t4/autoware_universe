@@ -103,11 +103,11 @@ Marker create_ego_sides_marker(
   return marker;
 }
 
-Marker create_side_to_boundary_marker(
+Marker create_projection_to_bound_marker(
   const ProjectionsToBound & side_to_boundary, Marker marker, const std::string & type_str,
   const double base_link_z)
 {
-  marker.ns = type_str + "_side_to_boundary_marker";
+  marker.ns = type_str + "_projection_to_bound";
   for (const auto side_key : g_side_keys) {
     const auto to_geom = [base_link_z](const auto & pt) { return to_msg(pt.to_3d(base_link_z)); };
     for (const auto & pt : side_to_boundary[side_key]) {
@@ -141,7 +141,7 @@ Marker create_footprint_marker(
 {
   int32_t id{0};
   auto marker_ll = create_default_marker(
-    "map", curr_time, "_footprint" + type_str, id, visualization_msgs::msg::Marker::LINE_LIST,
+    "map", curr_time, type_str + "_footprint", id, visualization_msgs::msg::Marker::LINE_LIST,
     create_marker_scale(0.05, 0, 0), color);
   if (!footprints.empty()) {
     marker_ll.points.reserve(footprints.size() * footprints.front().size());
@@ -244,7 +244,7 @@ MarkerArray create_debug_marker_array(
 
     marker_array.markers.push_back(create_footprint_marker(
       output.footprints[type], curr_time, type_str, base_link_z, color::aqua()));
-    marker_array.markers.push_back(create_side_to_boundary_marker(
+    marker_array.markers.push_back(create_projection_to_bound_marker(
       output.projections_to_bound[type], marker, type_str, base_link_z));
   }
   autoware_utils::append_marker_array(

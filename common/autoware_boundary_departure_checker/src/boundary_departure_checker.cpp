@@ -91,7 +91,7 @@ tl::expected<AbnormalitiesData, std::string> BoundaryDepartureChecker::get_abnor
   }
 
   const auto uncertainty_fp_margin =
-    utils::calc_extra_margin_from_pose_covariance(curr_pose_with_cov, uncertainty_fp_margin_scale);
+    utils::calc_margin_from_covariance(curr_pose_with_cov, uncertainty_fp_margin_scale);
 
   AbnormalitiesData abnormalities_data;
   for (const auto abnormality_type : param_ptr_->abnormality_types_to_compensate) {
@@ -101,6 +101,9 @@ tl::expected<AbnormalitiesData, std::string> BoundaryDepartureChecker::get_abnor
       *param_ptr_);
 
     abnormalities_data.footprints_sides[abnormality_type] = utils::get_sides_from_footprints(fps);
+    fmt::print(
+      "Footprints for abnormality type {} fps size {}\n", magic_enum::enum_name(abnormality_type),
+      fps.size());
   }
 
   const auto & normal_footprints = abnormalities_data.footprints_sides[AbnormalityType::NORMAL];
@@ -116,8 +119,18 @@ tl::expected<AbnormalitiesData, std::string> BoundaryDepartureChecker::get_abnor
       utils::get_closest_boundary_segments_from_side(
         aw_raw_traj, abnormalities_data.boundary_segments,
         abnormalities_data.footprints_sides[abnormality_type]);
+    for (const auto side_key : g_side_keys) {
+      const auto itr_critical = std::find_if(
+        abnormalities_data.projections_to_bound[abnormality_type][side_key].begin(),
+        abnormalities_data.projections_to_bound[abnormality_type][side_key].end(),
+        [](const ProjectionToBound & pt) {
+          return pt.departure_type == DepartureType::CRITICAL_DEPARTURE;
+        });
+      if (
+        itr_critical != abnormalities_data.projections_to_bound[abnormality_type][side_key].end()) {
+      }
+    }
   }
-
   return abnormalities_data;
 }
 
@@ -196,7 +209,7 @@ BoundaryDepartureChecker::get_closest_projections_to_boundaries(
 
   const auto is_empty = std::any_of(
     abnormality_to_check.begin(), abnormality_to_check.end(),
-    [&projections_to_bound, &side_key](const AbnormalityType abnormality_type) {
+    [&projections_to_bound, &side_key](const auto abnormality_type) {
       return projections_to_bound[abnormality_type][side_key].empty();
     });
 
@@ -210,7 +223,7 @@ BoundaryDepartureChecker::get_closest_projections_to_boundaries(
 
   const auto & fr_proj_to_bound = projections_to_bound[abnormality_to_check.front()][side_key];
 
-  const auto check_size = [&](const AbnormalityType abnormality_type) {
+  const auto check_size = [&](const auto abnormality_type) {
     return fr_proj_to_bound.size() != projections_to_bound[abnormality_type][side_key].size();
   };
 

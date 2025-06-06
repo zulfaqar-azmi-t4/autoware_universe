@@ -34,15 +34,14 @@ Segment2d to_segment2d(
   const Eigen::Matrix<double, 3, 1> & ll_pt1, const Eigen::Matrix<double, 3, 1> & ll_pt2);
 
 DepartureType check_departure_type(
-  const double lateral_dist_m, const Param & param, const AbnormalityType abnormality_type,
-  const SideKey side_key);
+  const double lateral_dist_m, const Param & param, const SideKey side_key);
 
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
   const SteeringReport & current_steering);
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
-  const FootprintMargin & uncertainty_fp_margin, const LonTracking & lon_tracking);
+  const FootprintMargin & uncertainty_fp_margin, const LongitudinalConfig & longitudinal_config);
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
   const FootprintMargin & margin = {0.0, 0.0});
@@ -151,7 +150,7 @@ std::vector<lanelet::ConstLineString3d> get_linestrings_near_footprint(
   const double search_distance,
   const std::vector<std::string> uncrossable_boundary_types = {"road_border"});
 
-FootprintMargin calc_extra_margin_from_pose_covariance(
+FootprintMargin calc_margin_from_covariance(
   const geometry_msgs::msg::PoseWithCovariance & covariance, const double scale);
 
 EgoSide get_ego_side_from_footprint(
@@ -161,6 +160,10 @@ EgoSide get_ego_side_from_footprint(
 EgoSides get_sides_from_footprints(
   const Footprints & footprints, const bool use_center_right = false,
   const bool use_center_left = false);
+
+double compute_braking_distance(
+  const double v_init, const double v_end, const double acc, const double jerk,
+  double t_braking_delay);
 }  // namespace autoware::boundary_departure_checker::utils
 
 #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__UTILS_HPP_

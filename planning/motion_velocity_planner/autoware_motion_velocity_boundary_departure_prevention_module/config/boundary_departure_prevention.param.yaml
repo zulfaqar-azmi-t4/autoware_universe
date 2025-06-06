@@ -6,52 +6,56 @@
       th_max_lateral_query_num: 5
 
       abnormality:
-        normal: true
-        localization: true
-        longitudinal: true
-        steering: false
+        normal:
+          enable: true
+          footprint_envelop:
+            lon_m: 0.25
+            lat_m: 0.25
 
-      slow_down_near_boundary:
-        enable: true
+        localization:
+          enable: true
+          footprint_envelop:
+            lon_m: 0.25
+            lat_m: 0.25
+
+        longitudinal:
+          enable: true
+          lon_tracking:
+            scale: 1.0
+            extra_margin_m: 0.0
+
+        steering:
+          enable: false
+          steering_rate_rps: 1.0
+
+      th_trigger:
+        decel_mp2:
+          min: -1.0
+          max: -1.5
+
+        brake_delay_s: 1.0
+
+      slow_down_behavior:
+        enable:
+          slow_down_before_departure: true
+          stop_before_departure: true
+          slow_down_near_boundary: true
+
+
         th_trigger:
-          decel_mp2: -1.0
+          max_slow_down_vel_kmph: 5.0
+          th_acc_mps2:
+            min: -1.0
+            max: -2.5
+          th_jerk_mps3:
+            min: -1.0
+            max: -1.5
           brake_delay_s: 1.3
           dist_error_m: 0.25
-        th_dist_to_boundary_m:
-          left: 0.5
-          right: 0.5
-        slow_down_behavior:
-          velocity_kmh: 10.0
-
-      slow_down_before_departure:
-        enable: true
-        th_trigger:
-          decel_mp2: -1.0
-          brake_delay_s: 1.3
-          dist_error_m: 0.25
-        th_dist_to_boundary_m:
-          left: 0.001
-          right: 0.001
-
-      stop_before_departure:
-        enable: true
-        th_trigger:
-          decel_mp2: -1.0
-          brake_delay_s: 1.3
-          dist_error_m: 0.25
-        th_dist_to_boundary_m:
-          left: 0.001
-          right: 0.001
-
-      predicted_path_footprint:
-        scale: 1.0
-        extra_margin_m: 0.0
-        resample_interval_m: 0.3
-
-      footprint_envelop:
-        lon_m: 0.25
-        lat_m: 0.25
-
-      lon_tracking:
-        scale: 1.0
-        extra_margin_m: 0.0
+          th_dist_to_boundary_m:
+            left:
+              min: 0.01
+              max: 0.5
+            right:
+              min: 0.01
+              max: 0.5

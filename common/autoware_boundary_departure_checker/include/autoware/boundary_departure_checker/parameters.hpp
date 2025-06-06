@@ -16,6 +16,7 @@
 #define AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__PARAMETERS_HPP_
 
 #include "autoware/boundary_departure_checker/type_alias.hpp"
+#include "data_structs.hpp"
 
 #include <autoware_utils/geometry/boost_geometry.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
@@ -37,13 +38,6 @@
 
 namespace autoware::boundary_departure_checker
 {
-enum class DepartureType {
-  NONE = 0,
-  NEAR_BOUNDARY,
-  APPROACHING_DEPARTURE,
-  CRITICAL_DEPARTURE,
-  UNKNOWN
-};
 
 struct FootprintMargin
 {
@@ -55,231 +49,77 @@ struct FootprintMargin
     return FootprintMargin{lon_m + other.lon_m, lat_m + other.lat_m};
   }
 };
-struct LonTracking
 
+struct NormalConfig
 {
-  double scale{1.0};
-  double extra_margin_m{0.25};
-};
-
-enum class AbnormalityType { NORMAL, LOCALIZATION, LONGITUDINAL, STEERING };
-template <typename T>
-struct Abnormalities
-{
-  T normal;
-  T longitudinal;
-  T localization;
-  T steering;
-  T & operator[](const AbnormalityType key)
-  {
-    if (key == AbnormalityType::NORMAL) return normal;
-    if (key == AbnormalityType::LOCALIZATION) return localization;
-    if (key == AbnormalityType::LONGITUDINAL) return longitudinal;
-    if (key == AbnormalityType::STEERING) return steering;
-    throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
-  }
-
-  const T & operator[](const AbnormalityType key) const
-  {
-    if (key == AbnormalityType::NORMAL) return normal;
-    if (key == AbnormalityType::LOCALIZATION) return localization;
-    if (key == AbnormalityType::LONGITUDINAL) return longitudinal;
-    if (key == AbnormalityType::STEERING) return steering;
-    throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
-  }
-};
-
-enum class SideKey { LEFT, RIGHT };
-constexpr std::array<SideKey, 2> g_side_keys = {SideKey::LEFT, SideKey::RIGHT};
-
-template <typename T>
-struct Side
-{
-  T right;
-  T left;
-  T & operator[](const SideKey key)
-  {
-    if (key == SideKey::LEFT) return left;
-    if (key == SideKey::RIGHT) return right;
-    throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
-  }
-
-  const T & operator[](const SideKey key) const
-  {
-    if (key == SideKey::LEFT) return left;
-    if (key == SideKey::RIGHT) return right;
-    throw std::invalid_argument("Invalid key: " + std::string(magic_enum::enum_name(key)));
-  }
-};
-
-struct ProjectionToBound
-{
-  Point2d pt_on_ego;    // orig
-  Point2d pt_on_bound;  // proj
-  Segment2d nearest_bound_seg;
-  double lat_dist{std::numeric_limits<double>::max()};
-  double lon_dist_on_ref_traj{std::numeric_limits<double>::max()};
-  size_t ego_sides_idx{0};
-  DepartureType departure_type = DepartureType::UNKNOWN;
-  ProjectionToBound() = default;
-  explicit ProjectionToBound(size_t idx) : ego_sides_idx(idx) {}
-  ProjectionToBound(
-    Point2d pt_on_ego, Point2d pt_on_bound, Segment2d seg, double lat_dist, size_t idx,
-    const double lon_dist = std::numeric_limits<double>::max(),
-    const DepartureType departure_type = DepartureType::NONE)
-  : pt_on_ego(std::move(pt_on_ego)),
-    pt_on_bound(std::move(pt_on_bound)),
-    nearest_bound_seg(std::move(seg)),
-    lat_dist(lat_dist),
-    lon_dist_on_ref_traj(lon_dist),
-    ego_sides_idx(idx),
-    departure_type(departure_type)
-  {
-  }
-};
-
-using BoundarySide = Side<std::vector<Segment2d>>;
-using BoundarySideWithIdx = Side<std::vector<SegmentWithIdx>>;
-using ProjectionsToBound = Side<std::vector<ProjectionToBound>>;
-using EgoSide = Side<Segment2d>;
-using EgoSides = std::vector<EgoSide>;
-
-struct DeparturePoint
-{
-  std::string uuid;
-  DepartureType type = DepartureType::NONE;
-  Point2d point;
-  SideKey direction = SideKey::LEFT;
-  double th_dist_hysteresis{2.0};
-  double lat_dist_to_bound{1000.0};
-  double dist_on_traj{1000.0};
-  double dist_from_ego{0.0};
-  double velocity{0.0};
-  size_t idx_from_ego_traj{};
-  bool can_be_removed{false};
-
-  [[nodiscard]] bool is_nearby(const Pose & pose) const { return is_nearby(pose.position); }
-
-  [[nodiscard]] bool is_nearby(const Point & point) const { return is_nearby({point.x, point.y}); }
-
-  [[nodiscard]] bool is_nearby(const Point2d & candidate_point) const
-  {
-    const auto diff = boost::geometry::distance(point, candidate_point);
-    return type != DepartureType::CRITICAL_DEPARTURE && diff < th_dist_hysteresis;
-  }
-
-  [[nodiscard]] Point to_geom_pt(const double z = 0.0) const
-  {
-    return autoware_utils::to_msg(point.to_3d(z));
-  }
-
-  bool operator<(const DeparturePoint & other) const { return dist_on_traj < other.dist_on_traj; }
-};
-using DeparturePoints = std::vector<DeparturePoint>;
-
-struct CriticalDeparturePoint : DeparturePoint
-{
-  TrajectoryPoint point_on_prev_traj;
-  CriticalDeparturePoint() = default;
-  explicit CriticalDeparturePoint(const DeparturePoint & base)
-  {
-    uuid = base.uuid;
-    type = base.type;
-    point = base.point;
-    direction = base.direction;
-    th_dist_hysteresis = base.th_dist_hysteresis;
-    lat_dist_to_bound = base.lat_dist_to_bound;
-    dist_on_traj = base.dist_on_traj;
-    dist_from_ego = base.dist_from_ego;
-    velocity = base.velocity;
-    can_be_removed = base.can_be_removed;
-  }
-};
-
-using CriticalDeparturePoints = std::vector<CriticalDeparturePoint>;
-
-struct DepartureInterval
-{
-  TrajectoryPoint start;
-  TrajectoryPoint end;
-  SideKey direction;
-  double start_dist_on_traj;
-  double end_dist_on_traj;
-
-  bool start_at_traj_front{false};
-  bool has_merged{false};
-
-  DeparturePoints candidates;
-};
-using DepartureIntervals = std::vector<DepartureInterval>;
-
-struct BehaviorTriggerThreshold
-{
-  double decel_mp2{-1.0};
-  double brake_delay_s{1.0};
-  double dist_error_m{0.25};
-};
-
-struct SlowDownBehavior
-{
-  double velocity_mps{0.0};
-};
-
-struct BoundaryBehaviorTrigger
-{
-  bool enable{true};
-  Side<double> th_dist_to_boundary_m{
-    std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
-  BehaviorTriggerThreshold th_trigger;
-};
-
-struct SlowDownNearBoundaryTrigger : BoundaryBehaviorTrigger
-{
-  SlowDownBehavior slow_down_behavior;
-
-  SlowDownNearBoundaryTrigger() = default;
-  explicit SlowDownNearBoundaryTrigger(BoundaryBehaviorTrigger bound_behavior)
-  : BoundaryBehaviorTrigger(bound_behavior)
-  {
-  }
-};
-
-struct Param
-{
-  int th_max_lateral_query_num{5};
-  double footprint_extra_margin{};
   FootprintMargin footprint_envelop;
-  std::vector<std::string> boundary_types_to_detect;
-  std::vector<AbnormalityType> abnormality_types_to_compensate;
+};
 
-  SlowDownNearBoundaryTrigger slow_down_near_boundary;
-  BoundaryBehaviorTrigger slow_down_before_departure;
-  BoundaryBehaviorTrigger stop_before_departure;
+struct LocalizationConfig : NormalConfig
+{
+};
 
+struct LongitudinalConfig : NormalConfig
+{
+  struct LonTracking
+  {
+    double scale{1.0};
+    double extra_margin_m{0.25};
+  };
   LonTracking lon_tracking;
 };
 
-struct Input
+struct SteeringConfig
 {
-  nav_msgs::msg::Odometry::ConstSharedPtr current_odom;
-  lanelet::LaneletMapPtr lanelet_map;
-  LaneletRoute::ConstSharedPtr route;
-  lanelet::ConstLanelets route_lanelets;
-  lanelet::ConstLanelets shoulder_lanelets;
-  Trajectory::ConstSharedPtr reference_trajectory;
-  Trajectory::ConstSharedPtr predicted_trajectory;
-  std::vector<std::string> boundary_types_to_detect;
+  double steering_rate_rps{1.0};
 };
 
-using Footprint = LinearRing2d;
-using Footprints = std::vector<Footprint>;
-
-struct AbnormalitiesData
+struct TriggerThreshold
 {
-  Abnormalities<EgoSides> footprints_sides;
-  Abnormalities<Footprints> footprints;
-  BoundarySideWithIdx boundary_segments;
-  Abnormalities<ProjectionsToBound> projections_to_bound;
+  struct MinMax
+  {
+    double min{-1.0};
+    double max{-1.0};
+  };
+
+  double decel_mp2{-1.0};
+  double brake_delay_s{1.0};
+  double dist_error_m{0.25};
+  double max_slow_down_vel_mps{0.0};
+  MinMax th_acc_mps2{-1.0, -2.5};
+  MinMax th_jerk_mps3{-1.0, -1.5};
+  Side<MinMax> th_dist_to_boundary_m{MinMax{0.001, 5.0}, MinMax{0.001, 5.0}};
+};
+
+using AbnormalityConfig =
+  std::variant<NormalConfig, LocalizationConfig, LongitudinalConfig, SteeringConfig>;
+using AbnormalitiesConfigs = std::unordered_map<AbnormalityType, AbnormalityConfig>;
+
+struct Param
+{
+  TriggerThreshold th_trigger;
+  int th_max_lateral_query_num{5};
+  AbnormalitiesConfigs abnormality_configs;
+  std::vector<DepartureType> departure_types;
+  std::vector<std::string> boundary_types_to_detect;
+  std::vector<AbnormalityType> abnormality_types_to_compensate;
+
+  template <typename ConfigType>
+  tl::expected<std::reference_wrapper<const ConfigType>, std::string> get_abnormality_config(
+    const AbnormalityType type) const
+  {
+    auto it = abnormality_configs.find(type);
+    if (it == abnormality_configs.end()) {
+      return tl::make_unexpected(std::string(magic_enum::enum_name(type)) + " not exist");
+    }
+
+    if (auto ptr = std::get_if<ConfigType>(&it->second)) {
+      return *ptr;
+    }
+
+    return tl::make_unexpected(
+      "Couldn't find the config " + std::string(magic_enum::enum_name(type)));
+  }
 };
 }  // namespace autoware::boundary_departure_checker
 
