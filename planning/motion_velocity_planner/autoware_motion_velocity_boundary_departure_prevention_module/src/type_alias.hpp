@@ -88,18 +88,20 @@ using boundary_departure_checker::Abnormalities;            // NOLINT
 using boundary_departure_checker::AbnormalitiesData;
 using boundary_departure_checker::AbnormalityType;           // NOLINT
 using boundary_departure_checker::BoundaryDepartureChecker;  // NOLINT
-using boundary_departure_checker::CriticalDeparturePoints;   // NOLINT
-using boundary_departure_checker::DepartureInterval;         // NOLINT
-using boundary_departure_checker::DepartureIntervals;        // NOLINT
-using boundary_departure_checker::DeparturePoint;            // NOLINT
-using boundary_departure_checker::DeparturePoints;           // NOLINT
-using boundary_departure_checker::DepartureType;             // NOLINT
-using boundary_departure_checker::FootprintMargin;           // NOLINT
-using boundary_departure_checker::ProjectionToBound;         // NOLINT
-using boundary_departure_checker::Side;                      // NOLINT
-using boundary_departure_checker::SideKey;                   // NOLINT
-using boundary_departure_checker::UncrossableBoundRTree;     // NOLINT
-using vehicle_info_utils::VehicleInfo;                       // NOLINT
+using boundary_departure_checker::ClosestProjectionsToBound;
+using boundary_departure_checker::ClosestProjectionToBound;
+using boundary_departure_checker::CriticalDeparturePoints;  // NOLINT
+using boundary_departure_checker::DepartureInterval;        // NOLINT
+using boundary_departure_checker::DepartureIntervals;       // NOLINT
+using boundary_departure_checker::DeparturePoint;           // NOLINT
+using boundary_departure_checker::DeparturePoints;          // NOLINT
+using boundary_departure_checker::DepartureType;            // NOLINT
+using boundary_departure_checker::FootprintMargin;          // NOLINT
+using boundary_departure_checker::ProjectionToBound;        // NOLINT
+using boundary_departure_checker::Side;                     // NOLINT
+using boundary_departure_checker::SideKey;                  // NOLINT
+using boundary_departure_checker::UncrossableBoundRTree;    // NOLINT
+using vehicle_info_utils::VehicleInfo;                      // NOLINT
 
 using boundary_departure_checker::AbnormalitiesConfigs;
 using boundary_departure_checker::AbnormalityConfig;

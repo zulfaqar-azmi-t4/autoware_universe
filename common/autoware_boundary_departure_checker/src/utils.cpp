@@ -25,7 +25,6 @@
 #include <range/v3/view.hpp>
 #include <tl_expected/expected.hpp>
 
-#include <fmt/format.h>
 #include <lanelet2_core/geometry/LaneletMap.h>
 
 #include <algorithm>
@@ -163,10 +162,6 @@ std::vector<LinearRing2d> create_ego_footprints(
     const auto & footprint_envelop = loc_config_opt->get().footprint_envelop;
     margin = margin + footprint_envelop;
   }
-  fmt::print(
-    "Abnormality {} margin lon {}, lat {}\n", magic_enum::enum_name(abnormality_type), margin.lat_m,
-    margin.lon_m);
-
   return utils::create_vehicle_footprints(ego_pred_traj, vehicle_info, margin);
 }
 
@@ -382,8 +377,7 @@ tl::expected<std::tuple<Point2d, Point2d, double>, std::string> point_to_segment
 }
 
 tl::expected<ProjectionToBound, std::string> segment_to_segment_nearest_projection(
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const Segment2d & ego_seg,
-  const Segment2d & lane_seg, const size_t ego_sides_idx)
+  const Segment2d & ego_seg, const Segment2d & lane_seg, const size_t ego_sides_idx)
 {
   const auto & [ego_f, ego_b] = ego_seg;
   const auto & [lane_pt1, lane_pt2] = lane_seg;
@@ -393,9 +387,7 @@ tl::expected<ProjectionToBound, std::string> segment_to_segment_nearest_projecti
       autoware_utils::to_msg(ego_f.to_3d()), autoware_utils::to_msg(ego_b.to_3d()),
       autoware_utils::to_msg(lane_pt1.to_3d()), autoware_utils::to_msg(lane_pt2.to_3d()))) {
     Point2d point(is_intersecting->x, is_intersecting->y);
-    const auto dist_on_traj = calc_dist_on_traj(aw_ref_traj, point);
-    return ProjectionToBound{
-      point, point, lane_seg, 0.0, ego_sides_idx, dist_on_traj, DepartureType::CRITICAL_DEPARTURE};
+    return ProjectionToBound{point, point, lane_seg, 0.0, ego_sides_idx};
   }
 
   std::vector<ProjectionToBound> projections;
@@ -446,6 +438,30 @@ std::vector<SegmentWithIdx> create_local_segments(const lanelet::ConstLineString
   return local_segments;
 }
 
+tl::expected<double, std::string> get_nearest_boundary_segment_from_point(
+  const std::vector<SegmentWithIdx> & segments, const Point2d & point)
+{
+  if (segments.empty()) {
+    return tl::make_unexpected(std::string(__func__) + ": invalid boundary segment.");
+  }
+
+  std::optional<double> curr_min_lat;
+  for (const auto & [segment, ll_id, st_idx, end_idx] : segments) {
+    if (const auto projection_opt = utils::point_to_segment_projection(point, segment)) {
+      const auto & [pt_ego, pt_lane, dist] = *projection_opt;
+      if (!curr_min_lat || curr_min_lat > dist) {
+        curr_min_lat = dist;
+      }
+    }
+  }
+
+  if (curr_min_lat) {
+    return *curr_min_lat;
+  }
+
+  return tl::make_unexpected("Unable to find closest distance.");
+}
+
 UncrossableBoundRTree build_uncrossable_boundaries_rtree(
   const lanelet::LineStringLayer & linestring_layer,
   const std::vector<std::string> & boundary_types_to_detect)
@@ -494,8 +510,7 @@ DepartureType check_departure_type(
 };
 
 ProjectionToBound find_closest_segment(
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const Segment2d & ego_side_seg,
-  const Segment2d & ego_rear_seg, const size_t curr_fp_idx,
+  const Segment2d & ego_side_seg, const Segment2d & ego_rear_seg, const size_t curr_fp_idx,
   const std::vector<SegmentWithIdx> & boundary_segments)
 {
   using autoware_utils::to_msg;
@@ -506,8 +521,7 @@ ProjectionToBound find_closest_segment(
     // we can assume that before front touches boundary, either left or right side will touch
     // boundary first
     if (
-      const auto proj_opt =
-        segment_to_segment_nearest_projection(aw_ref_traj, ego_side_seg, seg, curr_fp_idx)) {
+      const auto proj_opt = segment_to_segment_nearest_projection(ego_side_seg, seg, curr_fp_idx)) {
       if (!closest_proj || proj_opt->lat_dist < closest_proj->lat_dist) {
         closest_proj = *proj_opt;
       }
@@ -521,9 +535,7 @@ ProjectionToBound find_closest_segment(
         to_msg(ego_lr.to_3d()), to_msg(ego_rr.to_3d()), to_msg(seg_f.to_3d()),
         to_msg(seg_r.to_3d()))) {
       Point2d point(is_intersecting_rear->x, is_intersecting_rear->y);
-      const auto dist_on_traj = calc_dist_on_traj(aw_ref_traj, point);
-      closest_proj = ProjectionToBound{
-        point, point, seg, 0.0, curr_fp_idx, dist_on_traj, DepartureType::CRITICAL_DEPARTURE};
+      closest_proj = ProjectionToBound{point, point, seg, 0.0, curr_fp_idx};
       break;
     }
   }
@@ -536,7 +548,6 @@ ProjectionToBound find_closest_segment(
 }
 
 ProjectionsToBound get_closest_boundary_segments_from_side(
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
   const BoundarySideWithIdx & boundaries, const EgoSides & ego_sides_from_footprints)
 {
   ProjectionsToBound side;
@@ -554,7 +565,7 @@ ProjectionsToBound get_closest_boundary_segments_from_side(
 
     for (const auto & side_key : g_side_keys) {
       const auto closest_bound =
-        find_closest_segment(aw_ref_traj, fp[side_key], rear_seg, i, boundaries[side_key]);
+        find_closest_segment(fp[side_key], rear_seg, i, boundaries[side_key]);
       side[side_key].push_back(closest_bound);
     }
   }

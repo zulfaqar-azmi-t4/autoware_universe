@@ -46,7 +46,7 @@ DeparturePoint create_departure_point(
   const NodeParam & node_param, std::string_view direction);
 
 DeparturePoints get_departure_points(
-  const ProjectionsToBound & projections_to_bound, const NodeParam & node_param,
+  const ClosestProjectionsToBound & projections_to_bound, const NodeParam & node_param,
   const VehicleInfo & vehicle_info, const double ego_dist_from_traj_front);
 DepartureIntervals init_departure_intervals(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,

@@ -33,6 +33,7 @@
 #include <lanelet2_core/LaneletMap.h>
 
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -82,7 +83,6 @@ struct TriggerThreshold
     double max{-1.0};
   };
 
-  double decel_mp2{-1.0};
   double brake_delay_s{1.0};
   double dist_error_m{0.25};
   double max_slow_down_vel_mps{0.0};

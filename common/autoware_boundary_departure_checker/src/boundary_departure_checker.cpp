@@ -27,7 +27,6 @@
 
 #include <boost/geometry.hpp>
 
-#include <fmt/format.h>
 #include <lanelet2_core/geometry/Polygon.h>
 #include <tf2/utils.h>
 
@@ -101,9 +100,6 @@ tl::expected<AbnormalitiesData, std::string> BoundaryDepartureChecker::get_abnor
       *param_ptr_);
 
     abnormalities_data.footprints_sides[abnormality_type] = utils::get_sides_from_footprints(fps);
-    fmt::print(
-      "Footprints for abnormality type {} fps size {}\n", magic_enum::enum_name(abnormality_type),
-      fps.size());
   }
 
   const auto & normal_footprints = abnormalities_data.footprints_sides[AbnormalityType::NORMAL];
@@ -115,57 +111,10 @@ tl::expected<AbnormalitiesData, std::string> BoundaryDepartureChecker::get_abnor
   }
   abnormalities_data.boundary_segments = *boundary_segments_opt;
 
-  const auto is_between_bound_th = [this](const double lat_dist, const SideKey side_key) {
-    return lat_dist >= param_ptr_->th_trigger.th_dist_to_boundary_m[side_key].min &&
-           lat_dist <= param_ptr_->th_trigger.th_dist_to_boundary_m[side_key].max;
-  };
-
-  const auto func_name = __func__;
   for (const auto abnormality_type : param_ptr_->abnormality_types_to_compensate) {
     auto & proj_to_bound = abnormalities_data.projections_to_bound[abnormality_type];
     proj_to_bound = utils::get_closest_boundary_segments_from_side(
-      aw_raw_traj, abnormalities_data.boundary_segments,
-      abnormalities_data.footprints_sides[abnormality_type]);
-    for (const auto side_key : g_side_keys) {
-      fmt::print(
-        "Projection to bound for abnormality type {} side {} size is {}\n",
-        magic_enum::enum_name(abnormality_type), magic_enum::enum_name(side_key),
-        proj_to_bound[side_key].size());
-      const auto itr_critical = std::find_if(
-        proj_to_bound[side_key].begin(), proj_to_bound[side_key].end(),
-        [](const ProjectionToBound & pt) {
-          return pt.departure_type == DepartureType::CRITICAL_DEPARTURE;
-        });
-      if (itr_critical == proj_to_bound[side_key].end()) {
-        std::for_each(
-          proj_to_bound[side_key].begin(), proj_to_bound[side_key].end(),
-          [&](ProjectionToBound & proj) {
-            if (is_between_bound_th(proj.lat_dist, side_key)) {
-              proj.departure_type = DepartureType::NEAR_BOUNDARY;
-              fmt::print("In {}, found near boundary\n", func_name);
-              proj.lon_dist_on_ref_traj = utils::calc_dist_on_traj(aw_raw_traj, proj.pt_on_ego);
-            }
-          });
-        continue;
-      }
-      fmt::print("In {}, found critical departure\n", __func__);
-      std::for_each(proj_to_bound[side_key].begin(), itr_critical, [&](ProjectionToBound & proj) {
-        const auto dist_to_crit = itr_critical->lon_dist_on_ref_traj;
-        proj.lon_dist_on_ref_traj = utils::calc_dist_on_traj(aw_raw_traj, proj.pt_on_ego);
-        const auto braking_dist = utils::compute_braking_distance(
-          param_ptr_->th_trigger.max_slow_down_vel_mps, 0.0, param_ptr_->th_trigger.th_acc_mps2.max,
-          param_ptr_->th_trigger.th_jerk_mps3.max, param_ptr_->th_trigger.brake_delay_s);
-        const auto dist_to_start_braking = dist_to_crit - braking_dist;
-
-        if (proj.lon_dist_on_ref_traj < dist_to_start_braking) {
-          proj.departure_type = DepartureType::APPROACHING_DEPARTURE;
-          fmt::print("In {}, found approaching departure\n", func_name);
-        } else if (is_between_bound_th(proj.lat_dist, side_key)) {
-          proj.departure_type = DepartureType::NEAR_BOUNDARY;
-          fmt::print("In {}, found near boundary\n", func_name);
-        }
-      });
-    }
+      abnormalities_data.boundary_segments, abnormalities_data.footprints_sides[abnormality_type]);
   }
   return abnormalities_data;
 }
@@ -233,8 +182,9 @@ BoundaryDepartureChecker::get_boundary_segments_from_side(
   return boundary_sides_with_idx;
 }
 
-tl::expected<std::vector<ProjectionToBound>, std::string>
-BoundaryDepartureChecker::get_closest_projections_to_boundaries(
+tl::expected<std::vector<ClosestProjectionToBound>, std::string>
+BoundaryDepartureChecker::get_closest_projections_to_boundaries_side(
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
   const Abnormalities<ProjectionsToBound> & projections_to_bound, const SideKey side_key)
 {
   const auto & abnormality_to_check = param_ptr_->abnormality_types_to_compensate;
@@ -253,10 +203,6 @@ BoundaryDepartureChecker::get_closest_projections_to_boundaries(
     return tl::make_unexpected(std::string(__func__) + ": projections to bound is empty.");
   }
 
-  if (abnormality_to_check.size() == 1) {
-    return projections_to_bound[abnormality_to_check.front()][side_key];
-  }
-
   const auto & fr_proj_to_bound = projections_to_bound[abnormality_to_check.front()][side_key];
 
   const auto check_size = [&](const auto abnormality_type) {
@@ -271,47 +217,83 @@ BoundaryDepartureChecker::get_closest_projections_to_boundaries(
       std::string(__func__) + ": Some abnormality type has incorrect size.");
   }
 
-  std::vector<ProjectionToBound> min_to_bound;
+  std::vector<ClosestProjectionToBound> min_to_bound;
+
+  const auto is_on_bound = [this](const double lat_dist, const SideKey side_key) {
+    return lat_dist < param_ptr_->th_trigger.th_dist_to_boundary_m[side_key].min;
+  };
+
+  const auto is_close_to_bound = [&](const double lat_dist, const SideKey side_key) {
+    return !is_on_bound(lat_dist, side_key) &&
+           lat_dist <= param_ptr_->th_trigger.th_dist_to_boundary_m[side_key].max;
+  };
 
   const auto fp_size = projections_to_bound[abnormality_to_check.front()][side_key].size();
   min_to_bound.reserve(fp_size);
   for (size_t idx = 0; idx < fp_size; ++idx) {
-    std::unique_ptr<ProjectionToBound> min_pt;
+    std::unique_ptr<ClosestProjectionToBound> min_pt;
     for (const auto abnormality_type : abnormality_to_check) {
       const auto pt = projections_to_bound[abnormality_type][side_key][idx];
       if (pt.ego_sides_idx != idx) {
         continue;
       }
 
-      if (pt.departure_type == DepartureType::NONE || pt.departure_type == DepartureType::UNKNOWN) {
-        continue;
+      if (abnormality_type == AbnormalityType::NORMAL && is_on_bound(pt.lat_dist, side_key)) {
+        min_pt = std::make_unique<ClosestProjectionToBound>(pt);
+        min_pt->departure_type = DepartureType::CRITICAL_DEPARTURE;
+        min_pt->lon_dist_on_ref_traj = utils::calc_dist_on_traj(aw_ref_traj, min_pt->pt_on_ego);
+        break;
       }
 
-      if (!min_pt || pt.lat_dist < min_pt->lat_dist) {
-        min_pt = std::make_unique<ProjectionToBound>(pt);
+      if (!min_pt && is_close_to_bound(pt.lat_dist, side_key)) {
+        min_pt = std::make_unique<ClosestProjectionToBound>(pt);
+        continue;
+      }
+      if (min_pt && pt.lat_dist < min_pt->lat_dist) {
+        min_pt = std::make_unique<ClosestProjectionToBound>(pt);
+        if (abnormality_type == abnormality_to_check.back()) {
+          min_pt->departure_type = DepartureType::NEAR_BOUNDARY;
+          min_pt->lon_dist_on_ref_traj = utils::calc_dist_on_traj(aw_ref_traj, min_pt->pt_on_ego);
+          break;
+        }
       }
     }
     if (!min_pt) {
       continue;
     }
+
     min_to_bound.push_back(*min_pt);
-    if (min_pt->departure_type == DepartureType::CRITICAL_DEPARTURE) {
+    if (min_to_bound.back().departure_type == DepartureType::CRITICAL_DEPARTURE) {
+      for (auto itr = std::next(min_to_bound.rbegin()); itr != min_to_bound.rend(); ++itr) {
+        const auto & th_trigger = param_ptr_->th_trigger;
+        const auto v_init = th_trigger.max_slow_down_vel_mps;
+        constexpr auto v_end = 0.0;
+        const auto acc = th_trigger.th_acc_mps2.min;
+        const auto jerk = th_trigger.th_jerk_mps3.min;
+        const auto braking_delay = th_trigger.brake_delay_s;
+        const auto braking_dist =
+          utils::compute_braking_distance(v_init, v_end, acc, jerk, braking_delay);
+        if (braking_dist + itr->lon_dist_on_ref_traj > min_to_bound.back().lon_dist_on_ref_traj) {
+          itr->departure_type = DepartureType::APPROACHING_DEPARTURE;
+        }
+      }
+
       break;
     }
   }
-
   return min_to_bound;
 }
 
-tl::expected<Side<std::vector<ProjectionToBound>>, std::string>
+tl::expected<ClosestProjectionsToBound, std::string>
 BoundaryDepartureChecker::get_closest_projections_to_boundaries(
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
   const Abnormalities<ProjectionsToBound> & projections_to_bound)
 {
-  Side<std::vector<ProjectionToBound>> min_to_bound;
+  ClosestProjectionsToBound min_to_bound;
 
   for (const auto side_key : g_side_keys) {
     const auto min_to_bound_opt =
-      get_closest_projections_to_boundaries(projections_to_bound, side_key);
+      get_closest_projections_to_boundaries_side(aw_ref_traj, projections_to_bound, side_key);
 
     if (!min_to_bound_opt) {
       return tl::make_unexpected(min_to_bound_opt.error());

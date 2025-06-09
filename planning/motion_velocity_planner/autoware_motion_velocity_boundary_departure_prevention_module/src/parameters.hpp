@@ -37,6 +37,7 @@ struct Output
 {
   std::unordered_map<std::string, double> processing_time_map;
   AbnormalitiesData abnormalities_data;
+  ClosestProjectionsToBound closest_projections_to_bound;
   std::vector<std::pair<Point, Point>> slow_down_intervals;
 
   trajectory::Trajectory<TrajectoryPoint> aw_ref_traj;

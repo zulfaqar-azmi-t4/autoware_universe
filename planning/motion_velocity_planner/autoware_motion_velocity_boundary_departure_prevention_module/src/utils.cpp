@@ -15,7 +15,6 @@
 #include "utils.hpp"
 
 #include "fmt/format.h"
-#include "str_map.hpp"
 
 #include <autoware/trajectory/utils/closest.hpp>
 #include <magic_enum.hpp>
@@ -42,22 +41,22 @@ DeparturePoint create_departure_point(
 }
 
 DeparturePoints get_departure_points(
-  const ProjectionsToBound & projections_to_bound, const NodeParam & node_param,
+  const ClosestProjectionsToBound & projections_to_bound, const NodeParam & node_param,
   const VehicleInfo & vehicle_info, const double ego_dist_from_traj_front)
 {
   DeparturePoints departure_points;
   Side<DeparturePoints> dpts;
   for (const auto direction : g_side_keys) {
-    for (const auto & side_to_bound : projections_to_bound[direction]) {
+    for (const auto & projection_to_bound : projections_to_bound[direction]) {
       DeparturePoint point;
       point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
-      point.lat_dist_to_bound = side_to_bound.lat_dist;
-      point.type = side_to_bound.departure_type;
-      point.point = side_to_bound.pt_on_bound;
+      point.lat_dist_to_bound = projection_to_bound.lat_dist;
+      point.type = projection_to_bound.departure_type;
+      point.point = projection_to_bound.pt_on_bound;
       point.direction = direction;
       point.th_dist_hysteresis = node_param.th_dist_hysteresis_m;
-      point.dist_on_traj = side_to_bound.lon_dist_on_ref_traj;
-      point.idx_from_ego_traj = side_to_bound.ego_sides_idx;
+      point.dist_on_traj = projection_to_bound.lon_dist_on_ref_traj;
+      point.idx_from_ego_traj = projection_to_bound.ego_sides_idx;
       point.dist_from_ego =
         point.dist_on_traj - (ego_dist_from_traj_front + vehicle_info.max_longitudinal_offset_m);
       point.can_be_removed = point.dist_from_ego < std::numeric_limits<double>::epsilon() ||

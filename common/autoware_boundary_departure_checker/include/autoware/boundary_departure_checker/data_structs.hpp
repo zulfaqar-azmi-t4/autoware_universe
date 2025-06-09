@@ -102,29 +102,51 @@ struct ProjectionToBound
   Point2d pt_on_bound;  // proj
   Segment2d nearest_bound_seg;
   double lat_dist{std::numeric_limits<double>::max()};
-  double lon_dist_on_ref_traj{std::numeric_limits<double>::max()};
   size_t ego_sides_idx{0};
-  DepartureType departure_type = DepartureType::UNKNOWN;
   ProjectionToBound() = default;
   explicit ProjectionToBound(size_t idx) : ego_sides_idx(idx) {}
   ProjectionToBound(
-    Point2d pt_on_ego, Point2d pt_on_bound, Segment2d seg, double lat_dist, size_t idx,
-    const double lon_dist = std::numeric_limits<double>::max(),
-    const DepartureType departure_type = DepartureType::NONE)
+    Point2d pt_on_ego, Point2d pt_on_bound, Segment2d seg, double lat_dist, size_t idx)
   : pt_on_ego(std::move(pt_on_ego)),
     pt_on_bound(std::move(pt_on_bound)),
     nearest_bound_seg(std::move(seg)),
     lat_dist(lat_dist),
-    lon_dist_on_ref_traj(lon_dist),
-    ego_sides_idx(idx),
-    departure_type(departure_type)
+    ego_sides_idx(idx)
   {
+  }
+};
+
+struct ClosestProjectionToBound : ProjectionToBound
+{
+  double lon_dist_on_ref_traj{std::numeric_limits<double>::max()};
+  DepartureType departure_type = DepartureType::UNKNOWN;
+  ClosestProjectionToBound() = default;
+  explicit ClosestProjectionToBound(const ProjectionToBound & base)
+  {
+    pt_on_ego = base.pt_on_ego;
+    pt_on_bound = base.pt_on_bound;
+    nearest_bound_seg = base.nearest_bound_seg;
+    lat_dist = base.lat_dist;
+    ego_sides_idx = base.ego_sides_idx;
+  }
+
+  ClosestProjectionToBound(
+    const ProjectionToBound & base, const double lon_dist,
+    const DepartureType departure_type = DepartureType::NONE)
+  : lon_dist_on_ref_traj(lon_dist), departure_type(departure_type)
+  {
+    pt_on_ego = base.pt_on_ego;
+    pt_on_bound = base.pt_on_bound;
+    nearest_bound_seg = base.nearest_bound_seg;
+    lat_dist = base.lat_dist;
+    ego_sides_idx = base.ego_sides_idx;
   }
 };
 
 using BoundarySide = Side<std::vector<Segment2d>>;
 using BoundarySideWithIdx = Side<std::vector<SegmentWithIdx>>;
 using ProjectionsToBound = Side<std::vector<ProjectionToBound>>;
+using ClosestProjectionsToBound = Side<std::vector<ClosestProjectionToBound>>;
 using EgoSide = Side<Segment2d>;
 using EgoSides = std::vector<EgoSide>;
 

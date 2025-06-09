@@ -47,7 +47,6 @@ std::vector<LinearRing2d> create_vehicle_footprints(
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
   const FootprintMargin & margin = {0.0, 0.0});
-
 std::vector<LinearRing2d> create_ego_footprints(
   const AbnormalityType abnormality_type, const FootprintMargin & uncertainty_fp_margin,
   const TrajectoryPoints & ego_pred_traj, const SteeringReport & current_steering,
@@ -132,8 +131,10 @@ UncrossableBoundRTree build_uncrossable_boundaries_rtree(
   const lanelet::LaneletMap & lanelet_map,
   const std::vector<std::string> & boundary_types_to_detect);
 
+tl::expected<double, std::string> get_nearest_boundary_segment_from_point(
+  const std::vector<SegmentWithIdx> & segments, const Point2d & point);
+
 ProjectionsToBound get_closest_boundary_segments_from_side(
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
   const BoundarySideWithIdx & boundaries, const EgoSides & ego_sides_from_footprints);
 
 lanelet::BasicPolygon2d toBasicPolygon2D(const LinearRing2d & footprint_hull);

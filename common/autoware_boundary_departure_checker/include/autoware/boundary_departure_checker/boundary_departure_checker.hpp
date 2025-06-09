@@ -74,25 +74,6 @@ public:
     std::shared_ptr<autoware_utils::TimeKeeper> time_keeper =
       std::make_shared<autoware_utils::TimeKeeper>());
 
-  tl::expected<AbnormalitiesData, std::string> get_abnormalities_data(
-    const TrajectoryPoints & predicted_traj,
-    const trajectory::Trajectory<TrajectoryPoint> & aw_raw_traj,
-    const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov,
-    const SteeringReport & current_steering);
-
-  tl::expected<BoundarySideWithIdx, std::string> get_boundary_segments_from_side(
-    const EgoSides & ego_sides_from_footprints);
-
-  tl::expected<UncrossableBoundRTree, std::string> build_uncrossable_boundaries_tree(
-    const lanelet::LaneletMapPtr & lanelet_map_ptr);
-
-  tl::expected<std::vector<ProjectionToBound>, std::string> get_closest_projections_to_boundaries(
-    const Abnormalities<ProjectionsToBound> & projections_to_bound, const SideKey side_key);
-
-  tl::expected<Side<std::vector<ProjectionToBound>>, std::string>
-  get_closest_projections_to_boundaries(
-    const Abnormalities<ProjectionsToBound> & projections_to_bound);
-
   bool checkPathWillLeaveLane(
     const lanelet::ConstLanelets & lanelets, const PathWithLaneId & path) const;
 
@@ -122,6 +103,28 @@ public:
 
   static bool isOutOfLane(
     const lanelet::ConstLanelets & candidate_lanelets, const LinearRing2d & vehicle_footprint);
+
+  // new functions
+  tl::expected<AbnormalitiesData, std::string> get_abnormalities_data(
+    const TrajectoryPoints & predicted_traj,
+    const trajectory::Trajectory<TrajectoryPoint> & aw_raw_traj,
+    const geometry_msgs::msg::PoseWithCovariance & curr_pose_with_cov,
+    const SteeringReport & current_steering);
+
+  tl::expected<BoundarySideWithIdx, std::string> get_boundary_segments_from_side(
+    const EgoSides & ego_sides_from_footprints);
+
+  tl::expected<UncrossableBoundRTree, std::string> build_uncrossable_boundaries_tree(
+    const lanelet::LaneletMapPtr & lanelet_map_ptr);
+
+  tl::expected<std::vector<ClosestProjectionToBound>, std::string>
+  get_closest_projections_to_boundaries_side(
+    const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
+    const Abnormalities<ProjectionsToBound> & projections_to_bound, const SideKey side_key);
+
+  tl::expected<ClosestProjectionsToBound, std::string> get_closest_projections_to_boundaries(
+    const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
+    const Abnormalities<ProjectionsToBound> & projections_to_bound);
 
 private:
   Param param_;

@@ -18,6 +18,8 @@
 #include <autoware/motion_velocity_planner_common/planner_data.hpp>
 #include <tl_expected/expected.hpp>
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -35,12 +37,13 @@ public:
   SlowDownInterpolator(
     std::shared_ptr<const PlannerData> planner_data, const double min_lat_dist_m,
     const double max_lat_dist_m, const double min_vel_mps, const double max_vel_mps,
-    const double max_decel_mps2)
+    const double min_decel_mps2, const double max_decel_mps2)
   : planner_data_(std::move(planner_data)),
     th_min_lat_dist_m_(min_lat_dist_m),
     th_max_lat_dist_m_(max_lat_dist_m),
     th_min_vel_mps_(min_vel_mps),
     th_max_vel_mps_(max_vel_mps),
+    th_min_decel_mps2_(min_decel_mps2),
     th_max_decel_mps2_(max_decel_mps2)
   {
     if ((th_max_vel_mps_ - th_min_vel_mps_) < 1e-1) {
@@ -62,11 +65,16 @@ public:
     }
 
     const auto curr_speed_mps = std::abs(planner_data_->current_odometry.twist.twist.linear.x);
-    const auto accel_mps2 = std::max(exp_decel_mps2, th_max_decel_mps2_);
+    const auto decel_mps2 = std::clamp(exp_decel_mps2, th_max_decel_mps2_, th_min_decel_mps2_);
+    const auto expected_vel =
+      std::sqrt(curr_speed_mps * curr_speed_mps + 2 * decel_mps2 * arclength_to_point_m);
     const auto rel_dist_m =
-      (vel_mps * vel_mps - curr_speed_mps * curr_speed_mps) / (2 * exp_decel_mps2);
+      (vel_mps * vel_mps - curr_speed_mps * curr_speed_mps) / (2 * decel_mps2);
+    fmt::print(
+      "vel {}, curr vel {}, decel{} rel dist n {}\n", expected_vel, curr_speed_mps, decel_mps2,
+      rel_dist_m);
 
-    return std::make_tuple(rel_dist_m, vel_mps, accel_mps2);
+    return std::make_tuple(rel_dist_m, vel_mps, decel_mps2);
   }
 
 private:
@@ -106,6 +114,7 @@ private:
   double th_max_lat_dist_m_{0.0};
   double th_min_vel_mps_{0.0};
   double th_max_vel_mps_{0.0};
+  double th_min_decel_mps2_{0.0};
   double th_max_decel_mps2_{0.0};
   double slope_{0.0};
 };

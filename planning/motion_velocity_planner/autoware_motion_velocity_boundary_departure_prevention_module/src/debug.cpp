@@ -14,11 +14,11 @@
 
 #include "debug.hpp"
 
-#include "str_map.hpp"
 #include "type_alias.hpp"
 
 #include <std_msgs/msg/detail/color_rgba__struct.hpp>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -103,14 +103,15 @@ Marker create_ego_sides_marker(
   return marker;
 }
 
-Marker create_projection_to_bound_marker(
-  const ProjectionsToBound & side_to_boundary, Marker marker, const std::string & type_str,
+template <typename T>
+Marker create_projections_to_bound_marker(
+  const T & projections_to_bound, Marker marker, const std::string & type_str,
   const double base_link_z)
 {
   marker.ns = type_str + "_projection_to_bound";
   for (const auto side_key : g_side_keys) {
     const auto to_geom = [base_link_z](const auto & pt) { return to_msg(pt.to_3d(base_link_z)); };
-    for (const auto & pt : side_to_boundary[side_key]) {
+    for (const auto & pt : projections_to_bound[side_key]) {
       marker.color = color::blue();
       marker.points.push_back(to_geom(pt.pt_on_ego));
       marker.points.push_back(to_geom(pt.pt_on_bound));
@@ -244,9 +245,12 @@ MarkerArray create_debug_marker_array(
 
     marker_array.markers.push_back(create_footprint_marker(
       output.abnormalities_data.footprints[type], curr_time, type_str, base_link_z, color::aqua()));
-    marker_array.markers.push_back(create_projection_to_bound_marker(
+    marker_array.markers.push_back(create_projections_to_bound_marker(
       output.abnormalities_data.projections_to_bound[type], marker, type_str, base_link_z));
   }
+
+  marker_array.markers.push_back(create_projections_to_bound_marker(
+    output.closest_projections_to_bound, marker, "closest", base_link_z));
   autoware_utils::append_marker_array(
     create_slow_down_interval(output.slow_down_intervals, curr_time), &marker_array);
 
