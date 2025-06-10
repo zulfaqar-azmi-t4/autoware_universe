@@ -132,12 +132,11 @@ public:
    *
    * @param projections_to_bound     Closest boundary projections from the ego to road edges, for
    * each side.
-   * @param offset_from_ego Distance offset from the ego base link.
    * @return A `Side`-keyed container of filtered and structured `DeparturePoint`s for both left and
    * right sides.
    */
   Side<DeparturePoints> get_departure_points(
-    const ClosestProjectionsToBound & projections_to_bound, const double offset_from_ego);
+    const ClosestProjectionsToBound & projections_to_bound);
 
 private:
   Param param_;

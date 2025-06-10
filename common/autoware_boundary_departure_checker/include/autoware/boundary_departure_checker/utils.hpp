@@ -151,12 +151,11 @@ double compute_braking_distance(
  * @param projections_to_bound   A list of closest boundary projections along one side.
  * @param th_dist_hysteresis_m   Threshold to apply hysteresis logic to departure point
  * classification.
- * @param offset_from_ego        Longitudinal offset from the ego pose to the trajectory origin.
  * @return A sorted and filtered list of `DeparturePoint`s for this side.
  */
 DeparturePoints get_departure_points(
   const std::vector<ClosestProjectionToBound> & projections_to_bound,
-  const double th_dist_hysteresis_m, const double offset_from_ego);
+  const double th_dist_hysteresis_m);
 
 double calc_dist_on_traj(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const Point2d & point);

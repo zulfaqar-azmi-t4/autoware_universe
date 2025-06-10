@@ -53,23 +53,17 @@ inline Point2d to_pt2d(const geometry_msgs::msg::Point & point)
  */
 DepartureIntervals init_departure_intervals(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const Side<DeparturePoints> & departure_points, const double max_longitudinal_offset_m);
+  const Side<DeparturePoints> & departure_points, const double vehicle_length);
 
 void update_departure_intervals(
   DepartureIntervals & departure_intervals, Side<DeparturePoints> & departure_points,
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const double max_longitudinal_offset_m, const TrajectoryPoint & ref_traj_fr_pt,
-  const double ego_dist_from_traj_front);
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double vehicle_length_m,
+  const TrajectoryPoint & ref_traj_fr_pt, const double ego_dist_from_traj_front);
 
 void update_critical_departure_points(
-  const Side<DeparturePoints> & departure_points,
+  const Side<DeparturePoints> & new_departure_points,
   CriticalDeparturePoints & critical_departure_points,
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double th_dist_hysteresis_m,
   const double offset_from_ego);
-
-double calc_braking_distance(
-  const double abs_velocity, const double max_deceleration, const double delay_time,
-  const double dist_error);
-
 }  // namespace autoware::motion_velocity_planner::utils
 #endif  // UTILS_HPP_

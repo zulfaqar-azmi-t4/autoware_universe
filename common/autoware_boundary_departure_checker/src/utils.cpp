@@ -56,8 +56,7 @@ using autoware::boundary_departure_checker::SideKey;
 using autoware::boundary_departure_checker::VehicleInfo;
 
 DeparturePoint create_departure_point(
-  const ClosestProjectionToBound & projection_to_bound, const double th_dist_hysteresis_m,
-  const double offset_from_ego)
+  const ClosestProjectionToBound & projection_to_bound, const double th_dist_hysteresis_m)
 {
   DeparturePoint point;
   point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
@@ -67,8 +66,8 @@ DeparturePoint create_departure_point(
   point.th_dist_hysteresis = th_dist_hysteresis_m;
   point.dist_on_traj = projection_to_bound.lon_dist_on_ref_traj;
   point.idx_from_ego_traj = projection_to_bound.ego_sides_idx;
-  point.dist_from_ego = point.dist_on_traj - offset_from_ego;
-  point.can_be_removed = point.can_ignore();
+  point.can_be_removed =
+    (point.type == DepartureType::NONE || point.type == DepartureType::UNKNOWN);
   return point;
 }
 }  // namespace
@@ -93,13 +92,12 @@ void erase_after_first_match(DeparturePoints & departure_points)
 
 DeparturePoints get_departure_points(
   const std::vector<ClosestProjectionToBound> & projections_to_bound,
-  const double th_dist_hysteresis_m, const double offset_from_ego)
+  const double th_dist_hysteresis_m)
 {
   DeparturePoints departure_points;
   departure_points.reserve(projections_to_bound.size());
   for (const auto & projection_to_bound : projections_to_bound) {
-    const auto point =
-      create_departure_point(projection_to_bound, th_dist_hysteresis_m, offset_from_ego);
+    const auto point = create_departure_point(projection_to_bound, th_dist_hysteresis_m);
 
     if (point.can_be_removed) {
       continue;

@@ -46,26 +46,24 @@ public:
   }
 
 private:
+  // === Interface and inputs validation ====
   void subscribe_topics(rclcpp::Node & node);
   void publish_topics(rclcpp::Node & node);
-  tl::expected<Output, std::string> plan(
-    const PoseWithCovariance & pose_with_covariance, const TrajectoryPoints & ref_traj,
-    const TrajectoryPoints & ego_pred_traj,
-    const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double ego_dist_on_traj,
-    const VehicleInfo & vehicle_info);
   [[nodiscard]] bool is_data_ready(std::unordered_map<std::string, double> & processing_times);
   [[nodiscard]] bool is_data_valid() const;
   [[nodiscard]] bool is_data_timeout(const Odometry & odom) const;
 
-  VelocityPlanningResult plan_slow_down_intervals(
+  // === Internal logic
+
+  tl::expected<VelocityPlanningResult, std::string> plan_slow_down_intervals(
     const TrajectoryPoints & raw_trajectory_points,
     const std::shared_ptr<const PlannerData> & planner_data);
 
+  rclcpp::Clock::SharedPtr clock_ptr_;
   bool is_critical_departing_{false};
   std::string module_name_;
   Output output_;
   NodeParam node_param_;
-  rclcpp::Clock::SharedPtr clock_ptr_;
   rclcpp::TimerBase::SharedPtr timer_ptr_;
   std::unique_ptr<SlowDownInterpolator> slow_down_interpolator_ptr_;
   MarkerArray debug_marker_;

@@ -159,7 +159,6 @@ struct DeparturePoint
   double th_dist_hysteresis{2.0};
   double lat_dist_to_bound{1000.0};
   double dist_on_traj{1000.0};
-  double dist_from_ego{0.0};
   double velocity{0.0};
   size_t idx_from_ego_traj{};
   bool can_be_removed{false};
@@ -179,12 +178,6 @@ struct DeparturePoint
     return autoware_utils::to_msg(point.to_3d(z));
   }
 
-  [[nodiscard]] bool can_ignore() const
-  {
-    return dist_from_ego < std::numeric_limits<double>::epsilon() || type == DepartureType::NONE ||
-           type == DepartureType::UNKNOWN;
-  }
-
   bool operator<(const DeparturePoint & other) const { return dist_on_traj < other.dist_on_traj; }
 };
 using DeparturePoints = std::vector<DeparturePoint>;
@@ -201,7 +194,6 @@ struct CriticalDeparturePoint : DeparturePoint
     th_dist_hysteresis = base.th_dist_hysteresis;
     lat_dist_to_bound = base.lat_dist_to_bound;
     dist_on_traj = base.dist_on_traj;
-    dist_from_ego = base.dist_from_ego;
     velocity = base.velocity;
     can_be_removed = base.can_be_removed;
   }

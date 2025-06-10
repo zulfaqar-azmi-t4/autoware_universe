@@ -305,14 +305,14 @@ BoundaryDepartureChecker::get_closest_projections_to_boundaries(
 }
 
 Side<DeparturePoints> BoundaryDepartureChecker::get_departure_points(
-  const ClosestProjectionsToBound & projections_to_bound, const double offset_from_ego)
+  const ClosestProjectionsToBound & projections_to_bound)
 {
   const auto th_dist_hysteresis_m = param_ptr_->th_dist_hysteresis_m;
 
   Side<DeparturePoints> departure_points;
   for (const auto side_key : g_side_keys) {
-    departure_points[side_key] = utils::get_departure_points(
-      projections_to_bound[side_key], th_dist_hysteresis_m, offset_from_ego);
+    departure_points[side_key] =
+      utils::get_departure_points(projections_to_bound[side_key], th_dist_hysteresis_m);
   }
   return departure_points;
 }
