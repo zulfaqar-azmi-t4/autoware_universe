@@ -19,13 +19,12 @@
 #include "utils.hpp"
 
 #include <autoware/boundary_departure_checker/utils.hpp>
+#include <autoware/motion_utils/marker/marker_helper.hpp>
 #include <autoware/trajectory/trajectory_point.hpp>
 #include <autoware/trajectory/utils/closest.hpp>
 #include <magic_enum.hpp>
 #include <range/v3/algorithm/sort.hpp>
 #include <range/v3/view.hpp>
-
-#include <fmt/format.h>
 
 #include <algorithm>
 #include <map>
@@ -43,8 +42,9 @@ void BoundaryDeparturePreventionModule::init(
   module_name_ = module_name;
   clock_ptr_ = node.get_clock();
   logger_ = node.get_logger();
-
+  time_keeper_ = std::make_shared<autoware_utils::TimeKeeper>(processing_time_detail_pub_);
   node_param_ = NodeParam(node);
+
   subscribe_topics(node);
   publish_topics(node);
 
@@ -68,6 +68,8 @@ void BoundaryDeparturePreventionModule::init(
 void BoundaryDeparturePreventionModule::update_parameters(
   const std::vector<rclcpp::Parameter> & parameters)
 {
+  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
+
   using autoware_utils::update_param;
   auto & pp = node_param_;
 
@@ -157,6 +159,8 @@ void BoundaryDeparturePreventionModule::update_parameters(
 
 void BoundaryDeparturePreventionModule::subscribe_topics(rclcpp::Node & node)
 {
+  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
+
   sub_ego_pred_traj_ = node.create_subscription<Trajectory>(
     "/control/trajectory_follower/lateral/predicted_trajectory", rclcpp::QoS{1},
     [&](const Trajectory::ConstSharedPtr msg) { ego_pred_traj_ptr_ = msg; });
@@ -175,33 +179,52 @@ void BoundaryDeparturePreventionModule::subscribe_topics(rclcpp::Node & node)
 
 void BoundaryDeparturePreventionModule::publish_topics(rclcpp::Node & node)
 {
+  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
+
   const std::string ns = "boundary_departure_prevention";
+
   debug_publisher_ =
     node.create_publisher<visualization_msgs::msg::MarkerArray>("~/" + ns + "/debug_markers", 1);
+
+  virtual_wall_publisher_ = node.create_publisher<MarkerArray>("~/" + ns + "/virtual_walls", 1);
+
+  processing_time_detail_pub_ = node.create_publisher<autoware_utils::ProcessingTimeDetail>(
+    "~/debug/processing_time_detail_ms/" + ns, 1);
+
+  processing_time_publisher_ =
+    node.create_publisher<Float64Stamped>("~/debug/obstacle_slow_down/processing_time_ms", 1);
 }
 
 VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
-  [[maybe_unused]] const TrajectoryPoints & raw_trajectory_points,
+  const TrajectoryPoints & raw_trajectory_points,
   [[maybe_unused]] const TrajectoryPoints & smoothed_trajectory_points,
   const std::shared_ptr<const PlannerData> planner_data)
 {
+  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
+  StopWatch<std::chrono::milliseconds> stopwatch_ms;
+  stopwatch_ms.tic("plan");
+
   const auto & vehicle_info = planner_data->vehicle_info_;
   const auto & ll_map_ptr = planner_data->route_handler->getLaneletMapPtr();
 
-  StopWatch<std::chrono::milliseconds> stopwatch_ms;
-  stopwatch_ms.tic("init_bdc_ptr");
   if (!boundary_departure_checker_ptr_) {
     boundary_departure_checker_ptr_ =
       std::make_unique<BoundaryDepartureChecker>(ll_map_ptr, vehicle_info, node_param_.bdc_param);
   }
-  processing_times_ms_["init_bdc_ptr"] = stopwatch_ms.toc("init_bdc_ptr");
 
-  fmt::print("BoundaryDeparturePreventionModule::plan called.\n");
+  if (!slow_down_interpolator_ptr_) {
+    slow_down_interpolator_ptr_ =
+      std::make_unique<SlowDownInterpolator>(planner_data, node_param_.bdc_param.th_trigger);
+  }
 
-  stopwatch_ms.tic("plan_slow_down");
-  auto result =
-    plan_slow_down_intervals(raw_trajectory_points, smoothed_trajectory_points, planner_data);
-  fmt::print("plan_slow_down takes {} ms.\n", stopwatch_ms.toc("plan_slow_down"));
+  auto result = plan_slow_down_intervals(raw_trajectory_points, planner_data);
+
+  processing_time_publisher_->publish(std::invoke([&]() {
+    autoware_internal_debug_msgs::msg::Float64Stamped msg;
+    msg.stamp = clock_ptr_->now();
+    msg.data = stopwatch_ms.toc();
+    return msg;
+  }));
 
   return result;
 }
@@ -212,9 +235,10 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double ego_dist_on_traj,
   const VehicleInfo & vehicle_info)
 {
-  autoware_utils::StopWatch<std::chrono::milliseconds> stopwatch_ms;
-  std::map<const char *, double> processing_time_map;
+  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
 
+  autoware_utils::StopWatch<std::chrono::milliseconds> stopwatch_ms;
+  stopwatch_ms.tic("get_abnormalities_data");
   const auto abnormality_data_opt = boundary_departure_checker_ptr_->get_abnormalities_data(
     ego_pred_traj, aw_ref_traj, pose_with_covariance, *steering_angle_ptr_);
 
@@ -228,7 +252,7 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
   const auto closest_projections_to_bound_opt =
     boundary_departure_checker_ptr_->get_closest_projections_to_boundaries(
       aw_ref_traj, output_.abnormalities_data.projections_to_bound);
-  processing_time_map["get_closest_projected_to_boundaries"] =
+  processing_times_ms_["get_closest_projected_to_boundaries"] =
     stopwatch_ms.toc("get_closest_projected_to_boundaries");
 
   if (!closest_projections_to_bound_opt) {
@@ -242,13 +266,13 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
   stopwatch_ms.tic("get_departure_points");
   output_.departure_points = boundary_departure_checker_ptr_->get_departure_points(
     output_.closest_projections_to_bound, offset_from_ego);
-  processing_time_map["get_departure_points"] = stopwatch_ms.toc("get_departure_points");
+  processing_times_ms_["get_departure_points"] = stopwatch_ms.toc("get_departure_points");
 
   stopwatch_ms.tic("process_critical_departure");
   utils::update_critical_departure_points(
     output_.departure_points, output_.critical_departure_points, aw_ref_traj,
     node_param_.bdc_param.th_dist_hysteresis_m, offset_from_ego);
-  processing_time_map["process_critical_departure"] =
+  processing_times_ms_["process_critical_departure"] =
     stopwatch_ms.toc("process_critical_departure");
 
   stopwatch_ms.tic("update_departure_interval");
@@ -262,11 +286,7 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
       ref_traj.front(), ego_dist_on_traj);
   }
 
-  processing_time_map["update_departure_interval"] = stopwatch_ms.toc("update_departure_interval");
-
-  for (const auto & [name, time] : processing_time_map) {
-    fmt::print("{}: {}\n", name, time);
-  }
+  processing_times_ms_["update_departure_interval"] = stopwatch_ms.toc("update_departure_interval");
 
   return output_;
 }
@@ -274,6 +294,8 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
 bool BoundaryDeparturePreventionModule::is_data_ready(
   [[maybe_unused]] std::unordered_map<std::string, double> & processing_times)
 {
+  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
+
   if (!ego_pred_traj_ptr_) {
     RCLCPP_INFO_THROTTLE(
       logger_, *clock_ptr_, throttle_duration_ms, "waiting for predicted trajectory...");
@@ -291,6 +313,8 @@ bool BoundaryDeparturePreventionModule::is_data_ready(
 
 bool BoundaryDeparturePreventionModule::is_data_valid() const
 {
+  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
+
   if (ego_pred_traj_ptr_->points.empty()) {
     RCLCPP_INFO_THROTTLE(
       logger_, *clock_ptr_, throttle_duration_ms, "empty predicted trajectory...");
@@ -301,6 +325,8 @@ bool BoundaryDeparturePreventionModule::is_data_valid() const
 
 bool BoundaryDeparturePreventionModule::is_data_timeout(const Odometry & odom) const
 {
+  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
+
   const auto now = clock_ptr_->now();
   const auto time_diff_s = (rclcpp::Time(odom.header.stamp) - now).seconds();
   constexpr auto th_pose_timeout_s = 1.0;
@@ -314,10 +340,11 @@ bool BoundaryDeparturePreventionModule::is_data_timeout(const Odometry & odom) c
 }
 
 VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_intervals(
-  [[maybe_unused]] const TrajectoryPoints & raw_trajectory_points,
-  [[maybe_unused]] const TrajectoryPoints & smoothed_trajectory_points,
+  const TrajectoryPoints & raw_trajectory_points,
   const std::shared_ptr<const PlannerData> & planner_data)
 {
+  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
+
   const auto & vehicle_info = planner_data->vehicle_info_;
   const auto & ll_map_ptr = planner_data->route_handler->getLaneletMapPtr();
   const auto & curr_odom = planner_data->current_odometry;
@@ -364,7 +391,6 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
   }
 
   const auto & th_trigger = node_param_.bdc_param.th_trigger;
-  SlowDownInterpolator interpolator(planner_data, th_trigger);
 
   output_.is_critical_departing = std::any_of(
     output_.critical_departure_points.begin(), output_.critical_departure_points.end(),
@@ -382,26 +408,30 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
   StopWatch<std::chrono::milliseconds> stopwatch;
   std::map<std::string, double> time_print;
   time_print["total"] = 0;
+
+  slow_down_wall_marker_.markers.clear();
   std::vector<SlowdownInterval> slowdown_intervals;
   for (auto && pair : output_.departure_intervals | ranges::views::enumerate) {
     const auto & [idx, departure_interval] = pair;
 
     stopwatch.tic("lat_dist_to_bound_m");
-    auto lat_dist_to_bound_m =
-      output_.abnormalities_data
-        .projections_to_bound[AbnormalityType::NORMAL][departure_interval.side_key]
-        .front()
-        .lat_dist;
-    time_print["lat_dist_to_bound_m"] = stopwatch.toc("lat_dist_to_bound_m");
-    time_print["total"] += time_print["lat_dist_to_bound_m"];
-
     const auto dpt_pt_dist_on_traj_m = (ego_dist_on_traj_m < departure_interval.start_dist_on_traj)
                                          ? departure_interval.start.pose
                                          : departure_interval.end.pose;
 
+    stopwatch.tic("check_dist_to_bound");
+    auto lat_dist_to_bound_m =
+      boundary_departure_checker::utils::get_nearest_boundary_segment_from_point(
+        output_.abnormalities_data.boundary_segments[departure_interval.side_key],
+        utils::to_pt2d(dpt_pt_dist_on_traj_m.position));
+    if (!lat_dist_to_bound_m) {
+      continue;
+    }
+    time_print["check_dist_to_bound"] = stopwatch.toc("check_dist_to_bound");
+
     stopwatch.tic("interpolate_velocity");
     const auto vel_opt = interpolator.get_interp_to_point(
-      dpt_pt_dist_on_traj_m.position, lat_dist_to_bound_m, departure_interval.side_key);
+      dpt_pt_dist_on_traj_m.position, *lat_dist_to_bound_m, departure_interval.side_key);
     time_print["interpolate_velocity"] = stopwatch.toc("interpolate_velocity");
     time_print["total"] += time_print["interpolate_velocity"];
 
@@ -432,8 +462,8 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
 
     auto end_pose = (departure_interval.start_dist_on_traj >
                      (ego_dist_on_traj_m + vehicle_info.max_longitudinal_offset_m))
-                      ? departure_interval.start.pose.position
-                      : departure_interval.end.pose.position;
+                      ? departure_interval.start.pose
+                      : departure_interval.end.pose;
     if (ego_dist_on_traj_m + std::get<0>(*vel_opt) > aw_raw_traj_opt->length()) {
       continue;
     }
@@ -444,18 +474,32 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
     time_print["total"] += time_print["find_start_pose"];
 
     stopwatch.tic("inserting_point");
-    output_.slow_down_intervals.emplace_back(start_pose.pose.position, end_pose);
-    slowdown_intervals.emplace_back(start_pose.pose.position, end_pose, vel);
+    output_.slow_down_intervals.emplace_back(start_pose.pose.position, end_pose.position);
+    slowdown_intervals.emplace_back(start_pose.pose.position, end_pose.position, vel);
     time_print["inserting_point"] = stopwatch.toc("inserting_point");
     time_print["total"] += time_print["inserting_point"];
+
+    const auto markers_start = autoware::motion_utils::createSlowDownVirtualWallMarker(
+      start_pose.pose, "boundary_departure_prevention_start", clock_ptr_->now(),
+      static_cast<int32_t>(idx), vehicle_info.max_longitudinal_offset_m, "",
+      planner_data->is_driving_forward);
+    autoware_utils::append_marker_array(markers_start, &slow_down_wall_marker_);
+    const auto markers_end = autoware::motion_utils::createSlowDownVirtualWallMarker(
+      end_pose, "boundary_departure_prevention_end", clock_ptr_->now(),
+      static_cast<int32_t>(idx + output_.departure_intervals.size() + 1),
+      vehicle_info.max_longitudinal_offset_m, "", planner_data->is_driving_forward);
+    autoware_utils::append_marker_array(markers_end, &slow_down_wall_marker_);
+  }
+  if (virtual_wall_publisher_) {
+    virtual_wall_publisher_->publish(slow_down_wall_marker_);
   }
 
   if (debug_publisher_) {
-    slow_down_wall_marker_.markers.clear();
+    debug_marker_.markers.clear();
     autoware_utils::append_marker_array(
       debug::create_debug_marker_array(output_, clock_ptr_, curr_pose.pose.position.z, node_param_),
-      &slow_down_wall_marker_);
-    debug_publisher_->publish(slow_down_wall_marker_);
+      &debug_marker_);
+    debug_publisher_->publish(debug_marker_);
   }
 
   VelocityPlanningResult result;

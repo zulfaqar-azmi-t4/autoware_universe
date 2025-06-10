@@ -16,6 +16,7 @@
 #define BOUNDARY_DEPARTURE_PREVENTION_MODULE_HPP_
 
 #include "parameters.hpp"
+#include "slow_down_interpolator.hpp"
 
 #include <autoware/motion_velocity_planner_common/plugin_module_interface.hpp>
 #include <tl_expected/expected.hpp>
@@ -57,8 +58,7 @@ private:
   [[nodiscard]] bool is_data_timeout(const Odometry & odom) const;
 
   VelocityPlanningResult plan_slow_down_intervals(
-    [[maybe_unused]] const TrajectoryPoints & raw_trajectory_points,
-    [[maybe_unused]] const TrajectoryPoints & smoothed_trajectory_points,
+    const TrajectoryPoints & raw_trajectory_points,
     const std::shared_ptr<const PlannerData> & planner_data);
 
   bool is_critical_departing_{false};
@@ -67,6 +67,8 @@ private:
   NodeParam node_param_;
   rclcpp::Clock::SharedPtr clock_ptr_;
   rclcpp::TimerBase::SharedPtr timer_ptr_;
+  std::unique_ptr<SlowDownInterpolator> slow_down_interpolator_ptr_;
+  MarkerArray debug_marker_;
   MarkerArray slow_down_wall_marker_;
   static constexpr auto throttle_duration_ms{5000};
 
@@ -79,11 +81,14 @@ private:
   rclcpp::Subscription<Trajectory>::SharedPtr sub_ego_pred_traj_;
   rclcpp::Subscription<Control>::SharedPtr sub_control_cmd_;
   rclcpp::Subscription<SteeringReport>::SharedPtr sub_steering_angle_;
-
   rclcpp::Subscription<OperationModeState>::SharedPtr sub_op_mode_state_;
-  std::unique_ptr<BoundaryDepartureChecker> boundary_departure_checker_ptr_;
 
+  rclcpp::Publisher<autoware_utils::ProcessingTimeDetail>::SharedPtr processing_time_detail_pub_;
+
+  std::unique_ptr<BoundaryDepartureChecker> boundary_departure_checker_ptr_;
   std::unique_ptr<diagnostic_updater::Updater> updater_ptr_;
+
+  mutable std::shared_ptr<autoware_utils::TimeKeeper> time_keeper_;
 };
 }  // namespace autoware::motion_velocity_planner
 #endif  // BOUNDARY_DEPARTURE_PREVENTION_MODULE_HPP_

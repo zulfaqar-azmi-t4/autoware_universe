@@ -18,6 +18,7 @@
 #include <magic_enum.hpp>
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 namespace autoware::motion_velocity_planner::utils

@@ -17,10 +17,6 @@
 
 #include "parameters.hpp"
 
-#include <string>
-#include <utility>
-#include <vector>
-
 namespace autoware::motion_velocity_planner::utils
 {
 
@@ -39,6 +35,11 @@ void erase_if(Container & container, Predicate pred)
 inline geometry_msgs::msg::Point to_geom_pt(const Point2d & point)
 {
   return autoware_utils::to_msg(point.to_3d(0.0));
+}
+
+inline Point2d to_pt2d(const geometry_msgs::msg::Point & point)
+{
+  return {point.x, point.y};
 }
 /**
  * @brief Initialize grouped departure intervals for each side of the vehicle.

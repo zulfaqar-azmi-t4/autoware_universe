@@ -21,8 +21,10 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <string>
+#include <vector>
 
 #ifndef SLOW_DOWN_INTERPOLATOR_HPP_
 #define SLOW_DOWN_INTERPOLATOR_HPP_

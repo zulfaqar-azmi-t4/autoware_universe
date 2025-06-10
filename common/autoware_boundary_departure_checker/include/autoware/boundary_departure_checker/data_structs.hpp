@@ -31,6 +31,7 @@
 
 #include <lanelet2_core/LaneletMap.h>
 
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -215,6 +216,7 @@ struct DepartureInterval
   SideKey side_key;
   double start_dist_on_traj;
   double end_dist_on_traj;
+  double lat_dist;
 
   bool start_at_traj_front{false};
   bool has_merged{false};
