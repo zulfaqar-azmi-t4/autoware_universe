@@ -16,9 +16,10 @@
 
 #include <autoware/trajectory/utils/closest.hpp>
 #include <magic_enum.hpp>
+#include <range/v3/algorithm/sort.hpp>
+#include <range/v3/view.hpp>
 
 #include <algorithm>
-#include <utility>
 #include <vector>
 
 namespace autoware::motion_velocity_planner::utils
@@ -256,5 +257,64 @@ void update_critical_departure_points(
     }
   }
   std::sort(critical_departure_points.begin(), critical_departure_points.end());
+}
+
+std::vector<std::tuple<Pose, Pose, double>> get_slow_down_intervals(
+  const trajectory::Trajectory<TrajectoryPoint> & ref_traj_pts,
+  const DepartureIntervals & departure_intervals,
+  const SlowDownInterpolator & slow_down_interpolator, const VehicleInfo & vehicle_info,
+  const BoundarySideWithIdx & boundary_segments, const double ego_dist_on_traj_m)
+{
+  std::vector<std::tuple<Pose, Pose, double>> slowdown_intervals;
+
+  for (auto && pair : departure_intervals | ranges::views::enumerate) {
+    const auto & [idx, departure_interval] = pair;
+
+    const auto dpt_pt_dist_on_traj_m = (ego_dist_on_traj_m < departure_interval.start_dist_on_traj)
+                                         ? departure_interval.start.pose
+                                         : departure_interval.end.pose;
+
+    auto lat_dist_to_bound_m =
+      boundary_departure_checker::utils::get_nearest_boundary_segment_from_point(
+        boundary_segments[departure_interval.side_key],
+        utils::to_pt2d(dpt_pt_dist_on_traj_m.position));
+
+    if (!lat_dist_to_bound_m) {
+      continue;
+    }
+
+    const auto vel_opt = slow_down_interpolator.get_interp_to_point(
+      dpt_pt_dist_on_traj_m.position, *lat_dist_to_bound_m, departure_interval.side_key);
+
+    if (!vel_opt) {
+      continue;
+    }
+
+    const auto dist_to_departure_point =
+      (departure_interval.start_dist_on_traj >
+       (ego_dist_on_traj_m + vehicle_info.max_longitudinal_offset_m))
+        ? departure_interval.start_dist_on_traj
+        : departure_interval.end_dist_on_traj;
+
+    if (ego_dist_on_traj_m >= dist_to_departure_point) {
+      continue;
+    }
+
+    const auto [rel_dist_m, vel, accel_mps2] = *vel_opt;
+
+    auto end_pose = (departure_interval.start_dist_on_traj >
+                     (ego_dist_on_traj_m + vehicle_info.max_longitudinal_offset_m))
+                      ? departure_interval.start.pose
+                      : departure_interval.end.pose;
+    if (ego_dist_on_traj_m + std::get<0>(*vel_opt) > ref_traj_pts.length()) {
+      continue;
+    }
+
+    auto start_pose = ref_traj_pts.compute(ego_dist_on_traj_m + rel_dist_m);
+
+    slowdown_intervals.emplace_back(start_pose.pose, end_pose, vel);
+  }
+
+  return slowdown_intervals;
 }
 }  // namespace autoware::motion_velocity_planner::utils

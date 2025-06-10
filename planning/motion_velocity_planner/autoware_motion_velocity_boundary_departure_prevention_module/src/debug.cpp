@@ -180,8 +180,7 @@ Marker create_boundary_segments_marker(
 }
 
 MarkerArray create_slow_down_interval(
-  const std::vector<std::pair<geometry_msgs::msg::Point, geometry_msgs::msg::Point>> &
-    slow_down_points,
+  const std::vector<std::tuple<Pose, Pose, double>> & slow_down_points,
   const rclcpp::Time & curr_time)
 {
   int32_t id{0};
@@ -192,9 +191,9 @@ MarkerArray create_slow_down_interval(
   auto marker_2 = create_default_marker(
     "map", curr_time, "stop_slow", id, visualization_msgs::msg::Marker::POINTS,
     create_marker_scale(0.25, 0.25, 1.0), color::light_pink());
-  for (const auto & [start, stop] : slow_down_points) {
-    marker_1.points.push_back(start);
-    marker_2.points.push_back(stop);
+  for (const auto & [start, stop, vel] : slow_down_points) {
+    marker_1.points.push_back(start.position);
+    marker_2.points.push_back(stop.position);
   }
 
   MarkerArray marker_array;
@@ -269,7 +268,7 @@ MarkerArray create_debug_marker_array(
       output.closest_projections_to_bound[side_key], marker, "closest", side_key_str, base_link_z));
   }
   autoware_utils::append_marker_array(
-    create_slow_down_interval(output.slow_down_intervals, curr_time), &marker_array);
+    create_slow_down_interval(output.slowdown_intervals, curr_time), &marker_array);
 
   return marker_array;
 }

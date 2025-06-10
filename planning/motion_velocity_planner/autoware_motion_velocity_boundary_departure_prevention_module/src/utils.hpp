@@ -16,7 +16,7 @@
 #define UTILS_HPP_
 
 #include "parameters.hpp"
-
+#include "slow_down_interpolator.hpp"
 namespace autoware::motion_velocity_planner::utils
 {
 
@@ -65,5 +65,10 @@ void update_critical_departure_points(
   CriticalDeparturePoints & critical_departure_points,
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double th_dist_hysteresis_m,
   const double offset_from_ego);
+std::vector<std::tuple<Pose, Pose, double>> get_slow_down_intervals(
+  const trajectory::Trajectory<TrajectoryPoint> & ref_traj_pts,
+  const DepartureIntervals & departure_intervals,
+  const SlowDownInterpolator & slow_down_interpolator, const VehicleInfo & vehicle_info,
+  const BoundarySideWithIdx & boundary_segments, const double ego_dist_on_traj_m);
 }  // namespace autoware::motion_velocity_planner::utils
 #endif  // UTILS_HPP_

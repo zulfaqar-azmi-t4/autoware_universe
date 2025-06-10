@@ -27,7 +27,6 @@
 #include <range/v3/view.hpp>
 
 #include <algorithm>
-#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -377,69 +376,27 @@ BoundaryDeparturePreventionModule::plan_slow_down_intervals(
 
   updater_ptr_->force_update();
 
-  output_.slow_down_intervals.clear();
   slow_down_wall_marker_.markers.clear();
+  output_.slowdown_intervals = utils::get_slow_down_intervals(
+    *ref_traj_pts_opt, output_.departure_intervals, *slow_down_interpolator_ptr_, vehicle_info,
+    output_.abnormalities_data.boundary_segments, ego_dist_on_traj_m);
+
   std::vector<SlowdownInterval> slowdown_intervals;
-
-  for (auto && pair : output_.departure_intervals | ranges::views::enumerate) {
-    const auto & [idx, departure_interval] = pair;
-
-    const auto dpt_pt_dist_on_traj_m = (ego_dist_on_traj_m < departure_interval.start_dist_on_traj)
-                                         ? departure_interval.start.pose
-                                         : departure_interval.end.pose;
-
-    auto lat_dist_to_bound_m =
-      boundary_departure_checker::utils::get_nearest_boundary_segment_from_point(
-        output_.abnormalities_data.boundary_segments[departure_interval.side_key],
-        utils::to_pt2d(dpt_pt_dist_on_traj_m.position));
-
-    if (!lat_dist_to_bound_m) {
-      continue;
-    }
-
-    const auto vel_opt = slow_down_interpolator_ptr_->get_interp_to_point(
-      dpt_pt_dist_on_traj_m.position, *lat_dist_to_bound_m, departure_interval.side_key);
-
-    if (!vel_opt) {
-      continue;
-    }
-
-    const auto dist_to_departure_point =
-      (departure_interval.start_dist_on_traj >
-       (ego_dist_on_traj_m + vehicle_info.max_longitudinal_offset_m))
-        ? departure_interval.start_dist_on_traj
-        : departure_interval.end_dist_on_traj;
-
-    if (ego_dist_on_traj_m >= dist_to_departure_point) {
-      continue;
-    }
-
-    const auto [rel_dist_m, vel, accel_mps2] = *vel_opt;
-
-    auto end_pose = (departure_interval.start_dist_on_traj >
-                     (ego_dist_on_traj_m + vehicle_info.max_longitudinal_offset_m))
-                      ? departure_interval.start.pose
-                      : departure_interval.end.pose;
-    if (ego_dist_on_traj_m + std::get<0>(*vel_opt) > ref_traj_pts_opt->length()) {
-      continue;
-    }
-
-    auto start_pose = ref_traj_pts_opt->compute(ego_dist_on_traj_m + rel_dist_m);
-
-    output_.slow_down_intervals.emplace_back(start_pose.pose.position, end_pose.position);
-    slowdown_intervals.emplace_back(start_pose.pose.position, end_pose.position, vel);
-
+  for (auto && [idx, slowdown_interval] : output_.slowdown_intervals | ranges::views::enumerate) {
+    const auto & [start_pose, end_pose, vel] = slowdown_interval;
+    slowdown_intervals.emplace_back(start_pose.position, end_pose.position, vel);
     const auto markers_start = autoware::motion_utils::createSlowDownVirtualWallMarker(
-      start_pose.pose, "boundary_departure_prevention_start", clock_ptr_->now(),
-      static_cast<int32_t>(idx), ego_dist_on_traj_with_offset_m(planner_data->is_driving_forward), "",
-      planner_data->is_driving_forward);
+      start_pose, "boundary_departure_prevention_start", clock_ptr_->now(),
+      static_cast<int32_t>(idx), ego_dist_on_traj_with_offset_m(planner_data->is_driving_forward),
+      "", planner_data->is_driving_forward);
     autoware_utils::append_marker_array(markers_start, &slow_down_wall_marker_);
     const auto markers_end = autoware::motion_utils::createSlowDownVirtualWallMarker(
       end_pose, "boundary_departure_prevention_end", clock_ptr_->now(),
-      static_cast<int32_t>(idx + output_.departure_intervals.size() + 1),
-      0.0, "", planner_data->is_driving_forward);
+      static_cast<int32_t>(idx + output_.departure_intervals.size() + 1), 0.0, "",
+      planner_data->is_driving_forward);
     autoware_utils::append_marker_array(markers_end, &slow_down_wall_marker_);
   }
+
   if (virtual_wall_publisher_) {
     virtual_wall_publisher_->publish(slow_down_wall_marker_);
   }
