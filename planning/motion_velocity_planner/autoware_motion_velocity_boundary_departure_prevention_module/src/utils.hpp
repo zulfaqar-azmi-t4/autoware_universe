@@ -40,27 +40,35 @@ inline geometry_msgs::msg::Point to_geom_pt(const Point2d & point)
 {
   return autoware_utils::to_msg(point.to_3d(0.0));
 }
-
-DeparturePoint create_departure_point(
-  const Point2d & candidate_point, const DepartureType & departure_type,
-  const NodeParam & node_param, std::string_view direction);
-
-DeparturePoints get_departure_points(
-  const ClosestProjectionsToBound & projections_to_bound, const NodeParam & node_param,
-  const VehicleInfo & vehicle_info, const double ego_dist_from_traj_front);
+/**
+ * @brief Initialize grouped departure intervals for each side of the vehicle.
+ *
+ * @param aw_ref_traj        The reference trajectory used to compute global poses from trajectory
+ * distances.
+ * @param departure_points   Departure points for both sides of the ego vehicle, indexed by SideKey.
+ * @param vehicle_info       Vehicle information used to determine grouping threshold (e.g., length
+ * offset).
+ * @return A vector of `DepartureInterval`s for both sides of the vehicle, merged into one list.
+ */
 DepartureIntervals init_departure_intervals(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const DeparturePoints & departure_points, const VehicleInfo & vehicle_info);
+  const Side<DeparturePoints> & departure_points, const double max_longitudinal_offset_m);
 
 void update_departure_intervals(
-  DepartureIntervals & departure_intervals, DeparturePoints & departure_points,
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const VehicleInfo vehicle_info,
-  const TrajectoryPoint & ref_traj_fr_pt, const double ego_dist_from_traj_front);
+  DepartureIntervals & departure_intervals, Side<DeparturePoints> & departure_points,
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
+  const double max_longitudinal_offset_m, const TrajectoryPoint & ref_traj_fr_pt,
+  const double ego_dist_from_traj_front);
+
+void update_critical_departure_points(
+  const Side<DeparturePoints> & departure_points,
+  CriticalDeparturePoints & critical_departure_points,
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double th_dist_hysteresis_m,
+  const double offset_from_ego);
 
 double calc_braking_distance(
   const double abs_velocity, const double max_deceleration, const double delay_time,
   const double dist_error);
 
-void erase_after_first_match(DeparturePoints & departure_points);
 }  // namespace autoware::motion_velocity_planner::utils
 #endif  // UTILS_HPP_

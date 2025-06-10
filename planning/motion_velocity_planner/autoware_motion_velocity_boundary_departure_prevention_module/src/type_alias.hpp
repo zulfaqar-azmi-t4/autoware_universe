@@ -90,6 +90,7 @@ using boundary_departure_checker::AbnormalityType;           // NOLINT
 using boundary_departure_checker::BoundaryDepartureChecker;  // NOLINT
 using boundary_departure_checker::ClosestProjectionsToBound;
 using boundary_departure_checker::ClosestProjectionToBound;
+using boundary_departure_checker::CriticalDeparturePoint;
 using boundary_departure_checker::CriticalDeparturePoints;  // NOLINT
 using boundary_departure_checker::DepartureInterval;        // NOLINT
 using boundary_departure_checker::DepartureIntervals;       // NOLINT

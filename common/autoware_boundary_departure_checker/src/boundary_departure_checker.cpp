@@ -304,6 +304,19 @@ BoundaryDepartureChecker::get_closest_projections_to_boundaries(
   return min_to_bound;
 }
 
+Side<DeparturePoints> BoundaryDepartureChecker::get_departure_points(
+  const ClosestProjectionsToBound & projections_to_bound, const double offset_from_ego)
+{
+  const auto th_dist_hysteresis_m = param_ptr_->th_dist_hysteresis_m;
+
+  Side<DeparturePoints> departure_points;
+  for (const auto side_key : g_side_keys) {
+    departure_points[side_key] = utils::get_departure_points(
+      projections_to_bound[side_key], th_dist_hysteresis_m, offset_from_ego);
+  }
+  return departure_points;
+}
+
 tl::expected<UncrossableBoundRTree, std::string>
 BoundaryDepartureChecker::build_uncrossable_boundaries_tree(
   const lanelet::LaneletMapPtr & lanelet_map_ptr)

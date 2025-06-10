@@ -28,29 +28,6 @@
 
 namespace autoware::boundary_departure_checker::utils
 {
-double calc_dist_on_traj(
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const Point2d & point);
-Point2d to_point2d(const Eigen::Matrix<double, 3, 1> & ll_pt);
-
-Segment2d to_segment2d(
-  const Eigen::Matrix<double, 3, 1> & ll_pt1, const Eigen::Matrix<double, 3, 1> & ll_pt2);
-
-DepartureType check_departure_type(
-  const double lateral_dist_m, const Param & param, const SideKey side_key);
-
-std::vector<LinearRing2d> create_vehicle_footprints(
-  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
-  const SteeringReport & current_steering);
-std::vector<LinearRing2d> create_vehicle_footprints(
-  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
-  const FootprintMargin & uncertainty_fp_margin, const LongitudinalConfig & longitudinal_config);
-std::vector<LinearRing2d> create_vehicle_footprints(
-  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
-  const FootprintMargin & margin = {0.0, 0.0});
-std::vector<LinearRing2d> create_ego_footprints(
-  const AbnormalityType abnormality_type, const FootprintMargin & uncertainty_fp_margin,
-  const TrajectoryPoints & ego_pred_traj, const SteeringReport & current_steering,
-  const VehicleInfo & vehicle_info, const Param & param);
 /**
  * @brief cut trajectory by length
  * @param trajectory input trajectory
@@ -167,6 +144,43 @@ EgoSides get_sides_from_footprints(
 double compute_braking_distance(
   const double v_init, const double v_end, const double acc, const double jerk,
   double t_braking_delay);
+
+/**
+ * @brief Generate and filter departure points from boundary projections on one side.
+ *
+ * @param projections_to_bound   A list of closest boundary projections along one side.
+ * @param th_dist_hysteresis_m   Threshold to apply hysteresis logic to departure point
+ * classification.
+ * @param offset_from_ego        Longitudinal offset from the ego pose to the trajectory origin.
+ * @return A sorted and filtered list of `DeparturePoint`s for this side.
+ */
+DeparturePoints get_departure_points(
+  const std::vector<ClosestProjectionToBound> & projections_to_bound,
+  const double th_dist_hysteresis_m, const double offset_from_ego);
+
+double calc_dist_on_traj(
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const Point2d & point);
+Point2d to_point2d(const Eigen::Matrix<double, 3, 1> & ll_pt);
+
+Segment2d to_segment2d(
+  const Eigen::Matrix<double, 3, 1> & ll_pt1, const Eigen::Matrix<double, 3, 1> & ll_pt2);
+
+DepartureType check_departure_type(
+  const double lateral_dist_m, const Param & param, const SideKey side_key);
+
+std::vector<LinearRing2d> create_vehicle_footprints(
+  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
+  const SteeringReport & current_steering);
+std::vector<LinearRing2d> create_vehicle_footprints(
+  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
+  const FootprintMargin & uncertainty_fp_margin, const LongitudinalConfig & longitudinal_config);
+std::vector<LinearRing2d> create_vehicle_footprints(
+  const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,
+  const FootprintMargin & margin = {0.0, 0.0});
+std::vector<LinearRing2d> create_ego_footprints(
+  const AbnormalityType abnormality_type, const FootprintMargin & uncertainty_fp_margin,
+  const TrajectoryPoints & ego_pred_traj, const SteeringReport & current_steering,
+  const VehicleInfo & vehicle_info, const Param & param);
 }  // namespace autoware::boundary_departure_checker::utils
 
 #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__UTILS_HPP_

@@ -46,10 +46,73 @@ bool is_uncrossable_type(
     std::find(boundary_types_to_detect.begin(), boundary_types_to_detect.end(), type) !=
       boundary_types_to_detect.end());
 };
+
+using autoware::boundary_departure_checker::ClosestProjectionsToBound;
+using autoware::boundary_departure_checker::ClosestProjectionToBound;
+using autoware::boundary_departure_checker::DeparturePoint;
+using autoware::boundary_departure_checker::DeparturePoints;
+using autoware::boundary_departure_checker::DepartureType;
+using autoware::boundary_departure_checker::SideKey;
+using autoware::boundary_departure_checker::VehicleInfo;
+
+DeparturePoint create_departure_point(
+  const ClosestProjectionToBound & projection_to_bound, const double th_dist_hysteresis_m,
+  const double offset_from_ego)
+{
+  DeparturePoint point;
+  point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
+  point.lat_dist_to_bound = projection_to_bound.lat_dist;
+  point.type = projection_to_bound.departure_type;
+  point.point = projection_to_bound.pt_on_bound;
+  point.th_dist_hysteresis = th_dist_hysteresis_m;
+  point.dist_on_traj = projection_to_bound.lon_dist_on_ref_traj;
+  point.idx_from_ego_traj = projection_to_bound.ego_sides_idx;
+  point.dist_from_ego = point.dist_on_traj - offset_from_ego;
+  point.can_be_removed = point.can_ignore();
+  return point;
+}
 }  // namespace
 
 namespace autoware::boundary_departure_checker::utils
 {
+void erase_after_first_match(DeparturePoints & departure_points)
+{
+  const auto find_cri_dpt = [](const DeparturePoint & point) {
+    return point.type == DepartureType::CRITICAL_DEPARTURE;
+  };
+
+  auto crit_dpt_finder =
+    std::find_if(departure_points.begin(), departure_points.end(), find_cri_dpt);
+
+  if (
+    crit_dpt_finder != departure_points.end() &&
+    std::next(crit_dpt_finder) != departure_points.end()) {
+    departure_points.erase(std::next(crit_dpt_finder), departure_points.end());
+  }
+}
+
+DeparturePoints get_departure_points(
+  const std::vector<ClosestProjectionToBound> & projections_to_bound,
+  const double th_dist_hysteresis_m, const double offset_from_ego)
+{
+  DeparturePoints departure_points;
+  departure_points.reserve(projections_to_bound.size());
+  for (const auto & projection_to_bound : projections_to_bound) {
+    const auto point =
+      create_departure_point(projection_to_bound, th_dist_hysteresis_m, offset_from_ego);
+
+    if (point.can_be_removed) {
+      continue;
+    }
+
+    departure_points.push_back(point);
+  }
+
+  std::sort(departure_points.begin(), departure_points.end());
+  utils::erase_after_first_match(departure_points);
+  return departure_points;
+}
+
 using autoware_utils::Segment2d;
 double calc_dist_on_traj(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const Point2d & point)

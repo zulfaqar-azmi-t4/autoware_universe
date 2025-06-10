@@ -237,57 +237,31 @@ tl::expected<Output, std::string> BoundaryDeparturePreventionModule::plan(
   const auto & closest_projections_to_bound = *closest_projections_to_bound_opt;
   output_.closest_projections_to_bound = closest_projections_to_bound;
 
+  const auto max_longitudinal_offset_m = vehicle_info.max_longitudinal_offset_m;
+  const auto offset_from_ego = ego_dist_on_traj + max_longitudinal_offset_m;
   stopwatch_ms.tic("get_departure_points");
-  output_.departure_points = utils::get_departure_points(
-    output_.closest_projections_to_bound, node_param_, vehicle_info, ego_dist_on_traj);
+  output_.departure_points = boundary_departure_checker_ptr_->get_departure_points(
+    output_.closest_projections_to_bound, offset_from_ego);
   processing_time_map["get_departure_points"] = stopwatch_ms.toc("get_departure_points");
 
   stopwatch_ms.tic("process_critical_departure");
-  auto & crit_dpt_pts_mut = output_.critical_departure_points;
-  for (auto & crit_dpt_pt_mut : crit_dpt_pts_mut) {
-    crit_dpt_pt_mut.dist_on_traj =
-      trajectory::closest(aw_ref_traj, crit_dpt_pt_mut.point_on_prev_traj);
-    crit_dpt_pt_mut.dist_from_ego =
-      crit_dpt_pt_mut.dist_on_traj - (ego_dist_on_traj + vehicle_info.max_longitudinal_offset_m);
-    const auto updated_point = aw_ref_traj.compute(crit_dpt_pt_mut.dist_on_traj);
-    crit_dpt_pt_mut.can_be_removed =
-      autoware_utils::calc_distance2d(
-        updated_point.pose.position, crit_dpt_pt_mut.point_on_prev_traj.pose.position) > 1.0;
-  }
+  utils::update_critical_departure_points(
+    output_.departure_points, output_.critical_departure_points, aw_ref_traj,
+    node_param_.bdc_param.th_dist_hysteresis_m, offset_from_ego);
   processing_time_map["process_critical_departure"] =
     stopwatch_ms.toc("process_critical_departure");
 
-  stopwatch_ms.tic("erase_critical_departure");
-  utils::erase_if(crit_dpt_pts_mut, [](const DeparturePoint & pt) { return pt.can_be_removed; });
-  processing_time_map["erase_critical_departure"] = stopwatch_ms.toc("erase_critical_departure");
-
-  stopwatch_ms.tic("create_critical_departure_pts");
-  for (const auto & dpt_pt : output_.departure_points) {
-    if (dpt_pt.type == DepartureType::CRITICAL_DEPARTURE) {
-      boundary_departure_checker::CriticalDeparturePoint crit_pt(dpt_pt);
-      crit_pt.point_on_prev_traj = aw_ref_traj.compute(crit_pt.dist_on_traj);
-      crit_dpt_pts_mut.push_back(crit_pt);
-    }
-  }
-  processing_time_map["create_critical_departure_pts"] =
-    stopwatch_ms.toc("create_critical_departure_pts");
-
-  stopwatch_ms.tic("sort_critical_departure_pts");
-  std::sort(crit_dpt_pts_mut.begin(), crit_dpt_pts_mut.end());
-  processing_time_map["sort_critical_departure_pts"] =
-    stopwatch_ms.toc("sort_critical_departure_pts");
-
   stopwatch_ms.tic("update_departure_interval");
   if (output_.departure_intervals.empty()) {
-    output_.departure_intervals =
-      utils::init_departure_intervals(aw_ref_traj, output_.departure_points, vehicle_info);
+    output_.departure_intervals = utils::init_departure_intervals(
+      aw_ref_traj, output_.departure_points, max_longitudinal_offset_m);
   } else {
     auto & departure_intervals_mut = output_.departure_intervals;
-    auto & departure_points_mut = output_.departure_points;
     utils::update_departure_intervals(
-      departure_intervals_mut, departure_points_mut, aw_ref_traj, vehicle_info, ref_traj.front(),
-      ego_dist_on_traj);
+      departure_intervals_mut, output_.departure_points, aw_ref_traj, max_longitudinal_offset_m,
+      ref_traj.front(), ego_dist_on_traj);
   }
+
   processing_time_map["update_departure_interval"] = stopwatch_ms.toc("update_departure_interval");
 
   for (const auto & [name, time] : processing_time_map) {
@@ -337,19 +311,6 @@ bool BoundaryDeparturePreventionModule::is_data_timeout(const Odometry & odom) c
   }
 
   return false;
-}
-
-bool BoundaryDeparturePreventionModule::found_nearby_points(
-  const Point2d & candidate_point, const DeparturePoints & curr_departure_points)
-{
-  constexpr auto found_nearby{true};
-  for (auto & point : curr_departure_points) {
-    if (point.is_nearby(candidate_point)) {
-      return found_nearby;
-    }
-  }
-
-  return !found_nearby;
 }
 
 VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_intervals(
@@ -403,9 +364,7 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
   }
 
   const auto & th_trigger = node_param_.bdc_param.th_trigger;
-  SlowDownInterpolator interpolator(
-    planner_data, 0.25, th_trigger.th_dist_to_boundary_m.left.max, th_trigger.max_slow_down_vel_mps,
-    25.0 / 3.6, th_trigger.th_acc_mps2.min, th_trigger.th_acc_mps2.max);
+  SlowDownInterpolator interpolator(planner_data, th_trigger);
 
   output_.is_critical_departing = std::any_of(
     output_.critical_departure_points.begin(), output_.critical_departure_points.end(),
@@ -430,20 +389,19 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan_slow_down_interva
     stopwatch.tic("lat_dist_to_bound_m");
     auto lat_dist_to_bound_m =
       output_.abnormalities_data
-        .projections_to_bound[AbnormalityType::NORMAL][departure_interval.direction]
+        .projections_to_bound[AbnormalityType::NORMAL][departure_interval.side_key]
         .front()
         .lat_dist;
     time_print["lat_dist_to_bound_m"] = stopwatch.toc("lat_dist_to_bound_m");
     time_print["total"] += time_print["lat_dist_to_bound_m"];
 
-    const auto dpt_pt_dist_on_traj_m =
-      (ego_dist_on_traj_m < departure_interval.start_dist_on_traj)
-        ? departure_interval.start_dist_on_traj
-        : departure_interval.end_dist_on_traj - vehicle_info.max_longitudinal_offset_m;
+    const auto dpt_pt_dist_on_traj_m = (ego_dist_on_traj_m < departure_interval.start_dist_on_traj)
+                                         ? departure_interval.start.pose
+                                         : departure_interval.end.pose;
 
     stopwatch.tic("interpolate_velocity");
-    const auto vel_opt =
-      interpolator.get_interp_to_point(dpt_pt_dist_on_traj_m, lat_dist_to_bound_m);
+    const auto vel_opt = interpolator.get_interp_to_point(
+      dpt_pt_dist_on_traj_m.position, lat_dist_to_bound_m, departure_interval.side_key);
     time_print["interpolate_velocity"] = stopwatch.toc("interpolate_velocity");
     time_print["total"] += time_print["interpolate_velocity"];
 

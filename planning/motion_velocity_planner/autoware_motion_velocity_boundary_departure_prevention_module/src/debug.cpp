@@ -106,30 +106,29 @@ Marker create_ego_sides_marker(
 template <typename T>
 Marker create_projections_to_bound_marker(
   const T & projections_to_bound, Marker marker, const std::string & type_str,
-  const double base_link_z)
+  const std::string & side_key_str, const double base_link_z)
 {
-  marker.ns = type_str + "_projection_to_bound";
-  for (const auto side_key : g_side_keys) {
-    const auto to_geom = [base_link_z](const auto & pt) { return to_msg(pt.to_3d(base_link_z)); };
-    for (const auto & pt : projections_to_bound[side_key]) {
-      marker.color = color::blue();
-      marker.points.push_back(to_geom(pt.pt_on_ego));
-      marker.points.push_back(to_geom(pt.pt_on_bound));
-      marker.points.push_back(to_geom(pt.nearest_bound_seg.first));
-      marker.points.push_back(to_geom(pt.nearest_bound_seg.second));
-    }
+  marker.ns = type_str + "_projection_to_bound_" + side_key_str;
+  const auto to_geom = [base_link_z](const auto & pt) { return to_msg(pt.to_3d(base_link_z)); };
+  for (const auto & pt : projections_to_bound) {
+    marker.color = color::blue();
+    marker.points.push_back(to_geom(pt.pt_on_ego));
+    marker.points.push_back(to_geom(pt.pt_on_bound));
+    marker.points.push_back(to_geom(pt.nearest_bound_seg.first));
+    marker.points.push_back(to_geom(pt.nearest_bound_seg.second));
   }
   return marker;
 }
 
 Marker create_departure_points_marker(
   const DeparturePoints & departure_points, const rclcpp::Time & curr_time,
-  const double base_link_z)
+  const std::string & side_key_str, const double base_link_z)
 {
   int32_t id{0};
   auto marker = create_default_marker(
-    "map", curr_time, "departure_points", ++id, visualization_msgs::msg::Marker::SPHERE_LIST,
-    create_marker_scale(0.25, 0.25, 1.0), color::yellow());
+    "map", curr_time, "departure_points_" + side_key_str, ++id,
+    visualization_msgs::msg::Marker::SPHERE_LIST, create_marker_scale(0.25, 0.25, 1.0),
+    color::yellow());
   for (const auto & pt : departure_points) {
     marker.points.push_back(pt.to_geom_pt(base_link_z));
   }
@@ -224,33 +223,51 @@ MarkerArray create_debug_marker_array(
   const auto color = color::green();
   const auto m_scale = create_marker_scale(0.05, 0, 0);
 
+  const auto get_type_str = [&](const AbnormalityType type) {
+    auto type_str = std::string(magic_enum::enum_name(type));
+    std::transform(type_str.begin(), type_str.end(), type_str.begin(), [](unsigned char c) {
+      return std::tolower(c);
+    });
+    return type_str;
+  };
+
+  const auto get_side_key_str = [&](const SideKey side_key) {
+    auto side_key_str = std::string(magic_enum::enum_name(side_key));
+    std::transform(
+      side_key_str.begin(), side_key_str.end(), side_key_str.begin(),
+      [](unsigned char c) { return std::tolower(c); });
+    return side_key_str;
+  };
+
   MarkerArray marker_array;
 
   auto marker = create_default_marker("map", curr_time, "", 0, line_list, m_scale, color);
 
-  marker_array.markers.push_back(
-    create_departure_points_marker(output.departure_points, curr_time, base_link_z));
   marker_array.markers.push_back(create_boundary_segments_marker(
     output.abnormalities_data.boundary_segments, marker, "boundary_segments", base_link_z));
   marker_array.markers.push_back(
     create_departure_interval_marker(output.departure_intervals, marker, "departure interval"));
   for (const auto type : node_param.bdc_param.abnormality_types_to_compensate) {
-    const auto type_str = std::invoke([&]() {
-      auto type_str = std::string(magic_enum::enum_name(type));
-      std::transform(type_str.begin(), type_str.end(), type_str.begin(), [](unsigned char c) {
-        return std::tolower(c);
-      });
-      return type_str;
-    });
-
+    const auto type_str = get_type_str(type);
     marker_array.markers.push_back(create_footprint_marker(
       output.abnormalities_data.footprints[type], curr_time, type_str, base_link_z, color::aqua()));
-    marker_array.markers.push_back(create_projections_to_bound_marker(
-      output.abnormalities_data.projections_to_bound[type], marker, type_str, base_link_z));
+
+    for (const auto side_key : g_side_keys) {
+      const auto side_key_str = get_side_key_str(side_key);
+      marker_array.markers.push_back(create_projections_to_bound_marker(
+        output.abnormalities_data.projections_to_bound[type][side_key], marker, type_str,
+        side_key_str, base_link_z));
+    }
   }
 
-  marker_array.markers.push_back(create_projections_to_bound_marker(
-    output.closest_projections_to_bound, marker, "closest", base_link_z));
+  for (const auto side_key : g_side_keys) {
+    const auto side_key_str = get_side_key_str(side_key);
+
+    marker_array.markers.push_back(create_departure_points_marker(
+      output.departure_points[side_key], curr_time, side_key_str, base_link_z));
+    marker_array.markers.push_back(create_projections_to_bound_marker(
+      output.closest_projections_to_bound[side_key], marker, "closest", side_key_str, base_link_z));
+  }
   autoware_utils::append_marker_array(
     create_slow_down_interval(output.slow_down_intervals, curr_time), &marker_array);
 

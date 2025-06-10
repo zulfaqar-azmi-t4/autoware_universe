@@ -14,72 +14,18 @@
 
 #include "utils.hpp"
 
-#include "fmt/format.h"
-
 #include <autoware/trajectory/utils/closest.hpp>
 #include <magic_enum.hpp>
 
 #include <algorithm>
-#include <limits>
-#include <string>
-#include <utility>
 #include <vector>
 
 namespace autoware::motion_velocity_planner::utils
 {
-DeparturePoint create_departure_point(
-  const Point2d & candidate_point, const DepartureType & departure_type,
-  const NodeParam & node_param, const SideKey direction)
-{
-  DeparturePoint point;
-  point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
-  point.point = candidate_point;
-  point.direction = direction;
-  point.th_dist_hysteresis = node_param.th_dist_hysteresis_m;
-  point.type = departure_type;
-  return point;
-}
-
-DeparturePoints get_departure_points(
-  const ClosestProjectionsToBound & projections_to_bound, const NodeParam & node_param,
-  const VehicleInfo & vehicle_info, const double ego_dist_from_traj_front)
-{
-  DeparturePoints departure_points;
-  Side<DeparturePoints> dpts;
-  for (const auto direction : g_side_keys) {
-    for (const auto & projection_to_bound : projections_to_bound[direction]) {
-      DeparturePoint point;
-      point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
-      point.lat_dist_to_bound = projection_to_bound.lat_dist;
-      point.type = projection_to_bound.departure_type;
-      point.point = projection_to_bound.pt_on_bound;
-      point.direction = direction;
-      point.th_dist_hysteresis = node_param.th_dist_hysteresis_m;
-      point.dist_on_traj = projection_to_bound.lon_dist_on_ref_traj;
-      point.idx_from_ego_traj = projection_to_bound.ego_sides_idx;
-      point.dist_from_ego =
-        point.dist_on_traj - (ego_dist_from_traj_front + vehicle_info.max_longitudinal_offset_m);
-      point.can_be_removed = point.dist_from_ego < std::numeric_limits<double>::epsilon() ||
-                             point.type == DepartureType::NONE ||
-                             point.type == DepartureType::UNKNOWN;
-
-      if (point.can_be_removed) {
-        continue;
-      }
-
-      dpts[point.direction].push_back(point);
-    }
-
-    std::sort(dpts[direction].begin(), dpts[direction].end());
-    utils::erase_after_first_match(dpts[direction]);
-    std::move(dpts[direction].begin(), dpts[direction].end(), std::back_inserter(departure_points));
-  }
-  return departure_points;
-}
-
 DepartureIntervals init_departure_intervals(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const DeparturePoints & departure_points, const VehicleInfo & vehicle_info)
+  const DeparturePoints & departure_points, const double max_longitudinal_offset_m,
+  const SideKey side_key)
 {
   DepartureIntervals departure_intervals;
   size_t idx = 0;
@@ -88,17 +34,22 @@ DepartureIntervals init_departure_intervals(
     interval.start = aw_ref_traj.compute(departure_points[idx].dist_on_traj);
     interval.start_dist_on_traj = departure_points[idx].dist_on_traj;
     interval.candidates.push_back(departure_points[idx]);
-    interval.direction = departure_points[idx].direction;
+    interval.side_key = side_key;
 
     size_t idx_end = idx + 1;
-    while (idx_end < departure_points.size() &&
-           departure_points[idx_end].direction == interval.direction &&
-           departure_points[idx_end].type == DepartureType::NEAR_BOUNDARY) {
-      const auto & prev = departure_points[idx_end - 1];
+
+    while (idx_end < departure_points.size()) {
       const auto & curr = departure_points[idx_end];
+      if (
+        curr.type != DepartureType::NEAR_BOUNDARY &&
+        curr.type != DepartureType::APPROACHING_DEPARTURE) {
+        break;
+      }
+
+      const auto & prev = departure_points[idx_end - 1];
       const auto diff = std::abs(curr.dist_on_traj - prev.dist_on_traj);
 
-      if (diff < vehicle_info.max_longitudinal_offset_m && curr.direction == prev.direction) {
+      if (diff < max_longitudinal_offset_m) {
         interval.candidates.push_back(curr);
         ++idx_end;
       } else {
@@ -114,25 +65,38 @@ DepartureIntervals init_departure_intervals(
   return departure_intervals;
 }
 
-void update_departure_intervals(
-  DepartureIntervals & departure_intervals, DeparturePoints & departure_points,
-  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const VehicleInfo vehicle_info,
+DepartureIntervals init_departure_intervals(
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
+  const Side<DeparturePoints> & departure_points, const double max_longitudinal_offset_m)
+{
+  DepartureIntervals departure_intervals;
+  for (const auto side_key : g_side_keys) {
+    auto dpt_pts = init_departure_intervals(
+      aw_ref_traj, departure_points[side_key], max_longitudinal_offset_m, side_key);
+    std::move(dpt_pts.begin(), dpt_pts.end(), std::back_inserter(departure_intervals));
+  }
+  return departure_intervals;
+}
+
+void update_departure_intervals_poses(
+  DepartureIntervals & departure_intervals,
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
   const TrajectoryPoint & ref_traj_fr_pt, const double ego_dist_from_traj_front)
 {
-  for (auto & departure_interval_mut : departure_intervals) {
+  for (auto & dpt_pt : departure_intervals) {
     // update start end pose
-    if (!departure_interval_mut.start_at_traj_front) {
-      departure_interval_mut.start_dist_on_traj =
-        trajectory::closest(aw_ref_traj, departure_interval_mut.start);
+    if (!dpt_pt.start_at_traj_front) {
+      dpt_pt.start_dist_on_traj = trajectory::closest(aw_ref_traj, dpt_pt.start);
       constexpr auto th_dist_from_start{1.0};
-      departure_interval_mut.start_at_traj_front =
-        departure_interval_mut.start_dist_on_traj < th_dist_from_start;
-    } else {
-      departure_interval_mut.start_dist_on_traj = 0.0;
-      departure_interval_mut.start = ref_traj_fr_pt;
+      dpt_pt.start_at_traj_front = dpt_pt.start_dist_on_traj < th_dist_from_start;
     }
-    departure_interval_mut.end_dist_on_traj =
-      trajectory::closest(aw_ref_traj, departure_interval_mut.end);
+
+    if (dpt_pt.start_at_traj_front) {
+      dpt_pt.start_dist_on_traj = 0.0;
+      dpt_pt.start = ref_traj_fr_pt;
+    }
+
+    dpt_pt.end_dist_on_traj = trajectory::closest(aw_ref_traj, dpt_pt.end);
   }
 
   // remove if ego already pass the end pose.
@@ -148,24 +112,60 @@ void update_departure_intervals(
                  interval.end.pose.position, point_of_curr_traj.pose.position) > 0.25;
       }),
     departure_intervals.end());
+}
 
+void check_departure_points_between_intervals(
+  DepartureIntervals & departure_intervals, DeparturePoints & departure_points,
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
+  const double max_longitudinal_offset_m, const SideKey side_key)
+{
   // check if departure point is in between any intervals.
   // if close to end pose, update end pose.
-  for (auto & departure_interval_mut : departure_intervals) {
-    for (auto & departure_point_mut : departure_points) {
-      if (departure_point_mut.can_be_removed) {
+  for (auto & departure_interval : departure_intervals) {
+    if (departure_interval.side_key != side_key) {
+      continue;
+    }
+
+    for (auto & departure_point : departure_points) {
+      if (departure_point.type == DepartureType::CRITICAL_DEPARTURE) {
+        continue;
+      }
+
+      if (departure_point.can_be_removed) {
         continue;
       }
 
       if (
-        departure_interval_mut.end_dist_on_traj <
-          departure_point_mut.dist_on_traj + vehicle_info.max_longitudinal_offset_m &&
-        departure_interval_mut.direction == departure_point_mut.direction) {
-        // althought name is point on prev traj, we already update them earlier
-        departure_interval_mut.end = aw_ref_traj.compute(departure_point_mut.dist_on_traj);
-        departure_point_mut.can_be_removed = true;
+        departure_point.dist_on_traj >= departure_interval.start_dist_on_traj &&
+        departure_point.dist_on_traj <= departure_interval.end_dist_on_traj) {
+        departure_point.can_be_removed = true;
+        continue;
+      }
+
+      if (
+        departure_interval.end_dist_on_traj - departure_point.dist_on_traj <=
+        max_longitudinal_offset_m) {
+        departure_interval.end = aw_ref_traj.compute(departure_point.dist_on_traj);
+        departure_interval.end_dist_on_traj = departure_point.dist_on_traj;
+        departure_point.can_be_removed = true;
       }
     }
+  }
+}
+
+void update_departure_intervals(
+  DepartureIntervals & departure_intervals, Side<DeparturePoints> & departure_points,
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
+  const double max_longitudinal_offset_m, const TrajectoryPoint & ref_traj_fr_pt,
+  const double ego_dist_from_traj_front)
+{
+  update_departure_intervals_poses(
+    departure_intervals, aw_ref_traj, ref_traj_fr_pt, ego_dist_from_traj_front);
+
+  for (const auto side_key : g_side_keys) {
+    check_departure_points_between_intervals(
+      departure_intervals, departure_points[side_key], aw_ref_traj, max_longitudinal_offset_m,
+      side_key);
   }
 
   if (!departure_intervals.empty()) {
@@ -175,7 +175,7 @@ void update_departure_intervals(
     for (size_t i = 1; i < departure_intervals.size(); ++i) {
       auto & next_interval_mut = departure_intervals[i];
       auto & curr_interval_mut = merged.back();
-      const auto is_same_direction = curr_interval_mut.direction == next_interval_mut.direction;
+      const auto is_same_direction = curr_interval_mut.side_key == next_interval_mut.side_key;
       if (!is_same_direction) {
         merged.push_back(next_interval_mut);
       }
@@ -214,19 +214,54 @@ double calc_braking_distance(
          dist_error;
 }
 
-void erase_after_first_match(DeparturePoints & departure_points)
+void update_critical_departure_points(
+  const Side<DeparturePoints> & departure_points,
+  CriticalDeparturePoints & critical_departure_points,
+  const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double th_dist_hysteresis_m,
+  const double offset_from_ego)
 {
-  const auto find_cri_dpt = [](const DeparturePoint & point) {
-    return point.type == DepartureType::CRITICAL_DEPARTURE;
-  };
-
-  auto crit_dpt_finder =
-    std::find_if(departure_points.begin(), departure_points.end(), find_cri_dpt);
-
-  if (
-    crit_dpt_finder != departure_points.end() &&
-    std::next(crit_dpt_finder) != departure_points.end()) {
-    departure_points.erase(std::next(crit_dpt_finder), departure_points.end());
+  for (auto & crit_dpt_pt_mut : critical_departure_points) {
+    crit_dpt_pt_mut.dist_on_traj =
+      trajectory::closest(aw_ref_traj, crit_dpt_pt_mut.point_on_prev_traj);
+    crit_dpt_pt_mut.dist_from_ego = crit_dpt_pt_mut.dist_on_traj - offset_from_ego;
+    const auto updated_point = aw_ref_traj.compute(crit_dpt_pt_mut.dist_on_traj);
+    crit_dpt_pt_mut.can_be_removed =
+      autoware_utils::calc_distance2d(
+        updated_point.pose.position, crit_dpt_pt_mut.point_on_prev_traj.pose.position) >
+      th_dist_hysteresis_m;
   }
+  utils::erase_if(
+    critical_departure_points, [](const DeparturePoint & pt) { return pt.can_be_removed; });
+
+  for (const auto side_key : g_side_keys) {
+    for (const auto & dpt_pt : departure_points[side_key]) {
+      if (dpt_pt.type != DepartureType::CRITICAL_DEPARTURE) {
+        continue;
+      }
+
+      if (dpt_pt.can_ignore()) {
+        continue;
+      }
+
+      if (dpt_pt.can_be_removed) {
+        continue;
+      }
+
+      const auto is_near_curr_pts = std::any_of(
+        critical_departure_points.begin(), critical_departure_points.end(),
+        [&](const CriticalDeparturePoint & crit_pt) {
+          return std::abs(dpt_pt.dist_on_traj - crit_pt.dist_on_traj) < th_dist_hysteresis_m;
+        });
+
+      if (is_near_curr_pts) {
+        continue;
+      }
+
+      CriticalDeparturePoint crit_pt(dpt_pt);
+      crit_pt.point_on_prev_traj = aw_ref_traj.compute(crit_pt.dist_on_traj);
+      critical_departure_points.push_back(crit_pt);
+    }
+  }
+  std::sort(critical_departure_points.begin(), critical_departure_points.end());
 }
 }  // namespace autoware::motion_velocity_planner::utils

@@ -126,6 +126,19 @@ public:
     const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
     const Abnormalities<ProjectionsToBound> & projections_to_bound);
 
+  /**
+   * @brief Generate departure points for both sides of the ego vehicle based on projections to road
+   * boundaries.
+   *
+   * @param projections_to_bound     Closest boundary projections from the ego to road edges, for
+   * each side.
+   * @param offset_from_ego Distance offset from the ego base link.
+   * @return A `Side`-keyed container of filtered and structured `DeparturePoint`s for both left and
+   * right sides.
+   */
+  Side<DeparturePoints> get_departure_points(
+    const ClosestProjectionsToBound & projections_to_bound, const double offset_from_ego);
+
 private:
   Param param_;
   lanelet::LaneletMapPtr lanelet_map_ptr_;

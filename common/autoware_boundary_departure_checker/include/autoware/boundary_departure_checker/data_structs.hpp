@@ -155,7 +155,6 @@ struct DeparturePoint
   std::string uuid;
   DepartureType type = DepartureType::NONE;
   Point2d point;
-  SideKey direction = SideKey::LEFT;
   double th_dist_hysteresis{2.0};
   double lat_dist_to_bound{1000.0};
   double dist_on_traj{1000.0};
@@ -171,12 +170,18 @@ struct DeparturePoint
   [[nodiscard]] bool is_nearby(const Point2d & candidate_point) const
   {
     const auto diff = boost::geometry::distance(point, candidate_point);
-    return type != DepartureType::CRITICAL_DEPARTURE && diff < th_dist_hysteresis;
+    return diff < th_dist_hysteresis;
   }
 
   [[nodiscard]] Point to_geom_pt(const double z = 0.0) const
   {
     return autoware_utils::to_msg(point.to_3d(z));
+  }
+
+  [[nodiscard]] bool can_ignore() const
+  {
+    return dist_from_ego < std::numeric_limits<double>::epsilon() || type == DepartureType::NONE ||
+           type == DepartureType::UNKNOWN;
   }
 
   bool operator<(const DeparturePoint & other) const { return dist_on_traj < other.dist_on_traj; }
@@ -192,7 +197,6 @@ struct CriticalDeparturePoint : DeparturePoint
     uuid = base.uuid;
     type = base.type;
     point = base.point;
-    direction = base.direction;
     th_dist_hysteresis = base.th_dist_hysteresis;
     lat_dist_to_bound = base.lat_dist_to_bound;
     dist_on_traj = base.dist_on_traj;
@@ -208,7 +212,7 @@ struct DepartureInterval
 {
   TrajectoryPoint start;
   TrajectoryPoint end;
-  SideKey direction;
+  SideKey side_key;
   double start_dist_on_traj;
   double end_dist_on_traj;
 

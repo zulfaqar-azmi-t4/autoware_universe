@@ -99,6 +99,7 @@ struct Param
 {
   TriggerThreshold th_trigger;
   int th_max_lateral_query_num{5};
+  double th_dist_hysteresis_m{1.0};
   double footprint_extra_margin{0.0};
   AbnormalitiesConfigs abnormality_configs;
   std::vector<DepartureType> departure_types;

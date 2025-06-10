@@ -50,14 +50,11 @@ private:
   tl::expected<Output, std::string> plan(
     const PoseWithCovariance & pose_with_covariance, const TrajectoryPoints & ref_traj,
     const TrajectoryPoints & ego_pred_traj,
-    const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double dist_to_ego,
+    const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double ego_dist_on_traj,
     const VehicleInfo & vehicle_info);
   [[nodiscard]] bool is_data_ready(std::unordered_map<std::string, double> & processing_times);
   [[nodiscard]] bool is_data_valid() const;
   [[nodiscard]] bool is_data_timeout(const Odometry & odom) const;
-
-  static bool found_nearby_points(
-    const Point2d & candidate_point, const DeparturePoints & curr_departure_points);
 
   VelocityPlanningResult plan_slow_down_intervals(
     [[maybe_unused]] const TrajectoryPoints & raw_trajectory_points,

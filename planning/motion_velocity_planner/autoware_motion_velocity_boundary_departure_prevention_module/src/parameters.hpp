@@ -44,7 +44,7 @@ struct Output
   trajectory::Trajectory<TrajectoryPoint> aw_ego_traj;
 
   DepartureIntervals departure_intervals;
-  DeparturePoints departure_points;
+  Side<DeparturePoints> departure_points;
   CriticalDeparturePoints critical_departure_points;
   bool is_critical_departing{false};
 };
@@ -55,7 +55,6 @@ struct NodeParam
   BDCParam bdc_param;
 
   double th_departure_point_lifetime_s{1.0};
-  double th_dist_hysteresis_m{2.0};
 
   PredictedPathFootprint pred_path_footprint;
 
@@ -66,6 +65,8 @@ struct NodeParam
     th_data_timeout_s = get_or_declare_parameter<double>(node, module_name + "th_data_timeout_s");
     bdc_param.boundary_types_to_detect = get_or_declare_parameter<std::vector<std::string>>(
       node, module_name + "boundary_types_to_detect");
+    bdc_param.th_dist_hysteresis_m =
+      get_or_declare_parameter<double>(node, module_name + "th_dist_hysteresis_m");
 
     bdc_param.th_max_lateral_query_num =
       get_or_declare_parameter<int>(node, module_name + "th_max_lateral_query_num");

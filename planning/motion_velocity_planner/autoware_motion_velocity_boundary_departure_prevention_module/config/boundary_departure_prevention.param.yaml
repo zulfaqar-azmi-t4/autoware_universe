@@ -4,6 +4,7 @@
       th_data_timeout_s: 1.0
       boundary_types_to_detect: [road_border]
       th_max_lateral_query_num: 5
+      th_dist_hysteresis_m: 1.0
 
       abnormality:
         normal:
