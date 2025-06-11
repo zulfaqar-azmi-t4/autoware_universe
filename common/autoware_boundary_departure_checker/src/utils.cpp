@@ -296,7 +296,7 @@ TrajectoryPoints resampleTrajectory(const Trajectory & trajectory, const double 
   return resampled;
 }
 
-std::vector<std::pair<LinearRing2d, Pose>> createVehicleFootprints(
+std::vector<LinearRing2d> createVehicleFootprints(
   const geometry_msgs::msg::PoseWithCovariance & covariance, const TrajectoryPoints & trajectory,
   const autoware::vehicle_info_utils::VehicleInfo & vehicle_info,
   const double footprint_margin_scale)
@@ -308,14 +308,11 @@ std::vector<std::pair<LinearRing2d, Pose>> createVehicleFootprints(
   const auto local_vehicle_footprint = vehicle_info.createFootprint(margin.lat_m, margin.lon_m);
 
   // Create vehicle footprint on each TrajectoryPoint
-  std::vector<std::pair<LinearRing2d, Pose>> vehicle_footprints;
-  std::transform(
-    trajectory.begin(), trajectory.end(), std::back_inserter(vehicle_footprints),
-    [&](const auto & p) -> std::pair<LinearRing2d, Pose> {
-      using autoware_utils::transform_vector;
-      using autoware_utils::pose2transform;
-      return {transform_vector(local_vehicle_footprint, pose2transform(p.pose)), p.pose};
-    });
+  std::vector<LinearRing2d> vehicle_footprints;
+  for (const auto & p : trajectory) {
+    vehicle_footprints.push_back(autoware_utils::transform_vector(
+      local_vehicle_footprint, autoware_utils::pose2transform(p.pose)));
+  }
 
   return vehicle_footprints;
 }

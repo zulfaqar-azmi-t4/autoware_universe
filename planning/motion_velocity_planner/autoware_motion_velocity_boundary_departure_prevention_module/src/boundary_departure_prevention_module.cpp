@@ -218,10 +218,6 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
 
   auto result_opt = plan_slow_down_intervals(raw_trajectory_points, planner_data);
 
-  if (!result_opt) {
-    RCLCPP_DEBUG(rclcpp::get_logger(get_module_name()), "%s", result_opt.error().c_str());
-  }
-
   processing_time_publisher_->publish(std::invoke([&]() {
     autoware_internal_debug_msgs::msg::Float64Stamped msg;
     msg.stamp = clock_ptr_->now();
@@ -229,6 +225,10 @@ VelocityPlanningResult BoundaryDeparturePreventionModule::plan(
     return msg;
   }));
 
+  if (!result_opt) {
+    RCLCPP_DEBUG(rclcpp::get_logger(get_module_name()), "%s", result_opt.error().c_str());
+    return {};
+  }
   return *result_opt;
 }
 

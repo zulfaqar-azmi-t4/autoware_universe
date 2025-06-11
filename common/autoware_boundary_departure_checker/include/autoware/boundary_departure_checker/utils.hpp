@@ -53,7 +53,7 @@ TrajectoryPoints resampleTrajectory(const Trajectory & trajectory, const double 
  * @param footprint_margin_scale scale of the footprint margin
  * @return vehicle footprints along the trajectory
  */
-std::vector<std::pair<LinearRing2d, Pose>> createVehicleFootprints(
+std::vector<LinearRing2d> createVehicleFootprints(
   const geometry_msgs::msg::PoseWithCovariance & covariance, const TrajectoryPoints & trajectory,
   const VehicleInfo & vehicle_info, const double footprint_margin_scale);
 

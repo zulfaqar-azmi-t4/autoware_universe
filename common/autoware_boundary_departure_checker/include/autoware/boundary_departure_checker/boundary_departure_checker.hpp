@@ -155,6 +155,10 @@ private:
     const lanelet::LaneletMap & lanelet_map, const geometry_msgs::msg::Point & ego_point,
     const double max_search_length, const std::vector<std::string> & boundary_types_to_detect);
 
+  bool willCrossBoundary(
+    const std::vector<LinearRing2d> & vehicle_footprints,
+    const SegmentRtree & uncrossable_segments) const;
+
   autoware_utils::Polygon2d toPolygon2D(const lanelet::BasicPolygon2d & poly) const;
 
   mutable std::shared_ptr<autoware_utils::TimeKeeper> time_keeper_;

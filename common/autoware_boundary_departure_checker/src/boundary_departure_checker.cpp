@@ -44,6 +44,12 @@ using TrajectoryPoints = std::vector<TrajectoryPoint>;
 using autoware_utils::Point2d;
 using geometry_msgs::msg::Point;
 
+double calcBrakingDistance(
+  const double abs_velocity, const double max_deceleration, const double delay_time)
+{
+  return (abs_velocity * abs_velocity) / (2.0 * max_deceleration) + delay_time * abs_velocity;
+}
+
 bool isInAnyLane(const lanelet::ConstLanelets & candidate_lanelets, const Point2d & point)
 {
   return std::any_of(
@@ -72,6 +78,62 @@ BoundaryDepartureChecker::BoundaryDepartureChecker(
 
   uncrossable_boundaries_rtree_ptr_ =
     std::make_unique<UncrossableBoundRTree>(*try_uncrossable_boundaries_rtree);
+}
+
+Output BoundaryDepartureChecker::update(const Input & input)
+{
+  Output output{};
+
+  autoware_utils::StopWatch<std::chrono::milliseconds> stop_watch;
+
+  {
+    constexpr double min_velocity = 0.01;
+    const auto & raw_abs_velocity = std::abs(input.current_odom->twist.twist.linear.x);
+    const auto abs_velocity = raw_abs_velocity < min_velocity ? 0.0 : raw_abs_velocity;
+
+    const auto braking_distance = std::max(
+      param_.min_braking_distance,
+      calcBrakingDistance(abs_velocity, param_.max_deceleration, param_.delay_time));
+
+    output.resampled_trajectory = utils::cutTrajectory(
+      utils::resampleTrajectory(*input.predicted_trajectory, param_.resample_interval),
+      braking_distance);
+    output.processing_time_map["resampleTrajectory"] = stop_watch.toc(true);
+  }
+  output.vehicle_footprints = utils::createVehicleFootprints(
+    input.current_odom->pose, output.resampled_trajectory, *vehicle_info_ptr_,
+    param_.footprint_margin_scale);
+  output.processing_time_map["createVehicleFootprints"] = stop_watch.toc(true);
+
+  output.vehicle_passing_areas = utils::createVehiclePassingAreas(output.vehicle_footprints);
+  output.processing_time_map["createVehiclePassingAreas"] = stop_watch.toc(true);
+
+  const auto candidate_road_lanelets =
+    utils::getCandidateLanelets(input.route_lanelets, output.vehicle_footprints);
+  const auto candidate_shoulder_lanelets =
+    utils::getCandidateLanelets(input.shoulder_lanelets, output.vehicle_footprints);
+  output.candidate_lanelets = candidate_road_lanelets;
+  output.candidate_lanelets.insert(
+    output.candidate_lanelets.end(), candidate_shoulder_lanelets.begin(),
+    candidate_shoulder_lanelets.end());
+
+  output.processing_time_map["getCandidateLanelets"] = stop_watch.toc(true);
+
+  output.will_leave_lane = willLeaveLane(output.candidate_lanelets, output.vehicle_footprints);
+  output.processing_time_map["willLeaveLane"] = stop_watch.toc(true);
+
+  output.is_out_of_lane = isOutOfLane(output.candidate_lanelets, output.vehicle_footprints.front());
+  output.processing_time_map["isOutOfLane"] = stop_watch.toc(true);
+
+  const double max_search_length_for_boundaries =
+    utils::calcMaxSearchLengthForBoundaries(*input.predicted_trajectory, *vehicle_info_ptr_);
+  const auto uncrossable_boundaries = extractUncrossableBoundaries(
+    *input.lanelet_map, input.predicted_trajectory->points.front().pose.position,
+    max_search_length_for_boundaries, input.boundary_types_to_detect);
+  output.will_cross_boundary = willCrossBoundary(output.vehicle_footprints, uncrossable_boundaries);
+  output.processing_time_map["willCrossBoundary"] = stop_watch.toc(true);
+
+  return output;
 }
 
 tl::expected<AbnormalitiesData, std::string> BoundaryDepartureChecker::get_abnormalities_data(
@@ -568,6 +630,23 @@ SegmentRtree BoundaryDepartureChecker::extractUncrossableBoundaries(
     }
   }
   return uncrossable_segments_in_range;
+}
+
+bool BoundaryDepartureChecker::willCrossBoundary(
+  const std::vector<LinearRing2d> & vehicle_footprints,
+  const SegmentRtree & uncrossable_segments) const
+{
+  autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
+
+  for (const auto & footprint : vehicle_footprints) {
+    std::vector<Segment2d> intersection_result;
+    uncrossable_segments.query(
+      boost::geometry::index::intersects(footprint), std::back_inserter(intersection_result));
+    if (!intersection_result.empty()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 autoware_utils::Polygon2d BoundaryDepartureChecker::toPolygon2D(
