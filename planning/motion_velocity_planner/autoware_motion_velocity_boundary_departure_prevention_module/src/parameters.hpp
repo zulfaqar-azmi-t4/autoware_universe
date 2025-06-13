@@ -52,9 +52,9 @@ struct Output
 struct NodeParam
 {
   double th_data_timeout_s{1.0};
+  double th_pt_shift_dist_m{1.0};
+  double th_pt_shift_angle_rad{autoware_utils_math::deg2rad(2.0)};
   BDCParam bdc_param;
-
-  double th_departure_point_lifetime_s{1.0};
 
   PredictedPathFootprint pred_path_footprint;
 
@@ -67,6 +67,10 @@ struct NodeParam
       node, module_name + "boundary_types_to_detect");
     bdc_param.th_dist_hysteresis_m =
       get_or_declare_parameter<double>(node, module_name + "th_dist_hysteresis_m");
+    th_pt_shift_angle_rad =
+      get_or_declare_parameter<double>(node, module_name + "th_pt_shift.dist_m");
+    th_pt_shift_angle_rad = autoware_utils_math::deg2rad(
+      get_or_declare_parameter<double>(node, module_name + "th_pt_shift.angle_deg"));
 
     bdc_param.th_max_lateral_query_num =
       get_or_declare_parameter<int>(node, module_name + "th_max_lateral_query_num");
@@ -161,8 +165,15 @@ struct NodeParam
 
     const std::string ns_th_trigger{ns_slow_down + "th_trigger."};
 
-    bdc_param.th_trigger.max_slow_down_vel_mps = autoware_utils_math::kmph2mps(
-      get_or_declare_parameter<double>(node, ns_th_trigger + "max_slow_down_vel_kmph"));
+    bdc_param.th_trigger.th_vel_mps = std::invoke([&]() {
+      const std::string ns_vel{ns_th_trigger + "th_vel_kmph."};
+      TriggerThreshold::MinMax th_vel_mps;
+      th_vel_mps.min =
+        autoware_utils_math::kmph2mps(get_or_declare_parameter<double>(node, ns_vel + "min"));
+      th_vel_mps.max =
+        autoware_utils_math::kmph2mps(get_or_declare_parameter<double>(node, ns_vel + "max"));
+      return th_vel_mps;
+    });
 
     bdc_param.th_trigger.th_acc_mps2 = std::invoke([&]() {
       const std::string ns_acc{ns_th_trigger + "th_acc_mps2."};

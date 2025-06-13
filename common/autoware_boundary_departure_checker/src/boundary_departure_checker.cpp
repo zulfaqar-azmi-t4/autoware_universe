@@ -27,6 +27,7 @@
 
 #include <boost/geometry.hpp>
 
+#include <fmt/format.h>
 #include <lanelet2_core/geometry/Polygon.h>
 #include <tf2/utils.h>
 
@@ -286,9 +287,12 @@ BoundaryDepartureChecker::get_closest_projections_to_boundaries_side(
   };
 
   const auto is_close_to_bound = [&](const double lat_dist, const SideKey side_key) {
-    return !is_on_bound(lat_dist, side_key) &&
-           lat_dist <= param_ptr_->th_trigger.th_dist_to_boundary_m[side_key].max;
+    return lat_dist <= param_ptr_->th_trigger.th_dist_to_boundary_m[side_key].max;
   };
+
+  fmt::print(
+    "projectio to bound size {}\n",
+    projections_to_bound[abnormality_to_check.front()][side_key].size());
 
   const auto fp_size = projections_to_bound[abnormality_to_check.front()][side_key].size();
   min_to_bound.reserve(fp_size);
@@ -303,43 +307,32 @@ BoundaryDepartureChecker::get_closest_projections_to_boundaries_side(
       if (abnormality_type == AbnormalityType::NORMAL && is_on_bound(pt.lat_dist, side_key)) {
         min_pt = std::make_unique<ClosestProjectionToBound>(pt);
         min_pt->departure_type = DepartureType::CRITICAL_DEPARTURE;
-        min_pt->lon_dist_on_ref_traj = utils::calc_dist_on_traj(aw_ref_traj, min_pt->pt_on_ego);
+        min_pt->abnormality_type = abnormality_type;
         break;
       }
 
-      if (!min_pt && is_close_to_bound(pt.lat_dist, side_key)) {
-        min_pt = std::make_unique<ClosestProjectionToBound>(pt);
+      if (!is_close_to_bound(pt.lat_dist, side_key)) {
         continue;
       }
-      if (min_pt && pt.lat_dist < min_pt->lat_dist) {
+
+      if (!min_pt || pt.lat_dist < min_pt->lat_dist) {
         min_pt = std::make_unique<ClosestProjectionToBound>(pt);
-        if (abnormality_type == abnormality_to_check.back()) {
-          min_pt->departure_type = DepartureType::NEAR_BOUNDARY;
-          min_pt->lon_dist_on_ref_traj = utils::calc_dist_on_traj(aw_ref_traj, min_pt->pt_on_ego);
-          break;
-        }
+        min_pt->departure_type = DepartureType::NEAR_BOUNDARY;
+        min_pt->abnormality_type = abnormality_type;
       }
     }
     if (!min_pt) {
       continue;
     }
 
+    if (
+      !min_to_bound.empty() && min_pt->departure_type != DepartureType::CRITICAL_DEPARTURE &&
+      std::abs(min_to_bound.back().lon_dist_on_ref_traj - min_pt->lon_dist_on_ref_traj) < 0.5) {
+      continue;
+    }
+    min_pt->lon_dist_on_ref_traj = utils::calc_dist_on_traj(aw_ref_traj, min_pt->pt_on_ego);
     min_to_bound.push_back(*min_pt);
     if (min_to_bound.back().departure_type == DepartureType::CRITICAL_DEPARTURE) {
-      for (auto itr = std::next(min_to_bound.rbegin()); itr != min_to_bound.rend(); ++itr) {
-        const auto & th_trigger = param_ptr_->th_trigger;
-        const auto v_init = th_trigger.max_slow_down_vel_mps;
-        constexpr auto v_end = 0.0;
-        const auto acc = th_trigger.th_acc_mps2.min;
-        const auto jerk = th_trigger.th_jerk_mps3.min;
-        const auto braking_delay = th_trigger.brake_delay_s;
-        const auto braking_dist =
-          utils::compute_braking_distance(v_init, v_end, acc, jerk, braking_delay);
-        if (braking_dist + itr->lon_dist_on_ref_traj > min_to_bound.back().lon_dist_on_ref_traj) {
-          itr->departure_type = DepartureType::APPROACHING_DEPARTURE;
-        }
-      }
-
       break;
     }
   }
@@ -361,20 +354,41 @@ BoundaryDepartureChecker::get_closest_projections_to_boundaries(
       return tl::make_unexpected(min_to_bound_opt.error());
     }
     min_to_bound[side_key] = *min_to_bound_opt;
+
+    if (min_to_bound[side_key].size() <= 1) {
+      continue;
+    }
+
+    for (auto itr = std::next(min_to_bound[side_key].rbegin());
+         itr != min_to_bound[side_key].rend(); ++itr) {
+      const auto & th_trigger = param_ptr_->th_trigger;
+      const auto v_init = th_trigger.th_vel_mps.min;
+      constexpr auto v_end = 0.0;
+      const auto acc = th_trigger.th_acc_mps2.min;
+      const auto jerk = th_trigger.th_jerk_mps3.max;
+      const auto braking_delay = th_trigger.brake_delay_s;
+      const auto braking_dist =
+        utils::compute_braking_distance(v_init, v_end, acc, jerk, braking_delay);
+      if (
+        min_to_bound[side_key].back().lon_dist_on_ref_traj - itr->lon_dist_on_ref_traj <
+        braking_dist) {
+        itr->departure_type = DepartureType::APPROACHING_DEPARTURE;
+      }
+    }
   }
 
   return min_to_bound;
 }
 
 Side<DeparturePoints> BoundaryDepartureChecker::get_departure_points(
-  const ClosestProjectionsToBound & projections_to_bound)
+  const ClosestProjectionsToBound & projections_to_bound, const double lon_offset_m)
 {
   const auto th_dist_hysteresis_m = param_ptr_->th_dist_hysteresis_m;
 
   Side<DeparturePoints> departure_points;
   for (const auto side_key : g_side_keys) {
-    departure_points[side_key] =
-      utils::get_departure_points(projections_to_bound[side_key], th_dist_hysteresis_m);
+    departure_points[side_key] = utils::get_departure_points(
+      projections_to_bound[side_key], th_dist_hysteresis_m, lon_offset_m);
   }
   return departure_points;
 }
@@ -385,11 +399,11 @@ BoundaryDepartureChecker::build_uncrossable_boundaries_tree(
 {
   autoware_utils::ScopedTimeTrack st(__func__, *time_keeper_);
   if (!lanelet_map_ptr) {
-    return tl::unexpected(std::string("lanelet_map_ptr is null"));
+    return tl::make_unexpected("lanelet_map_ptr is null");
   }
 
   if (!param_ptr_) {
-    return tl::unexpected(std::string("param_ptr is null"));
+    return tl::make_unexpected("param_ptr is null");
   }
 
   return utils::build_uncrossable_boundaries_rtree(

@@ -155,7 +155,7 @@ double compute_braking_distance(
  */
 DeparturePoints get_departure_points(
   const std::vector<ClosestProjectionToBound> & projections_to_bound,
-  const double th_dist_hysteresis_m);
+  const double th_dist_hysteresis_m, const double lon_offset_m);
 
 double calc_dist_on_traj(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const Point2d & point);
@@ -163,9 +163,6 @@ Point2d to_point2d(const Eigen::Matrix<double, 3, 1> & ll_pt);
 
 Segment2d to_segment2d(
   const Eigen::Matrix<double, 3, 1> & ll_pt1, const Eigen::Matrix<double, 3, 1> & ll_pt2);
-
-DepartureType check_departure_type(
-  const double lateral_dist_m, const Param & param, const SideKey side_key);
 
 std::vector<LinearRing2d> create_vehicle_footprints(
   const TrajectoryPoints & trajectory, const VehicleInfo & vehicle_info,

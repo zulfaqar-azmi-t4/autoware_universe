@@ -120,6 +120,49 @@ Marker create_projections_to_bound_marker(
   return marker;
 }
 
+MarkerArray create_projections_type_wall_marker(
+  const std::vector<ClosestProjectionToBound> & projections_to_bound,
+  [[maybe_unused]] const Trajectory & ego_traj, const rclcpp::Time & curr_time,
+  const std::string & side_key_str, const double base_link_z)
+{
+  int32_t id{0};
+  auto marker_near_bound = create_default_marker(
+    "map", curr_time, "departure_type_line_" + side_key_str, ++id,
+    visualization_msgs::msg::Marker::POINTS, create_marker_scale(0.25, 0.25, 1.0), color::green());
+  auto marker_approaching = create_default_marker(
+    "map", curr_time, "departure_type_line_" + side_key_str, ++id,
+    visualization_msgs::msg::Marker::POINTS, create_marker_scale(0.25, 0.25, 1.0), color::yellow());
+  auto marker_critical = create_default_marker(
+    "map", curr_time, "departure_type_line_" + side_key_str, ++id,
+    visualization_msgs::msg::Marker::POINTS, create_marker_scale(0.25, 0.25, 1.0),
+    color::magenta());
+
+  auto marker_others = create_default_marker(
+    "map", curr_time, "departure_type_line_" + side_key_str, ++id,
+    visualization_msgs::msg::Marker::POINTS, create_marker_scale(0.25, 0.25, 1.0), color::white());
+
+  MarkerArray marker_array;
+
+  const auto to_geom = [base_link_z](const auto & pt) { return to_msg(pt.to_3d(base_link_z)); };
+
+  for (const auto & pt : projections_to_bound) {
+    if (pt.departure_type == DepartureType::NEAR_BOUNDARY) {
+      marker_near_bound.points.push_back(to_geom(pt.pt_on_bound));
+    } else if (pt.departure_type == DepartureType::APPROACHING_DEPARTURE) {
+      marker_approaching.points.push_back(to_geom(pt.pt_on_bound));
+    } else if (pt.departure_type == DepartureType::CRITICAL_DEPARTURE) {
+      marker_critical.points.push_back(to_geom(pt.pt_on_bound));
+    } else {
+      marker_others.points.push_back(to_geom(pt.pt_on_ego));
+    }
+  }
+  marker_array.markers.push_back(marker_near_bound);
+  marker_array.markers.push_back(marker_approaching);
+  marker_array.markers.push_back(marker_critical);
+  marker_array.markers.push_back(marker_others);
+  return marker_array;
+}
+
 Marker create_departure_points_marker(
   const DeparturePoints & departure_points, const rclcpp::Time & curr_time,
   const std::string & side_key_str, const double base_link_z)
@@ -214,8 +257,8 @@ Marker create_departure_interval_marker(
 }
 
 MarkerArray create_debug_marker_array(
-  const Output & output, const rclcpp::Clock::SharedPtr & clock_ptr, const double base_link_z,
-  const NodeParam & node_param)
+  const Output & output, const Trajectory & ego_traj, const rclcpp::Clock::SharedPtr & clock_ptr,
+  const double base_link_z, const NodeParam & node_param)
 {
   const auto line_list = visualization_msgs::msg::Marker::LINE_LIST;
   const auto curr_time = clock_ptr->now();
@@ -266,6 +309,11 @@ MarkerArray create_debug_marker_array(
       output.departure_points[side_key], curr_time, side_key_str, base_link_z));
     marker_array.markers.push_back(create_projections_to_bound_marker(
       output.closest_projections_to_bound[side_key], marker, "closest", side_key_str, base_link_z));
+    autoware_utils::append_marker_array(
+      create_projections_type_wall_marker(
+        output.closest_projections_to_bound[side_key], ego_traj, curr_time, side_key_str,
+        base_link_z),
+      &marker_array);
   }
   autoware_utils::append_marker_array(
     create_slow_down_interval(output.slowdown_intervals, curr_time), &marker_array);

@@ -21,6 +21,7 @@
 #include <autoware_utils/geometry/boost_geometry.hpp>
 #include <autoware_utils/geometry/geometry.hpp>
 #include <autoware_utils/geometry/pose_deviation.hpp>
+#include <autoware_utils/math/unit_conversion.hpp>
 #include <autoware_utils/ros/uuid_helper.hpp>
 #include <autoware_utils/system/stop_watch.hpp>
 #include <autoware_utils_geometry/boost_geometry.hpp>
@@ -98,10 +99,9 @@ struct TriggerThreshold
     double min{-1.0};
     double max{-1.0};
   };
-
   double brake_delay_s{1.0};
   double dist_error_m{0.25};
-  double max_slow_down_vel_mps{0.0};
+  MinMax th_vel_mps{autoware_utils_math::kmph2mps(5.0), autoware_utils_math::kmph2mps(30.0)};
   MinMax th_acc_mps2{-1.0, -2.5};
   MinMax th_jerk_mps3{-1.0, -1.5};
   Side<MinMax> th_dist_to_boundary_m{MinMax{0.001, 5.0}, MinMax{0.001, 5.0}};
