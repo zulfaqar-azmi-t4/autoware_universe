@@ -53,21 +53,22 @@ using autoware::boundary_departure_checker::ClosestProjectionToBound;
 using autoware::boundary_departure_checker::DeparturePoint;
 using autoware::boundary_departure_checker::DeparturePoints;
 using autoware::boundary_departure_checker::DepartureType;
+using autoware::boundary_departure_checker::SideKey;
 using autoware::boundary_departure_checker::VehicleInfo;
 
 DeparturePoint create_departure_point(
-  const ClosestProjectionToBound & projection_to_bound, const double th_dist_hysteresis_m)
+  const ClosestProjectionToBound & projection_to_bound, const double th_dist_hysteresis_m,
+  const double lon_offset_m)
 {
   DeparturePoint point;
   point.uuid = autoware_utils::to_hex_string(autoware_utils::generate_uuid());
   point.lat_dist_to_bound = projection_to_bound.lat_dist;
-  point.type = projection_to_bound.departure_type;
+  point.departure_type = projection_to_bound.departure_type;
   point.point = projection_to_bound.pt_on_bound;
   point.th_dist_hysteresis = th_dist_hysteresis_m;
-  point.dist_on_traj = projection_to_bound.lon_dist_on_ref_traj;
+  point.dist_on_traj = projection_to_bound.lon_dist_on_ref_traj - lon_offset_m;
   point.idx_from_ego_traj = projection_to_bound.ego_sides_idx;
-  point.can_be_removed =
-    (point.type == DepartureType::NONE || point.type == DepartureType::UNKNOWN);
+  point.can_be_removed = (point.departure_type == DepartureType::NONE);
   return point;
 }
 }  // namespace
@@ -77,7 +78,7 @@ namespace autoware::boundary_departure_checker::utils
 void erase_after_first_match(DeparturePoints & departure_points)
 {
   const auto find_cri_dpt = [](const DeparturePoint & point) {
-    return point.type == DepartureType::CRITICAL_DEPARTURE;
+    return point.departure_type == DepartureType::CRITICAL_DEPARTURE;
   };
 
   auto crit_dpt_finder =
@@ -92,12 +93,13 @@ void erase_after_first_match(DeparturePoints & departure_points)
 
 DeparturePoints get_departure_points(
   const std::vector<ClosestProjectionToBound> & projections_to_bound,
-  const double th_dist_hysteresis_m)
+  const double th_dist_hysteresis_m, const double lon_offset_m)
 {
   DeparturePoints departure_points;
   departure_points.reserve(projections_to_bound.size());
   for (const auto & projection_to_bound : projections_to_bound) {
-    const auto point = create_departure_point(projection_to_bound, th_dist_hysteresis_m);
+    const auto point =
+      create_departure_point(projection_to_bound, th_dist_hysteresis_m, lon_offset_m);
 
     if (point.can_be_removed) {
       continue;
@@ -530,29 +532,6 @@ UncrossableBoundRTree build_uncrossable_boundaries_rtree(
 {
   return build_uncrossable_boundaries_rtree(lanelet_map.lineStringLayer, boundary_types_to_detect);
 }
-
-DepartureType check_departure_type(
-  const double lateral_dist_m, const Param & param, const SideKey side_key)
-{
-  const auto th_dist_to_boundary_m = param.th_trigger.th_dist_to_boundary_m[side_key];
-
-  // const auto vel_mps = param.th_trigger.max_slow_down_vel_mps;
-  // const auto acc_mps2 = param.th_trigger.th_acc_mps2.max;
-  // const auto jerk_mps3 = param.th_trigger.th_jerk_mps3.max;
-  // const auto braking_delay_s = param.th_trigger.brake_delay_s;
-  // const auto braking_dist = compute_braking_distance(vel_mps, 0.0, acc_mps2, jerk_mps3,
-  // braking_delay_s);
-
-  if (std::abs(lateral_dist_m) < th_dist_to_boundary_m.min) {
-    return DepartureType::CRITICAL_DEPARTURE;
-  }
-
-  if (std::abs(lateral_dist_m) < th_dist_to_boundary_m.max) {
-    return DepartureType::NEAR_BOUNDARY;
-  }
-
-  return DepartureType::NONE;
-};
 
 ProjectionToBound find_closest_segment(
   const Segment2d & ego_side_seg, const Segment2d & ego_rear_seg, const size_t curr_fp_idx,

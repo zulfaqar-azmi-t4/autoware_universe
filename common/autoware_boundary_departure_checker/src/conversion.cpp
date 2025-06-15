@@ -47,4 +47,17 @@ Point to_geom_pt(const Point2d & point, const double z)
 {
   return autoware_utils::to_msg(point.to_3d(z));
 }
+
+Polygon2d to_polygon_2d(const lanelet::BasicPolygon2d & poly)
+{
+  autoware_utils::Polygon2d polygon;
+  auto & outer = polygon.outer();
+
+  outer.reserve(poly.size());
+  for (const auto & p : poly) {
+    outer.emplace_back(p.x(), p.y());
+  }
+  boost::geometry::correct(polygon);
+  return polygon;
+}
 }  // namespace autoware::boundary_departure_checker::utils

@@ -23,7 +23,14 @@
 namespace autoware::motion_velocity_planner::utils
 {
 
-template <typename Container, typename Predicate>
+template <
+  typename Container, typename Predicate,
+  typename = std::enable_if_t<
+    std::is_same_v<
+      Container, std::map<typename Container::key_type, typename Container::mapped_type>> ||
+    std::is_same_v<
+      Container,
+      std::unordered_map<typename Container::key_type, typename Container::mapped_type>>>>
 void erase_if(Container & container, Predicate pred)
 {
   for (auto it = container.begin(); it != container.end();) {
@@ -33,6 +40,13 @@ void erase_if(Container & container, Predicate pred)
       ++it;
     }
   }
+}
+
+template <typename Container, typename Predicate>
+void remove_if(Container & container, Predicate pred)
+{
+  auto remove_itr = std::remove_if(container.begin(), container.end(), pred);
+  container.erase(remove_itr, container.end());
 }
 
 inline geometry_msgs::msg::Point to_geom_pt(const Point2d & point)
@@ -61,17 +75,25 @@ DepartureIntervals init_departure_intervals(
 void update_departure_intervals(
   DepartureIntervals & departure_intervals, Side<DeparturePoints> & departure_points,
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double vehicle_length_m,
-  const TrajectoryPoint & ref_traj_fr_pt, const double ego_dist_from_traj_front);
+  const TrajectoryPoint & ref_traj_fr_pt, const double ego_dist_from_traj_front,
+  const double th_pt_shift_dist_m, const double th_pt_shift_angle_rad);
 
 void update_critical_departure_points(
   const Side<DeparturePoints> & new_departure_points,
   CriticalDeparturePoints & critical_departure_points,
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double th_dist_hysteresis_m,
-  const double offset_from_ego);
+  const double offset_from_ego, const double th_pt_shift_dist_m,
+  const double th_pt_shift_angle_rad);
+
 std::vector<std::tuple<Pose, Pose, double>> get_slow_down_intervals(
   const trajectory::Trajectory<TrajectoryPoint> & ref_traj_pts,
   const DepartureIntervals & departure_intervals,
   const SlowDownInterpolator & slow_down_interpolator, const VehicleInfo & vehicle_info,
-  const BoundarySideWithIdx & boundary_segments, const double ego_dist_on_traj_m);
+  const BoundarySideWithIdx & boundary_segments, const double curr_vel,
+  const double ego_dist_on_traj_m);
+
+std::optional<std::pair<double, double>> is_point_shifted(
+  const Pose & prev_iter_pt, const Pose & curr_iter_pt, const double th_shift_m,
+  const double th_yaw_diff_rad);
 }  // namespace autoware::motion_velocity_planner::utils
 #endif  // UTILS_HPP_

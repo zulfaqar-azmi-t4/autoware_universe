@@ -138,7 +138,7 @@ public:
    * right sides.
    */
   Side<DeparturePoints> get_departure_points(
-    const ClosestProjectionsToBound & projections_to_bound);
+    const ClosestProjectionsToBound & projections_to_bound, const double lon_offset_m);
 
 private:
   Param param_;

@@ -83,5 +83,12 @@ Segment2d to_segment_2d(
  * @return A ROS Point with x, y from the 2D point and the given z.
  */
 Point to_geom_pt(const Point2d & point, const double z = 0.0);
+
+/**
+ * @brief Convert a lanelet2 BasicPolygon2d to boost polygon2d.
+ * @param  Lanelet2 BasicPolygon2d.
+ * @return A Polygon2d with the same point sequence.
+ */
+Polygon2d to_polygon_2d(const lanelet::BasicPolygon2d & poly);
 }  // namespace autoware::boundary_departure_checker::utils
 #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__CONVERSION_HPP_

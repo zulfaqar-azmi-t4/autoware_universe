@@ -52,6 +52,7 @@ private:
   [[nodiscard]] bool is_data_ready(std::unordered_map<std::string, double> & processing_times);
   [[nodiscard]] bool is_data_valid() const;
   [[nodiscard]] bool is_data_timeout(const Odometry & odom) const;
+  [[nodiscard]] bool is_goal_changed(const Pose & new_goal);
 
   // === Internal logic
 
@@ -68,6 +69,7 @@ private:
   std::unique_ptr<SlowDownInterpolator> slow_down_interpolator_ptr_;
   MarkerArray debug_marker_;
   MarkerArray slow_down_wall_marker_;
+  std::unique_ptr<Pose> prev_goal_ptr_;
   static constexpr auto throttle_duration_ms{5000};
 
   Trajectory::ConstSharedPtr ego_pred_traj_ptr_;

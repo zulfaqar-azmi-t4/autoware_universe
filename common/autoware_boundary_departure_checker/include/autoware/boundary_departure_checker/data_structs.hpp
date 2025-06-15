@@ -43,7 +43,6 @@ enum class DepartureType {
   NEAR_BOUNDARY,
   APPROACHING_DEPARTURE,
   CRITICAL_DEPARTURE,
-  UNKNOWN
 };
 
 enum class AbnormalityType { NORMAL, LOCALIZATION, LONGITUDINAL, STEERING };
@@ -120,7 +119,8 @@ struct ProjectionToBound
 struct ClosestProjectionToBound : ProjectionToBound
 {
   double lon_dist_on_ref_traj{std::numeric_limits<double>::max()};
-  DepartureType departure_type = DepartureType::UNKNOWN;
+  DepartureType departure_type = DepartureType::NONE;
+  AbnormalityType abnormality_type = AbnormalityType::NORMAL;
   ClosestProjectionToBound() = default;
   explicit ClosestProjectionToBound(const ProjectionToBound & base)
   {
@@ -132,9 +132,11 @@ struct ClosestProjectionToBound : ProjectionToBound
   }
 
   ClosestProjectionToBound(
-    const ProjectionToBound & base, const double lon_dist,
-    const DepartureType departure_type = DepartureType::NONE)
-  : lon_dist_on_ref_traj(lon_dist), departure_type(departure_type)
+    const ProjectionToBound & base, const double lon_dist, const AbnormalityType abnormality_type,
+    const DepartureType departure_type)
+  : lon_dist_on_ref_traj(lon_dist),
+    departure_type(departure_type),
+    abnormality_type(abnormality_type)
   {
     pt_on_ego = base.pt_on_ego;
     pt_on_bound = base.pt_on_bound;
@@ -154,7 +156,8 @@ using EgoSides = std::vector<EgoSide>;
 struct DeparturePoint
 {
   std::string uuid;
-  DepartureType type = DepartureType::NONE;
+  DepartureType departure_type{DepartureType::NONE};
+  AbnormalityType abnormality_type{AbnormalityType::NORMAL};
   Point2d point;
   double th_dist_hysteresis{2.0};
   double lat_dist_to_bound{1000.0};
@@ -189,7 +192,8 @@ struct CriticalDeparturePoint : DeparturePoint
   explicit CriticalDeparturePoint(const DeparturePoint & base)
   {
     uuid = base.uuid;
-    type = base.type;
+    departure_type = base.departure_type;
+    abnormality_type = base.abnormality_type;
     point = base.point;
     th_dist_hysteresis = base.th_dist_hysteresis;
     lat_dist_to_bound = base.lat_dist_to_bound;

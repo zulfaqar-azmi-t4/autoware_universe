@@ -146,7 +146,7 @@ double compute_braking_distance(
  */
 DeparturePoints get_departure_points(
   const std::vector<ClosestProjectionToBound> & projections_to_bound,
-  const double th_dist_hysteresis_m);
+  const double th_dist_hysteresis_m, const double lon_offset_m);
 
 double calc_dist_on_traj(
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const Point2d & point);

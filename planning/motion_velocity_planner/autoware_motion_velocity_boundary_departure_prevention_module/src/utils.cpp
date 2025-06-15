@@ -18,6 +18,7 @@
 #include <magic_enum.hpp>
 #include <range/v3/algorithm/sort.hpp>
 #include <range/v3/view.hpp>
+#include <tf2/convert.hpp>
 
 #include <algorithm>
 #include <utility>
@@ -43,8 +44,8 @@ DepartureIntervals init_departure_intervals(
     while (idx_end < departure_points.size()) {
       const auto & curr = departure_points[idx_end];
       if (
-        curr.type != DepartureType::NEAR_BOUNDARY &&
-        curr.type != DepartureType::APPROACHING_DEPARTURE) {
+        curr.departure_type != DepartureType::NEAR_BOUNDARY &&
+        curr.departure_type != DepartureType::APPROACHING_DEPARTURE) {
         break;
       }
 
@@ -83,7 +84,8 @@ DepartureIntervals init_departure_intervals(
 void update_departure_intervals_poses(
   DepartureIntervals & departure_intervals,
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj,
-  const TrajectoryPoint & ref_traj_fr_pt, const double ego_dist_from_traj_front)
+  const TrajectoryPoint & ref_traj_fr_pt, const double ego_dist_from_traj_front,
+  const double th_pt_shift_dist_m, const double th_pt_shift_angle_rad)
 {
   for (auto & dpt_pt : departure_intervals) {
     // update start end pose
@@ -102,19 +104,20 @@ void update_departure_intervals_poses(
   }
 
   // remove if ego already pass the end pose.
-  auto remove_itr = std::remove_if(
-    departure_intervals.begin(), departure_intervals.end(),
-    [&](const DepartureInterval & interval) {
-      if (interval.end_dist_on_traj < ego_dist_from_traj_front) {
-        return true;
-      }
-
-      auto point_of_curr_traj = aw_ref_traj.compute(interval.end_dist_on_traj);
-      return autoware_utils::calc_distance2d(
-               interval.end.pose.position, point_of_curr_traj.pose.position) > 0.25;
-    });
-
-  departure_intervals.erase(remove_itr, departure_intervals.end());
+  utils::remove_if(departure_intervals, [&](const DepartureInterval & interval) {
+    if (interval.end_dist_on_traj < ego_dist_from_traj_front) {
+      return true;
+    }
+    auto point_of_curr_traj = aw_ref_traj.compute(interval.end_dist_on_traj);
+    const auto & prev_pose = interval.end.pose;
+    const auto & curr_pose = point_of_curr_traj.pose;
+    if (
+      const auto is_shifted_opt =
+        utils::is_point_shifted(prev_pose, curr_pose, th_pt_shift_dist_m, th_pt_shift_angle_rad)) {
+      return true;
+    }
+    return false;
+  });
 }
 
 void check_departure_points_between_intervals(
@@ -130,10 +133,6 @@ void check_departure_points_between_intervals(
     }
 
     for (auto & departure_point : departure_points) {
-      if (departure_point.type == DepartureType::CRITICAL_DEPARTURE) {
-        continue;
-      }
-
       if (departure_point.can_be_removed) {
         continue;
       }
@@ -149,6 +148,9 @@ void check_departure_points_between_intervals(
         departure_interval.end = aw_ref_traj.compute(departure_point.dist_on_traj);
         departure_interval.end_dist_on_traj = departure_point.dist_on_traj;
         departure_point.can_be_removed = true;
+        if (departure_point.departure_type == DepartureType::CRITICAL_DEPARTURE) {
+          break;
+        }
       }
     }
   }
@@ -157,10 +159,12 @@ void check_departure_points_between_intervals(
 void update_departure_intervals(
   DepartureIntervals & departure_intervals, Side<DeparturePoints> & departure_points,
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double vehicle_length_m,
-  const TrajectoryPoint & ref_traj_fr_pt, const double ego_dist_from_traj_front)
+  const TrajectoryPoint & ref_traj_fr_pt, const double ego_dist_from_traj_front,
+  const double th_pt_shift_dist_m, const double th_pt_shift_angle_rad)
 {
   update_departure_intervals_poses(
-    departure_intervals, aw_ref_traj, ref_traj_fr_pt, ego_dist_from_traj_front);
+    departure_intervals, aw_ref_traj, ref_traj_fr_pt, ego_dist_from_traj_front, th_pt_shift_dist_m,
+    th_pt_shift_angle_rad);
 
   for (const auto side_key : g_side_keys) {
     check_departure_points_between_intervals(
@@ -209,7 +213,7 @@ void update_critical_departure_points(
   const Side<DeparturePoints> & new_departure_points,
   CriticalDeparturePoints & critical_departure_points,
   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const double th_dist_hysteresis_m,
-  const double offset_from_ego)
+  const double offset_from_ego, const double th_pt_shift_dist_m, const double th_pt_shift_angle_rad)
 {
   for (auto & crit_dpt_pt_mut : critical_departure_points) {
     crit_dpt_pt_mut.dist_on_traj =
@@ -220,21 +224,19 @@ void update_critical_departure_points(
     }
 
     const auto updated_point = aw_ref_traj.compute(crit_dpt_pt_mut.dist_on_traj);
-    crit_dpt_pt_mut.can_be_removed =
-      autoware_utils::calc_distance2d(
-        updated_point.pose.position, crit_dpt_pt_mut.point_on_prev_traj.pose.position) >
-      th_dist_hysteresis_m;
+    if (
+      const auto is_shifted_opt = utils::is_point_shifted(
+        crit_dpt_pt_mut.point_on_prev_traj.pose, updated_point.pose, th_pt_shift_dist_m,
+        th_pt_shift_angle_rad)) {
+      crit_dpt_pt_mut.can_be_removed = true;
+    }
   }
-  utils::erase_if(
+  utils::remove_if(
     critical_departure_points, [](const DeparturePoint & pt) { return pt.can_be_removed; });
 
   for (const auto side_key : g_side_keys) {
     for (const auto & dpt_pt : new_departure_points[side_key]) {
-      if (dpt_pt.type != DepartureType::CRITICAL_DEPARTURE) {
-        continue;
-      }
-
-      if (dpt_pt.type == DepartureType::NONE || dpt_pt.type == DepartureType::UNKNOWN) {
+      if (dpt_pt.departure_type != DepartureType::CRITICAL_DEPARTURE) {
         continue;
       }
 
@@ -264,28 +266,43 @@ std::vector<std::tuple<Pose, Pose, double>> get_slow_down_intervals(
   const trajectory::Trajectory<TrajectoryPoint> & ref_traj_pts,
   const DepartureIntervals & departure_intervals,
   const SlowDownInterpolator & slow_down_interpolator, const VehicleInfo & vehicle_info,
-  const BoundarySideWithIdx & boundary_segments, const double ego_dist_on_traj_m)
+  [[maybe_unused]] const BoundarySideWithIdx & boundary_segments, const double curr_vel,
+  const double ego_dist_on_traj_m)
 {
   std::vector<std::tuple<Pose, Pose, double>> slowdown_intervals;
 
   for (auto && pair : departure_intervals | ranges::views::enumerate) {
     const auto & [idx, departure_interval] = pair;
 
-    const auto dpt_pt_dist_on_traj_m = (ego_dist_on_traj_m < departure_interval.start_dist_on_traj)
-                                         ? departure_interval.start.pose
-                                         : departure_interval.end.pose;
+    const auto [slow_down_pt_on_traj, slow_down_dist_on_traj_m] =
+      (ego_dist_on_traj_m < departure_interval.start_dist_on_traj)
+        ? std::make_pair(
+            utils::to_pt2d(departure_interval.start.pose.position),
+            departure_interval.start_dist_on_traj)
+        : std::make_pair(
+            utils::to_pt2d(departure_interval.end.pose.position),
+            departure_interval.end_dist_on_traj);
 
-    auto lat_dist_to_bound_m =
-      boundary_departure_checker::utils::get_nearest_boundary_segment_from_point(
-        boundary_segments[departure_interval.side_key],
-        utils::to_pt2d(dpt_pt_dist_on_traj_m.position));
+    const auto lon_dist_to_bound_m = slow_down_dist_on_traj_m - ego_dist_on_traj_m;
+    // auto lat_dist_to_bound_m =
+    //   boundary_departure_checker::utils::get_nearest_boundary_segment_from_point(
+    //     boundary_segments[departure_interval.side_key], slow_down_pt_on_traj);
 
-    if (!lat_dist_to_bound_m) {
+    const auto & candidates = departure_interval.candidates;
+    const auto lat_dist_to_bound_itr = std::min_element(
+      candidates.begin(), candidates.end(),
+      [](const DeparturePoint & pt1, const DeparturePoint & pt2) {
+        return pt1.lat_dist_to_bound < pt2.lat_dist_to_bound;
+      });
+
+    if (lat_dist_to_bound_itr == candidates.end()) {
       continue;
     }
 
+    const auto lat_dist_to_bound_m = lat_dist_to_bound_itr->lat_dist_to_bound;
+
     const auto vel_opt = slow_down_interpolator.get_interp_to_point(
-      dpt_pt_dist_on_traj_m.position, *lat_dist_to_bound_m, departure_interval.side_key);
+      curr_vel, lon_dist_to_bound_m, lat_dist_to_bound_m, departure_interval.side_key);
 
     if (!vel_opt) {
       continue;
@@ -307,7 +324,7 @@ std::vector<std::tuple<Pose, Pose, double>> get_slow_down_intervals(
                      (ego_dist_on_traj_m + vehicle_info.max_longitudinal_offset_m))
                       ? departure_interval.start.pose
                       : departure_interval.end.pose;
-    if (ego_dist_on_traj_m + std::get<0>(*vel_opt) > ref_traj_pts.length()) {
+    if (ego_dist_on_traj_m + rel_dist_m > ref_traj_pts.length()) {
       continue;
     }
 
@@ -318,4 +335,20 @@ std::vector<std::tuple<Pose, Pose, double>> get_slow_down_intervals(
 
   return slowdown_intervals;
 }
+
+std::optional<std::pair<double, double>> is_point_shifted(
+  const Pose & prev_iter_pt, const Pose & curr_iter_pt, const double th_shift_m,
+  const double th_yaw_diff_rad)
+{
+  const auto curr_pt_yaw_rad = tf2::getYaw(curr_iter_pt.orientation);
+  const auto prev_pt_yaw_rad = tf2::getYaw(prev_iter_pt.orientation);
+  const auto yaw_diff_rad = std::abs(curr_pt_yaw_rad - prev_pt_yaw_rad);
+
+  const auto dist_m = autoware_utils::calc_distance2d(curr_iter_pt.position, prev_iter_pt.position);
+  if (dist_m > th_shift_m || yaw_diff_rad > th_yaw_diff_rad) {
+    return std::make_pair(dist_m, yaw_diff_rad);
+  }
+  return std::nullopt;
+}
+
 }  // namespace autoware::motion_velocity_planner::utils
