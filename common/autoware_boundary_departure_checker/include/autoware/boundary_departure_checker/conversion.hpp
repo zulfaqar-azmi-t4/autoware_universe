@@ -21,6 +21,7 @@
 #include <lanelet2_core/primitives/Lanelet.h>
 #include <lanelet2_core/primitives/Polygon.h>
 
+#include <algorithm>
 #include <string>
 
 namespace autoware::boundary_departure_checker::utils

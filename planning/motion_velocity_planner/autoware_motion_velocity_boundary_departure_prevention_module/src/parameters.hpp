@@ -18,7 +18,7 @@
 
 #include <string>
 #include <unordered_map>
-#include <utility>
+#include <unordered_set>
 #include <vector>
 
 #ifndef PARAMETERS_HPP_
@@ -46,7 +46,10 @@ struct Output
   DepartureIntervals departure_intervals;
   Side<DeparturePoints> departure_points;
   CriticalDeparturePoints critical_departure_points;
-  bool is_critical_departing{false};
+  std::unordered_map<DepartureType, bool> diagnostic_output{
+    {DepartureType::NEAR_BOUNDARY, false},
+    {DepartureType::APPROACHING_DEPARTURE, false},
+    {DepartureType::CRITICAL_DEPARTURE, false}};
 };
 
 struct NodeParam
@@ -55,8 +58,8 @@ struct NodeParam
   double th_pt_shift_dist_m{1.0};
   double th_pt_shift_angle_rad{autoware_utils_math::deg2rad(2.0)};
   BDCParam bdc_param;
-
-  PredictedPathFootprint pred_path_footprint;
+  std::unordered_set<DepartureType> slow_down_types;
+  std::unordered_map<DepartureType, int8_t> diagnostic_level;
 
   NodeParam() = default;
   explicit NodeParam(rclcpp::Node & node)
@@ -138,9 +141,42 @@ struct NodeParam
       bdc_param.abnormality_configs = configs;
     });
 
+    const auto select_diag_lvl = [](const int level) {
+      if (DiagStatus::OK) {
+        return DiagStatus::OK;
+      }
+
+      if (level == 1) {
+        return DiagStatus::WARN;
+      }
+
+      if (level == 2) {
+        return DiagStatus::ERROR;
+      }
+
+      return DiagStatus::STALE;
+    };
+
+    diagnostic_level = std::invoke([&]() {
+      const std::string ns_diag{module_name + "diagnostic."};
+      std::unordered_map<DepartureType, int8_t> diag;
+
+      const auto near_boundary_diag_lvl =
+        select_diag_lvl(get_or_declare_parameter<int>(node, ns_diag + "near_boundary"));
+      const auto approaching_departure_diag_lvl =
+        select_diag_lvl(get_or_declare_parameter<int>(node, ns_diag + "approaching_departure"));
+      const auto critical_departure_diag_lvl =
+        select_diag_lvl(get_or_declare_parameter<int>(node, ns_diag + "critical_departure"));
+
+      diag.insert({DepartureType::NEAR_BOUNDARY, near_boundary_diag_lvl});
+      diag.insert({DepartureType::APPROACHING_DEPARTURE, approaching_departure_diag_lvl});
+      diag.insert({DepartureType::CRITICAL_DEPARTURE, critical_departure_diag_lvl});
+      return diag;
+    });
+
     const std::string ns_slow_down{module_name + "slow_down_behavior."};
-    bdc_param.departure_types = std::invoke([&]() {
-      std::vector<DepartureType> departure_types;
+    slow_down_types = std::invoke([&]() {
+      std::unordered_set<DepartureType> departure_types;
       const std::string ns_dpt_type = {ns_slow_down + "enable."};
       const auto enable_slow_down_near_bound =
         get_or_declare_parameter<bool>(node, ns_dpt_type + "slow_down_near_boundary");
@@ -150,14 +186,14 @@ struct NodeParam
         get_or_declare_parameter<bool>(node, ns_dpt_type + "slow_down_before_departure");
 
       if (enable_slow_down_near_bound) {
-        departure_types.emplace_back(DepartureType::NEAR_BOUNDARY);
+        departure_types.insert(DepartureType::NEAR_BOUNDARY);
       }
       if (enable_approaching_dpt) {
-        departure_types.emplace_back(DepartureType::APPROACHING_DEPARTURE);
+        departure_types.insert(DepartureType::APPROACHING_DEPARTURE);
       }
 
       if (enable_critical_dpt) {
-        departure_types.emplace_back(DepartureType::CRITICAL_DEPARTURE);
+        departure_types.insert(DepartureType::CRITICAL_DEPARTURE);
       }
 
       return departure_types;

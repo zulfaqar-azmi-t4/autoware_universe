@@ -49,6 +49,10 @@ DepartureIntervals init_departure_intervals(
         break;
       }
 
+      if (curr.can_be_removed) {
+        continue;
+      }
+
       const auto & prev = departure_points[idx_end - 1];
       const auto diff = std::abs(curr.dist_on_traj - prev.dist_on_traj);
 

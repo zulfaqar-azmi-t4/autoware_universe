@@ -71,6 +71,7 @@ using visualization_msgs::msg::MarkerArray;
 using BDCParam = boundary_departure_checker::Param;
 using SegmentWithIdx = boundary_departure_checker::SegmentWithIdx;
 using UncrossableBoundRTree = boundary_departure_checker::UncrossableBoundRTree;
+using DiagStatus = diagnostic_msgs::msg::DiagnosticStatus;
 
 namespace bg = boost::geometry;                             // NOLINT
 namespace bgi = boost::geometry::index;                     // NOLINT

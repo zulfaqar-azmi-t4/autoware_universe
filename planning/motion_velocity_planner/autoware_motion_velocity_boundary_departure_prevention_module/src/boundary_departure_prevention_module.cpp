@@ -51,13 +51,18 @@ void BoundaryDeparturePreventionModule::init(
   updater_ptr_->setHardwareID("motion_velocity_boundary_departure_prevention");
   updater_ptr_->add(
     "boundary_departure", [this](diagnostic_updater::DiagnosticStatusWrapper & stat) {
-      using DiagStatus = diagnostic_msgs::msg::DiagnosticStatus;
       int8_t lvl{DiagStatus::OK};
       std::string msg{"OK"};
 
-      if (output_.is_critical_departing) {
-        lvl = DiagStatus::ERROR;
-        msg = "vehicle will leave lane";
+      if (output_.diagnostic_output[DepartureType::CRITICAL_DEPARTURE]) {
+        lvl = node_param_.diagnostic_level[DepartureType::CRITICAL_DEPARTURE];
+        msg = "vehicle is leaving boundary";
+      } else if (output_.diagnostic_output[DepartureType::APPROACHING_DEPARTURE]) {
+        lvl = node_param_.diagnostic_level[DepartureType::APPROACHING_DEPARTURE];
+        msg = "vehicle is moving towards the boundary";
+      } else if (output_.diagnostic_output[DepartureType::NEAR_BOUNDARY]) {
+        lvl = node_param_.diagnostic_level[DepartureType::NEAR_BOUNDARY];
+        msg = "vehicle is near boundary";
       }
 
       stat.summary(lvl, msg);
@@ -374,6 +379,12 @@ BoundaryDeparturePreventionModule::plan_slow_down_intervals(
 
   output_.departure_points = boundary_departure_checker_ptr_->get_departure_points(
     output_.closest_projections_to_bound, lon_offset_m(planner_data->is_driving_forward));
+  for (const auto side_key : g_side_keys) {
+    for (auto & pt : output_.departure_points[side_key]) {
+      pt.can_be_removed =
+        node_param_.slow_down_types.find(pt.departure_type) == node_param_.slow_down_types.end();
+    }
+  }
   toc_curr_watch("get_departure_points");
 
   utils::update_critical_departure_points(
@@ -444,24 +455,51 @@ BoundaryDeparturePreventionModule::plan_slow_down_intervals(
     debug_publisher_->publish(debug_marker_);
   }
 
+  toc_curr_watch("check_stopping_dist");
+
+  output_.diagnostic_output = get_diagnostics(
+    curr_odom.twist.twist.linear.x,
+    ego_dist_on_traj_with_offset_m(planner_data->is_driving_forward));
+  toc_curr_watch("get_diagnostics");
+
+  VelocityPlanningResult result;
+  result.slowdown_intervals = slowdown_intervals;
+  return result;
+}
+
+std::unordered_map<DepartureType, bool> BoundaryDeparturePreventionModule::get_diagnostics(
+  const double curr_vel, const double dist_with_offset_m)
+{
+  std::unordered_map<DepartureType, bool> diag{
+    {DepartureType::NEAR_BOUNDARY, false},
+    {DepartureType::APPROACHING_DEPARTURE, false},
+    {DepartureType::CRITICAL_DEPARTURE, false}};
+
   const auto & th_trigger = node_param_.bdc_param.th_trigger;
-  output_.is_critical_departing = std::any_of(
-    output_.critical_departure_points.begin(), output_.critical_departure_points.end(),
-    [&](const DeparturePoint & pt) {
-      const auto curr_vel = planner_data->current_odometry.twist.twist.linear.x;
+
+  for (const auto & side_key : g_side_keys) {
+    diag[DepartureType::NEAR_BOUNDARY] = std::any_of(
+      output_.departure_points[side_key].cbegin(), output_.departure_points[side_key].cend(),
+      [](const DeparturePoint & pt) { return pt.departure_type == DepartureType::NEAR_BOUNDARY; });
+    diag[DepartureType::APPROACHING_DEPARTURE] = std::any_of(
+      output_.departure_points[side_key].begin(), output_.departure_points[side_key].end(),
+      [](const DeparturePoint & pt) {
+        return pt.departure_type == DepartureType::APPROACHING_DEPARTURE;
+      });
+  }
+
+  diag[DepartureType::CRITICAL_DEPARTURE] = std::any_of(
+    output_.critical_departure_points.cbegin(), output_.critical_departure_points.cend(),
+    [&th_trigger, &curr_vel, &dist_with_offset_m](const DeparturePoint & pt) {
       const auto braking_start_vel =
         std::clamp(curr_vel, th_trigger.th_vel_mps.min, th_trigger.th_vel_mps.max);
       const auto braking_dist = boundary_departure_checker::utils::compute_braking_distance(
         braking_start_vel, 0.0, th_trigger.th_acc_mps2.min, th_trigger.th_jerk_mps3.max,
         th_trigger.brake_delay_s);
-      return pt.dist_on_traj - ego_dist_on_traj_with_offset_m(planner_data->is_driving_forward) <=
-             braking_dist;
+      return pt.dist_on_traj - dist_with_offset_m <= braking_dist;
     });
-  toc_curr_watch("check_stoping_dist");
 
-  VelocityPlanningResult result;
-  result.slowdown_intervals = slowdown_intervals;
-  return result;
+  return diag;
 }
 }  // namespace autoware::motion_velocity_planner
 

@@ -137,7 +137,6 @@ struct Param
   double th_dist_hysteresis_m{1.0};
   double footprint_extra_margin{0.0};
   AbnormalitiesConfigs abnormality_configs;
-  std::vector<DepartureType> departure_types;
   std::vector<std::string> boundary_types_to_detect;
   std::vector<AbnormalityType> abnormality_types_to_compensate;
 

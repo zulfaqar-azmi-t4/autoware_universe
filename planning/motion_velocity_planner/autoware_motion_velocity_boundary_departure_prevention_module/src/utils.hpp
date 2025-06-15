@@ -18,6 +18,8 @@
 #include "parameters.hpp"
 #include "slow_down_interpolator.hpp"
 
+#include <map>
+#include <unordered_map>
 #include <vector>
 
 namespace autoware::motion_velocity_planner::utils

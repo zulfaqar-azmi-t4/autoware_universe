@@ -59,8 +59,10 @@ private:
   tl::expected<VelocityPlanningResult, std::string> plan_slow_down_intervals(
     const TrajectoryPoints & raw_trajectory_points,
     const std::shared_ptr<const PlannerData> & planner_data);
-
+  std::unordered_map<DepartureType, bool> get_diagnostics(
+    const double curr_vel, const double dist_with_offset_m);
   rclcpp::Clock::SharedPtr clock_ptr_;
+
   bool is_critical_departing_{false};
   std::string module_name_;
   Output output_;
