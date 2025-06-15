@@ -1,0 +1,118 @@
+diff --git a/common/autoware_boundary_departure_checker/include/autoware/boundary_departure_checker/conversion.hpp b/common/autoware_boundary_departure_checker/include/autoware/boundary_departure_checker/conversion.hpp
+index f5305b4c64..80c3e1fd3f 100644
+--- a/common/autoware_boundary_departure_checker/include/autoware/boundary_departure_checker/conversion.hpp
++++ b/common/autoware_boundary_departure_checker/include/autoware/boundary_departure_checker/conversion.hpp
+@@ -32,10 +32,18 @@ namespace autoware::boundary_departure_checker::utils
+  * @return The name of the enum value as a string.
+  * @note Requires magic_enum. The enum type must be supported by magic_enum.
+  */
+-template <typename enum_type>
+-std::string to_enum_str(const enum_type & value)
++template <
++  typename E,
++  std::enable_if_t<std::is_same_v<E, DepartureType> || std::is_same_v<E, AbnormalityType>, int> = 0>
++std::string to_enum_str(const E & value, const bool to_lower_case = true)
+ {
+-  return magic_enum::enum_name(value);
++  auto value_str = magic_enum::enum_name(value);
++  if (to_lower_case) {
++    std::transform(value_str.begin(), value_str.end(), value_str.begin(), [](unsigned char c) {
++      return std::tolower(c);
++    });
++  }
++  return value_str;
+ }
+ 
+ /**
+@@ -74,6 +82,6 @@ Segment2d to_segment_2d(
+  * @param z The z-coordinate to assign.
+  * @return A ROS Point with x, y from the 2D point and the given z.
+  */
+-Point to_geom_pt(const Point2d & point, const double z);
++Point to_geom_pt(const Point2d & point, const double z = 0.0);
+ }  // namespace autoware::boundary_departure_checker::utils
+ #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__CONVERSION_HPP_
+diff --git a/common/autoware_boundary_departure_checker/include/autoware/boundary_departure_checker/utils.hpp b/common/autoware_boundary_departure_checker/include/autoware/boundary_departure_checker/utils.hpp
+index cfc08ae49a..6634b6dc33 100644
+--- a/common/autoware_boundary_departure_checker/include/autoware/boundary_departure_checker/utils.hpp
++++ b/common/autoware_boundary_departure_checker/include/autoware/boundary_departure_checker/utils.hpp
+@@ -121,11 +121,6 @@ double cross_2d(const Point2d & point, const Segment2d & seg);
+ 
+ bool is_point_left_of_line(const Point2d & point, const Segment2d & seg);
+ 
+-std::vector<lanelet::ConstLineString3d> get_linestrings_near_footprint(
+-  const lanelet::LineStringLayer & linestring_layer, const Pose & ego_pose,
+-  const double search_distance,
+-  const std::vector<std::string> uncrossable_boundary_types = {"road_border"});
+-
+ FootprintMargin calc_margin_from_covariance(
+   const geometry_msgs::msg::PoseWithCovariance & covariance, const double scale);
+ 
+diff --git a/common/autoware_boundary_departure_checker/src/utils.cpp b/common/autoware_boundary_departure_checker/src/utils.cpp
+index 04ffcca139..012881b983 100644
+--- a/common/autoware_boundary_departure_checker/src/utils.cpp
++++ b/common/autoware_boundary_departure_checker/src/utils.cpp
+@@ -53,7 +53,6 @@ using autoware::boundary_departure_checker::ClosestProjectionToBound;
+ using autoware::boundary_departure_checker::DeparturePoint;
+ using autoware::boundary_departure_checker::DeparturePoints;
+ using autoware::boundary_departure_checker::DepartureType;
+-using autoware::boundary_departure_checker::SideKey;
+ using autoware::boundary_departure_checker::VehicleInfo;
+ 
+ DeparturePoint create_departure_point(
+@@ -112,7 +111,6 @@ DeparturePoints get_departure_points(
+   return departure_points;
+ }
+ 
+-using autoware_utils::Segment2d;
+ double calc_dist_on_traj(
+   const trajectory::Trajectory<TrajectoryPoint> & aw_ref_traj, const Point2d & point)
+ {
+@@ -495,7 +493,7 @@ tl::expected<double, std::string> get_nearest_boundary_segment_from_point(
+   std::optional<double> curr_min_lat;
+   for (const auto & [segment, ll_id, st_idx, end_idx] : segments) {
+     if (const auto projection_opt = utils::point_to_segment_projection(point, segment)) {
+-      const auto & [pt_ego, pt_lane, dist] = *projection_opt;
++      const auto dist = std::get<2>(*projection_opt);
+       if (!curr_min_lat || curr_min_lat > dist) {
+         curr_min_lat = dist;
+       }
+@@ -603,8 +601,8 @@ ProjectionsToBound get_closest_boundary_segments_from_side(
+   for (size_t i = 0; i < ego_sides_from_footprints.size(); ++i) {
+     const auto & fp = ego_sides_from_footprints[i];
+ 
+-    const auto & [ego_lf, ego_lb] = fp.left;
+-    const auto & [ego_rf, ego_rb] = fp.right;
++    const auto & ego_lb = fp.left.second;
++    const auto & ego_rb = fp.right.second;
+ 
+     const auto rear_seg = Segment2d(ego_lb, ego_rb);
+ 
+@@ -648,27 +646,6 @@ bool is_point_left_of_line(const Point2d & point, const Segment2d & seg)
+   return cross_2d(point, seg) > 0.0;
+ }
+ 
+-std::vector<lanelet::ConstLineString3d> get_linestrings_near_footprint(
+-  const lanelet::LineStringLayer & linestring_layer, const Pose & ego_pose,
+-  const double search_distance, const std::vector<std::string> uncrossable_boundary_types)
+-{
+-  const auto bbox = lanelet::BoundingBox2d(
+-    lanelet::BasicPoint2d{
+-      ego_pose.position.x - search_distance, ego_pose.position.y - search_distance},
+-    lanelet::BasicPoint2d{
+-      ego_pose.position.x + search_distance, ego_pose.position.y + search_distance});
+-
+-  auto nearby_linestrings = linestring_layer.search(bbox);
+-
+-  const auto remove_itr = std::remove_if(
+-    nearby_linestrings.begin(), nearby_linestrings.end(),
+-    [&](const auto & ls) { return !is_uncrossable_type(uncrossable_boundary_types, ls); });
+-
+-  nearby_linestrings.erase(remove_itr, nearby_linestrings.end());
+-
+-  return nearby_linestrings;
+-}
+-
+ FootprintMargin calc_margin_from_covariance(
+   const geometry_msgs::msg::PoseWithCovariance & covariance, const double scale)
+ {
