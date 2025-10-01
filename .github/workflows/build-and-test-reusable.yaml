@@ -190,7 +190,7 @@ jobs:
           name: coverage-${{ inputs.codecov-flag }}-${{ inputs.rosdistro }}
 
       - name: Upload coverage to CodeCov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: ${{ needs.build-and-test.outputs.coverage-files }}
           fail_ci_if_error: false
