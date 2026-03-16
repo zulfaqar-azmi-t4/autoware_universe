@@ -8,7 +8,13 @@
   <arg name="input_objects" default="~/input/objects"/>
   <arg name="input_acceleration" default="~/input/acceleration"/>
 
-  <node pkg="autoware_trajectory_validator" exec="autoware_trajectory_validator_node" name="trajectory_validator_node" output="screen">
+  <node
+    pkg="autoware_trajectory_validator"
+    exec="autoware_trajectory_validator_node"
+    name="trajectory_validator_node"
+    output="log"
+    launch-prefix="konsole --separate --hold -p tabtitle='trajectory_validator_gdb' -e gdb -ex run --args"
+  >
     <param from="$(var trajectory_validator_param_path)" allow_substs="true"/>
     <remap from="~/input/trajectories" to="$(var input_trajectories)"/>
     <remap from="~/output/trajectories" to="$(var output_trajectories)"/>
