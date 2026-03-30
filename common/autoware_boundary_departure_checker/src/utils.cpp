@@ -1,0 +1,445 @@
+// Copyright 2024 TIER IV, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "autoware/boundary_departure_checker/utils.hpp"
+
+#include "autoware/boundary_departure_checker/conversion.hpp"
+#include "autoware/boundary_departure_checker/data_structs.hpp"
+#include "autoware/boundary_departure_checker/parameters.hpp"
+
+#include <autoware/motion_utils/trajectory/trajectory.hpp>
+#include <autoware/trajectory/trajectory_point.hpp>
+#include <autoware/trajectory/utils/closest.hpp>
+#include <autoware/universe_utils/geometry/geometry.hpp>
+#include <autoware_utils_geometry/boost_geometry.hpp>
+#include <autoware_utils_geometry/geometry.hpp>
+#include <autoware_utils_math/unit_conversion.hpp>
+#include <range/v3/view.hpp>
+#include <tl_expected/expected.hpp>
+
+#include <lanelet2_core/geometry/LaneletMap.h>
+
+#include <algorithm>
+#include <cstddef>
+#include <limits>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace
+{
+using autoware::boundary_departure_checker::IdxForRTreeSegment;
+using autoware::boundary_departure_checker::ProjectionToBound;
+using autoware::boundary_departure_checker::Segment2d;
+using autoware::boundary_departure_checker::SegmentWithIdx;
+using autoware::boundary_departure_checker::utils::to_segment_2d;
+namespace bg = boost::geometry;
+
+std::vector<SegmentWithIdx> create_local_segments(const lanelet::ConstLineString3d & linestring)
+{
+  std::vector<SegmentWithIdx> local_segments;
+  local_segments.reserve(linestring.size());
+  const auto basic_ls = linestring.basicLineString();
+  for (size_t i = 0; i + 1 < basic_ls.size(); ++i) {
+    const auto segment = to_segment_2d(basic_ls.at(i), basic_ls.at(i + 1));
+    local_segments.emplace_back(
+      bg::return_envelope<Segment2d>(segment), IdxForRTreeSegment(linestring.id(), i, i + 1));
+  }
+  return local_segments;
+}
+}  // namespace
+
+namespace autoware::boundary_departure_checker::utils
+{
+Side<ProjectionsToBound> evaluate_projections_severity(
+  const Side<ProjectionsToBound> & projections_to_bound,
+  const UncrossableBoundaryDepartureParam & param, const double min_braking_dist)
+{
+  if (projections_to_bound.all_empty() && !projections_to_bound.equal_size()) {
+    return {};
+  }
+
+  const auto get_min_to_bound = [&](const auto & side_value) {
+    ProjectionsToBound out;
+    out.reserve(side_value.size());
+
+    for (size_t idx = 0; idx < side_value.size(); ++idx) {
+      const auto & original_candidate = side_value[idx];
+      if (original_candidate.pose_index != idx) continue;
+
+      const ProjectionEvaluationMetrics metrics{
+        original_candidate.dist_along_trajectory_m - original_candidate.ego_front_to_proj_offset_m,
+        original_candidate.time_from_start, original_candidate.lat_dist};
+      const DepartureCheckThresholds thresholds{
+        min_braking_dist, param.time_to_departure_cutoff_s, param.lateral_margin_m};
+
+      out.push_back(original_candidate);  // Copy once directly into the vector
+      out.back().departure_type = assign_departure_type(metrics, thresholds);  // Mutate in place
+
+      if (out.back().is_critical()) break;
+    }
+
+    return out;
+  };
+
+  Side<ProjectionsToBound> min_to_bounds =
+    projections_to_bound.transform_each_side(get_min_to_bound);
+
+  const auto erase_non_departure_points = [&param](ProjectionsToBound & mut_side_value) {
+    if (mut_side_value.empty() || !mut_side_value.back().is_critical()) return;
+
+    const double crash_s = mut_side_value.back().dist_along_trajectory_m -
+                           mut_side_value.back().ego_front_to_proj_offset_m;
+    auto earliest_critical_it = mut_side_value.end() - 1;
+
+    for (auto itr = mut_side_value.rbegin(); itr != mut_side_value.rend(); ++itr) {
+      const double dist_to_crash = crash_s - itr->dist_along_trajectory_m;
+
+      if (dist_to_crash <= param.longitudinal_margin_m) {
+        itr->departure_type = DepartureType::CRITICAL;
+        earliest_critical_it = itr.base() - 1;
+      } else {
+        itr->departure_type = DepartureType::APPROACHING;
+      }
+    }
+
+    // Erase the physical crash points, keeping ONLY the newly buffered critical point
+    if (earliest_critical_it != mut_side_value.end() - 1) {
+      mut_side_value.erase(earliest_critical_it + 1, mut_side_value.end());
+    }
+    mut_side_value.erase(
+      std::remove_if(
+        mut_side_value.begin(), mut_side_value.end(),
+        [](const ProjectionToBound & p) { return p.departure_type == DepartureType::NONE; }),
+      mut_side_value.end());
+  };
+  min_to_bounds.for_each_side(erase_non_departure_points);
+
+  return min_to_bounds;
+}
+
+DepartureType assign_departure_type(
+  const ProjectionEvaluationMetrics & metrics, const DepartureCheckThresholds & thresholds)
+{
+  if (metrics.lat_dist > thresholds.th_lat_critical) {
+    return DepartureType::NONE;
+  }
+
+  if (
+    metrics.lon_dist_to_departure > thresholds.min_braking_distance &&
+    metrics.time_from_start > thresholds.cutoff_time) {
+    return DepartureType::APPROACHING;
+  }
+  // Set CRITICAL if:
+  // - Short Dist & Short Time: boundary crossing is less than braking distance and we will hit it
+  // in less than cutoff time.
+  // - Long Dist but Short Time: At 100 km/h, the boundary crossing is 30 meters away, but ego
+  // will hit the crossing in less than cutoff time.
+  // - Long time, but dist less than braking: Creeping forward in a parking lot at 2 km/h, and it
+  // takes it will 4 seconds to reach it, however, the boundary less than minimum braking
+  // distance.
+  return DepartureType::CRITICAL;
+}
+bool is_uncrossable_type(
+  std::vector<std::string> boundary_types_to_detect, const lanelet::ConstLineString3d & ls)
+{
+  constexpr auto no_type = "";
+  const auto type = ls.attributeOr(lanelet::AttributeName::Type, no_type);
+  return (
+    type != no_type &&
+    std::find(boundary_types_to_detect.begin(), boundary_types_to_detect.end(), type) !=
+      boundary_types_to_detect.end());
+};
+
+UncrossableBoundsRTree build_uncrossable_boundaries_rtree(
+  const lanelet::LaneletMap & lanelet_map,
+  const std::vector<std::string> & boundary_types_to_detect)
+{
+  std::vector<SegmentWithIdx> segments;
+  for (const auto & linestring : lanelet_map.lineStringLayer) {
+    if (!is_uncrossable_type(boundary_types_to_detect, linestring)) {
+      continue;
+    }
+
+    auto local_segments = create_local_segments(linestring);
+    std::move(local_segments.begin(), local_segments.end(), std::back_inserter(segments));
+  }
+
+  return {segments.begin(), segments.end()};
+}
+
+tl::expected<std::pair<Point2d, double>, std::string> point_to_segment_projection(
+  const Point2d & p, const Segment2d & segment)
+{
+  const auto & p1 = segment.first;
+  const auto & p2 = segment.second;
+
+  const Point2d p2_vec = {p2.x() - p1.x(), p2.y() - p1.y()};
+  const Point2d p_vec = {p.x() - p1.x(), p.y() - p1.y()};
+
+  const auto c1 = boost::geometry::dot_product(p_vec, p2_vec);
+  if (c1 < 0.0) return tl::make_unexpected("Point before segment start");
+
+  const auto c2 = boost::geometry::dot_product(p2_vec, p2_vec);
+  if (c1 > c2) return tl::make_unexpected("Point after segment end");
+
+  const auto projection = p1 + (p2_vec * c1 / c2);
+  const auto projection_point = Point2d{projection.x(), projection.y()};
+
+  return std::make_pair(projection_point, boost::geometry::distance(p, projection_point));
+}
+
+tl::expected<ProjectionToBound, std::string> calc_nearest_projection(
+  const Segment2d & ego_seg, const Segment2d & lane_seg, const size_t pose_index)
+{
+  const auto & [ego_f, ego_b] = ego_seg;
+  const auto & [lane_pt1, lane_pt2] = lane_seg;
+
+  if (
+    const auto is_intersecting = autoware_utils_geometry::intersect(
+      to_geom_pt(ego_f), to_geom_pt(ego_b), to_geom_pt(lane_pt1), to_geom_pt(lane_pt2))) {
+    Point2d point(is_intersecting->x, is_intersecting->y);
+    return ProjectionToBound{
+      point, point, lane_seg, 0.0, boost::geometry::distance(point, ego_f), pose_index};
+  }
+
+  ProjectionsToBound projections;
+  projections.reserve(4);
+  if (const auto projection_opt = point_to_segment_projection(ego_f, lane_seg)) {
+    const auto & [proj, dist] = *projection_opt;
+    constexpr auto ego_front_to_proj_offset_m = 0.0;
+    projections.emplace_back(ego_f, proj, lane_seg, dist, ego_front_to_proj_offset_m, pose_index);
+  }
+
+  if (const auto projection_opt = point_to_segment_projection(ego_b, lane_seg)) {
+    const auto & [proj, dist] = *projection_opt;
+    const auto ego_front_to_proj_offset_m = boost::geometry::distance(ego_b, ego_f);
+    projections.emplace_back(ego_b, proj, lane_seg, dist, ego_front_to_proj_offset_m, pose_index);
+  }
+
+  if (const auto projection_opt = point_to_segment_projection(lane_pt1, ego_seg)) {
+    const auto & [proj, dist] = *projection_opt;
+    const auto ego_front_to_proj_offset_m = boost::geometry::distance(proj, ego_f);
+    projections.emplace_back(
+      proj, lane_pt1, lane_seg, dist, ego_front_to_proj_offset_m, pose_index);
+  }
+
+  if (const auto projection_opt = point_to_segment_projection(lane_pt2, ego_seg)) {
+    const auto & [proj, dist] = *projection_opt;
+    const auto ego_front_to_proj_offset_m = boost::geometry::distance(proj, ego_f);
+    projections.emplace_back(
+      proj, lane_pt2, lane_seg, dist, ego_front_to_proj_offset_m, pose_index);
+  }
+
+  if (projections.empty())
+    return tl::make_unexpected("Couldn't generate projection at " + std::to_string(pose_index));
+  if (projections.size() == 1) return projections.front();
+
+  auto min_elem = std::min_element(
+    projections.begin(), projections.end(),
+    [](const ProjectionToBound & proj1, const ProjectionToBound & proj2) {
+      return std::abs(proj1.lat_dist) < std::abs(proj2.lat_dist);
+    });
+
+  return *min_elem;
+}
+
+ProjectionToBound find_closest_segment(
+  const Segment2d & ego_side_seg, const Segment2d & ego_rear_seg, const size_t curr_fp_idx,
+  const std::vector<SegmentWithIdx> & boundary_segments)
+{
+  std::optional<ProjectionToBound> closest_proj;
+  for (const auto & [seg, id] : boundary_segments) {
+    const auto & [ego_lr, ego_rr] = ego_rear_seg;
+    const auto & [seg_f, seg_r] = seg;
+    // we can assume that before front touches boundary, either left or right side will touch
+    // boundary first
+    if (const auto proj_opt = calc_nearest_projection(ego_side_seg, seg, curr_fp_idx)) {
+      if (!closest_proj || proj_opt->lat_dist < closest_proj->lat_dist) {
+        closest_proj = *proj_opt;
+      }
+    }
+    if (closest_proj) {
+      continue;
+    }
+
+    if (
+      const auto is_intersecting_rear = autoware_utils_geometry::intersect(
+        to_geom_pt(ego_lr), to_geom_pt(ego_rr), to_geom_pt(seg_f), to_geom_pt(seg_r))) {
+      Point2d point(is_intersecting_rear->x, is_intersecting_rear->y);
+      closest_proj =
+        ProjectionToBound{point,
+                          point,
+                          seg,
+                          0.0,
+                          boost::geometry::distance(ego_side_seg.first, ego_side_seg.second),
+                          curr_fp_idx};
+      break;
+    }
+  }
+
+  if (closest_proj) {
+    return *closest_proj;
+  }
+
+  return ProjectionToBound(curr_fp_idx);
+}
+
+Side<ProjectionsToBound> get_closest_boundary_segments_from_side(
+  const TrajectoryPoints & ego_pred_traj, const BoundarySegmentsBySide & boundaries,
+  const FootprintSideSegmentsArray & footprints_sides)
+{
+  Side<ProjectionsToBound> side;
+  side.reserve_all(footprints_sides.size());
+
+  auto s = 0.0;
+  for (size_t i = 0; i < ego_pred_traj.size(); ++i) {
+    if (i > 0) {
+      s += autoware_utils_geometry::calc_distance2d(ego_pred_traj[i - 1], ego_pred_traj[i]);
+    }
+
+    const auto & fp = footprints_sides[i];
+
+    const auto & ego_lb = fp.left.second;
+    const auto & ego_rb = fp.right.second;
+
+    const auto rear_seg = Segment2d(ego_lb, ego_rb);
+
+    side.for_each([&](auto key_constant, auto & side_value) {
+      constexpr SideKey side_key = key_constant.value;
+      auto closest_bound = find_closest_segment(fp[side_key], rear_seg, i, boundaries[side_key]);
+
+      if (
+        closest_bound.lat_dist > 0.0 &&
+        closest_bound.lat_dist < std::numeric_limits<double>::max()) {
+        const auto & ego_front = fp[side_key].first;
+        const auto & ego_rear = fp[side_key].second;
+
+        // Forward vector of the ego side segment
+        const double v_fwd_x = ego_front.x() - ego_rear.x();
+        const double v_fwd_y = ego_front.y() - ego_rear.y();
+
+        // Lateral vector pointing from ego to the boundary
+        const double v_lat_x = closest_bound.pt_on_bound.x() - closest_bound.pt_on_ego.x();
+        const double v_lat_y = closest_bound.pt_on_bound.y() - closest_bound.pt_on_ego.y();
+
+        // 2D Cross Product (Z-component)
+        const double cross_prod = v_fwd_x * v_lat_y - v_fwd_y * v_lat_x;
+
+        // If cross_prod < 0, boundary is to the RIGHT. If > 0, boundary is to the LEFT.
+        if constexpr (side_key == SideKey::LEFT) {
+          if (cross_prod < 0.0)
+            closest_bound.lat_dist = -closest_bound.lat_dist;  // crossed left boundary
+        } else {
+          if (cross_prod > 0.0)
+            closest_bound.lat_dist = -closest_bound.lat_dist;  // crossed right boundary
+        }
+      }
+
+      closest_bound.time_from_start = rclcpp::Duration(ego_pred_traj[i].time_from_start).seconds();
+      closest_bound.dist_along_trajectory_m = s - closest_bound.ego_front_to_proj_offset_m;
+      side_value.push_back(closest_bound);
+    });
+  }
+
+  return side;
+}
+
+tl::expected<std::vector<lanelet::LineString3d>, std::string> get_uncrossable_linestrings_near_pose(
+  const lanelet::LaneletMapPtr & lanelet_map_ptr, const Pose & ego_pose,
+  const double search_distance, const std::vector<std::string> & uncrossable_boundary_types)
+{
+  if (!lanelet_map_ptr) {
+    return tl::make_unexpected("lanelet_map_ptr is null");
+  }
+
+  if (search_distance < 0.0) {
+    return tl::make_unexpected("Search distance must be non-negative.");
+  }
+
+  const auto p = lanelet::BasicPoint2d(ego_pose.position.x, ego_pose.position.y);
+
+  if (!std::isfinite(p.x()) || !std::isfinite(p.y())) {
+    return tl::make_unexpected("ego_pose contains non-finite values.");
+  }
+
+  const auto offset = lanelet::BasicPoint2d(search_distance, search_distance);
+  auto bbox = lanelet::BoundingBox2d(p - offset, p + offset);
+
+  auto nearby_linestrings = lanelet_map_ptr->lineStringLayer.search(bbox);
+
+  const auto remove_itr = std::remove_if(
+    nearby_linestrings.begin(), nearby_linestrings.end(),
+    [&](const auto & ls) { return !is_uncrossable_type(uncrossable_boundary_types, ls); });
+
+  nearby_linestrings.erase(remove_itr, nearby_linestrings.end());
+
+  if (nearby_linestrings.empty()) {
+    return tl::make_unexpected(
+      "No nearby uncrossable boundaries within " + std::to_string(search_distance) + " meter.");
+  }
+
+  return nearby_linestrings;
+}
+
+std::optional<double> calc_signed_lateral_distance_to_boundary(
+  const lanelet::ConstLineString3d & boundary, const Pose & reference_pose)
+{
+  if (boundary.size() < 2) {
+    return std::nullopt;
+  }
+
+  const double yaw = tf2::getYaw(reference_pose.orientation);
+  const Eigen::Vector2d y_axis_direction(-std::sin(yaw), std::cos(yaw));
+  const Eigen::Vector2d reference_point(reference_pose.position.x, reference_pose.position.y);
+
+  double min_distance = std::numeric_limits<double>::max();
+  std::optional<double> signed_lateral_distance;
+
+  for (size_t i = 0; i + 1 < boundary.size(); ++i) {
+    const auto & p1 = boundary[i];
+    const auto & p2 = boundary[i + 1];
+
+    const Eigen::Vector2d segment_start(p1.x(), p1.y());
+    const Eigen::Vector2d segment_end(p2.x(), p2.y());
+    const Eigen::Vector2d segment_direction = segment_end - segment_start;
+
+    // Calculate intersection between Y-axis line and boundary segment
+    const double det = y_axis_direction.x() * (-segment_direction.y()) -
+                       y_axis_direction.y() * (-segment_direction.x());
+
+    if (std::abs(det) < 1e-10) {
+      // this segment and the Y-axis are parallel
+      continue;
+    }
+
+    const Eigen::Vector2d rhs = segment_start - reference_point;
+    const double t =
+      ((-segment_direction.y()) * rhs.x() - (-segment_direction.x()) * rhs.y()) / det;
+    const double s = (y_axis_direction.x() * rhs.y() - y_axis_direction.y() * rhs.x()) / det;
+
+    // Check if intersection is within segment bounds
+    if (s >= 0.0 && s <= 1.0) {
+      const double distance = std::abs(t);
+
+      if (distance < min_distance) {
+        min_distance = distance;
+        signed_lateral_distance = t;
+      }
+    }
+  }
+
+  return signed_lateral_distance;
+}
+}  // namespace autoware::boundary_departure_checker::utils
