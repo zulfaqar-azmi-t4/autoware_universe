@@ -30,6 +30,8 @@ struct UncrossableBoundaryDepartureParam
   double brake_delay_s{0.0};
   double time_to_departure_cutoff_s{0.0};
   double departure_hysteresis_s{0.15};
+  double on_time_buffer_s{0.15};
+  double off_time_buffer_s{0.15};
   std::vector<std::string> boundary_types_to_detect{"road_border"};
 };
 }  // namespace autoware::boundary_departure_checker

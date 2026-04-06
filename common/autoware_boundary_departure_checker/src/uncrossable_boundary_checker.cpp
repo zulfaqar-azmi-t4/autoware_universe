@@ -166,7 +166,7 @@ bool is_critical(const Side<ProjectionsToBound> & evaluated_projections)
 }
 tl::expected<DepartureData, std::string> UncrossableBoundaryChecker::check_departure(
   const TrajectoryPoints & predicted_traj, const vehicle_info_utils::VehicleInfo & vehicle_info,
-  const EgoDynamicState & ego_state) const
+  const EgoDynamicState & ego_state)
 {
   autoware_utils_debug::ScopedTimeTrack st(__func__, *time_keeper_);
 
@@ -203,6 +203,35 @@ tl::expected<DepartureData, std::string> UncrossableBoundaryChecker::check_depar
 
   departure_data.evaluated_projections = evaluate_projections_across_sides(
     departure_data.projections_to_bound, ego_state.velocity, ego_state.acceleration);
+
+  std::invoke(
+    [&](const auto & evaluated_projections) {
+      if (!is_critical_departure_persist(evaluated_projections)) {
+        critical_departure_.for_each_side([](auto & side) { side.clear(); });
+        return;
+      }
+
+      if (is_continuous_critical_departure(evaluated_projections)) {
+        return;
+      }
+
+      evaluated_projections.for_each([&](auto key_constant, auto & side_value) {
+        constexpr SideKey side_key = key_constant.value;
+        for (const auto & proj : side_value) {
+          if (proj.is_critical()) {
+            critical_departure_[side_key].push_back(proj);
+          }
+        }
+      });
+    },
+    departure_data.evaluated_projections);
+
+  departure_data.status = critical_departure_.any_of_side([](const auto & side_value) {
+    return std::any_of(
+      side_value.begin(), side_value.end(), [](const auto & proj) { return proj.is_critical(); });
+  })
+                            ? DepartureType::CRITICAL
+                            : DepartureType::NONE;
 
   return departure_data;
 }
@@ -291,6 +320,35 @@ Side<ProjectionsToBound> UncrossableBoundaryChecker::evaluate_projections_across
     utils::evaluate_projections_severity(projections_to_bound, param_, *min_braking_dist_opt);
 
   return min_to_bound;
+}
+
+bool UncrossableBoundaryChecker::is_continuous_critical_departure(
+  const Side<ProjectionsToBound> & evaluated_projections)
+{
+  const auto is_critical_departure_detected = is_critical(evaluated_projections);
+
+  if (!is_critical_departure_detected) {
+    last_no_critical_dpt_time_ = clock_ptr_->now().seconds();
+    return false;
+  }
+
+  const auto t_diff = clock_ptr_->now().seconds() - last_no_critical_dpt_time_;
+  return t_diff >= param_.on_time_buffer_s;
+}
+
+bool UncrossableBoundaryChecker::is_critical_departure_persist(
+  const Side<ProjectionsToBound> & evaluated_projections)
+{
+  const auto is_critical_departure_detected =
+    is_critical(evaluated_projections) && !critical_departure_.all_empty();
+
+  if (is_critical_departure_detected) {
+    last_found_critical_dpt_time_ = clock_ptr_->now().seconds();
+    return true;
+  }
+
+  const auto t_diff = clock_ptr_->now().seconds() - last_found_critical_dpt_time_;
+  return t_diff >= param_.off_time_buffer_s;
 }
 
 UncrossableBoundaryChecker::~UncrossableBoundaryChecker() = default;

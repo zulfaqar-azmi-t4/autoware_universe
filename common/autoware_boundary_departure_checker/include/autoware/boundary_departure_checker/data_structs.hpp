@@ -138,6 +138,7 @@ struct DepartureData
 
   Side<ProjectionsToBound> projections_to_bound;
   Side<ProjectionsToBound> evaluated_projections;
+  DepartureType status{DepartureType::NONE};
 };
 
 struct EgoDynamicState

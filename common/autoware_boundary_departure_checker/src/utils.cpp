@@ -302,6 +302,7 @@ Side<ProjectionsToBound> get_closest_boundary_segments_from_side(
 {
   Side<ProjectionsToBound> side;
   side.reserve_all(footprints_sides.size());
+  Side<bool> has_passed_boundary{false, false};
 
   auto s = 0.0;
   for (size_t i = 0; i < ego_pred_traj.size(); ++i) {
@@ -322,7 +323,8 @@ Side<ProjectionsToBound> get_closest_boundary_segments_from_side(
 
       if (
         closest_bound.lat_dist > 0.0 &&
-        closest_bound.lat_dist < std::numeric_limits<double>::max()) {
+        closest_bound.lat_dist < std::numeric_limits<double>::max() &&
+        has_passed_boundary[side_key]) {
         const auto & ego_front = fp[side_key].first;
         const auto & ego_rear = fp[side_key].second;
 
@@ -350,6 +352,9 @@ Side<ProjectionsToBound> get_closest_boundary_segments_from_side(
       closest_bound.time_from_start = rclcpp::Duration(ego_pred_traj[i].time_from_start).seconds();
       closest_bound.dist_along_trajectory_m = s - closest_bound.ego_front_to_proj_offset_m;
       side_value.push_back(closest_bound);
+      if (closest_bound.lat_dist < 0.01 && !has_passed_boundary[side_key]) {
+        has_passed_boundary[side_key] = true;
+      }
     });
   }
 

@@ -65,7 +65,7 @@ public:
    */
   tl::expected<DepartureData, std::string> check_departure(
     const TrajectoryPoints & predicted_traj, const vehicle_info_utils::VehicleInfo & vehicle_info,
-    const EgoDynamicState & ego_state) const;
+    const EgoDynamicState & ego_state);
 
   /**
    * @brief Queries a spatial index (R-tree) to find nearby uncrossable lane boundaries and filters
@@ -121,6 +121,9 @@ private:
   lanelet::LaneletMapPtr lanelet_map_ptr_;
   std::unique_ptr<UncrossableBoundsRTree> uncrossable_boundaries_rtree_ptr_;
   mutable std::shared_ptr<autoware_utils_debug::TimeKeeper> time_keeper_;
+  double last_no_critical_dpt_time_{0.0};
+  double last_found_critical_dpt_time_{0.0};
+  Side<ProjectionsToBound> critical_departure_;
 
   // Private member functions
   /**
@@ -134,6 +137,9 @@ private:
    */
   tl::expected<UncrossableBoundsRTree, std::string> build_uncrossable_boundaries_tree(
     const lanelet::LaneletMapPtr & lanelet_map_ptr);
+
+  bool is_continuous_critical_departure(const Side<ProjectionsToBound> & evaluated_projections);
+  bool is_critical_departure_persist(const Side<ProjectionsToBound> & evaluated_projections);
 };
 }  // namespace autoware::boundary_departure_checker
 
