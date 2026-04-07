@@ -204,38 +204,39 @@ tl::expected<DepartureData, std::string> UncrossableBoundaryChecker::check_depar
   departure_data.evaluated_projections = evaluate_projections_across_sides(
     departure_data.projections_to_bound, ego_state.velocity, ego_state.acceleration);
 
-  std::invoke(
-    [&](const auto & evaluated_projections) {
-      if (!is_critical_departure_persist(evaluated_projections)) {
-        critical_departure_.for_each_side([](auto & side) { side.clear(); });
-        return;
-      }
-
-      if (is_continuous_critical_departure(evaluated_projections)) {
-        return;
-      }
-
-      evaluated_projections.for_each([&](auto key_constant, auto & side_value) {
-        constexpr SideKey side_key = key_constant.value;
-        for (const auto & proj : side_value) {
-          if (proj.is_critical()) {
-            critical_departure_[side_key].push_back(proj);
-          }
-        }
-      });
-    },
-    departure_data.evaluated_projections);
-
-  departure_data.status = critical_departure_.any_of_side([](const auto & side_value) {
-    return std::any_of(
-      side_value.begin(), side_value.end(), [](const auto & proj) { return proj.is_critical(); });
-  })
-                            ? DepartureType::CRITICAL
-                            : DepartureType::NONE;
+  departure_data.status = determine_departure_type(departure_data.evaluated_projections);
 
   return departure_data;
 }
 
+DepartureType UncrossableBoundaryChecker::determine_departure_type(
+  const Side<ProjectionsToBound> & evaluated_projections)
+{
+  if (!is_critical_departure_persist(evaluated_projections)) {
+    critical_departure_.for_each_side([](auto & side) { side.clear(); });
+    return DepartureType::NONE;
+  }
+
+  if (!is_continuous_critical_departure(evaluated_projections)) {
+    return DepartureType::NONE;
+  }
+
+  evaluated_projections.for_each([&](auto key_constant, auto & side_value) {
+    constexpr SideKey side_key = key_constant.value;
+    for (const auto & proj : side_value) {
+      if (proj.is_critical()) {
+        critical_departure_[side_key].push_back(proj);
+      }
+    }
+  });
+
+  return critical_departure_.any_of_side([](const auto & side_value) {
+    return std::any_of(
+      side_value.begin(), side_value.end(), [](const auto & proj) { return proj.is_critical(); });
+  })
+           ? DepartureType::CRITICAL
+           : DepartureType::NONE;
+}
 std::vector<SegmentWithIdx> UncrossableBoundaryChecker::find_closest_boundary_segments(
   const Segment2d & ego_ref_segment, const Segment2d & ego_opposite_ref_segment,
   const double ego_z_position, const double ego_vehicle_height,

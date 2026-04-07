@@ -211,7 +211,7 @@ Marker create_boundary_segments_marker(
   return marker;
 }
 
-MarkerArray create_debug_marker_array(
+MarkerArray create_debug_markers(
   const DepartureData & departure_data, const rclcpp::Time & curr_time, const double base_link_z)
 {
   const auto line_list = visualization_msgs::msg::Marker::LINE_LIST;

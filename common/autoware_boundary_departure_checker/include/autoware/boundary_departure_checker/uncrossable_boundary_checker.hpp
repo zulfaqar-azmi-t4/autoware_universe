@@ -140,6 +140,8 @@ private:
 
   bool is_continuous_critical_departure(const Side<ProjectionsToBound> & evaluated_projections);
   bool is_critical_departure_persist(const Side<ProjectionsToBound> & evaluated_projections);
+
+  DepartureType determine_departure_type(const Side<ProjectionsToBound> & evaluated_projections);
 };
 }  // namespace autoware::boundary_departure_checker
 

@@ -25,9 +25,8 @@ namespace autoware::boundary_departure_checker::debug
 using visualization_msgs::msg::Marker;
 using visualization_msgs::msg::MarkerArray;
 
-MarkerArray create_debug_marker_array(
-  const DepartureData & departure_data, const Trajectory & ego_traj, const rclcpp::Time & curr_time,
-  const double base_link_z);
+MarkerArray create_debug_markers(
+  const DepartureData & departure_data, const rclcpp::Time & curr_time, const double base_link_z);
 }  // namespace autoware::boundary_departure_checker::debug
 
 #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__DEBUG_HPP_
