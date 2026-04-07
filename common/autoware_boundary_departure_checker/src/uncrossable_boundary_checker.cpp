@@ -243,33 +243,4 @@ Side<ProjectionsToBound> UncrossableBoundaryChecker::evaluate_projections_across
 
   return min_to_bound;
 }
-
-bool UncrossableBoundaryChecker::is_continuous_critical_departure(
-  const Side<ProjectionsToBound> & evaluated_projections)
-{
-  const auto is_critical_departure_detected = utils::is_critical(evaluated_projections);
-
-  if (!is_critical_departure_detected) {
-    last_no_critical_dpt_time_ = clock_ptr_->now().seconds();
-    return false;
-  }
-
-  const auto t_diff = clock_ptr_->now().seconds() - last_no_critical_dpt_time_;
-  return t_diff >= param_.on_time_buffer_s;
-}
-
-bool UncrossableBoundaryChecker::is_critical_departure_persist(
-  const Side<ProjectionsToBound> & evaluated_projections)
-{
-  const auto is_critical_departure_detected =
-    utils::is_critical(evaluated_projections) && !critical_departure_.all_empty();
-
-  if (is_critical_departure_detected) {
-    last_found_critical_dpt_time_ = clock_ptr_->now().seconds();
-    return true;
-  }
-
-  const auto t_diff = clock_ptr_->now().seconds() - last_found_critical_dpt_time_;
-  return t_diff >= param_.off_time_buffer_s;
-}
 }  // namespace autoware::boundary_departure_checker

@@ -62,6 +62,18 @@ public:
     const TrajectoryPoints & predicted_traj, const vehicle_info_utils::VehicleInfo & vehicle_info,
     const EgoDynamicState & ego_state);
 
+private:
+  // Member variables
+  UncrossableBoundaryDepartureParam param_;
+  rclcpp::Clock::SharedPtr clock_ptr_;
+  lanelet::LaneletMapPtr lanelet_map_ptr_;
+  std::unique_ptr<UncrossableBoundsRTree> uncrossable_boundaries_rtree_ptr_;
+  mutable std::shared_ptr<autoware_utils_debug::TimeKeeper> time_keeper_ =
+    std::make_shared<autoware_utils_debug::TimeKeeper>();
+  double last_no_critical_dpt_time_{0.0};
+  double last_found_critical_dpt_time_{0.0};
+  Side<ProjectionsToBound> critical_departure_;
+
   /**
    * @brief Queries a spatial index (R-tree) to find nearby uncrossable lane boundaries and filters
    * them.
@@ -108,19 +120,6 @@ public:
   [[nodiscard]] Side<ProjectionsToBound> evaluate_projections_across_sides(
     const Side<ProjectionsToBound> & projections_to_bound, const double curr_vel,
     const double curr_acc) const;
-
-private:
-  // Member variables
-  UncrossableBoundaryDepartureParam param_;
-  rclcpp::Clock::SharedPtr clock_ptr_;
-  lanelet::LaneletMapPtr lanelet_map_ptr_;
-  std::unique_ptr<UncrossableBoundsRTree> uncrossable_boundaries_rtree_ptr_;
-  mutable std::shared_ptr<autoware_utils_debug::TimeKeeper> time_keeper_ =
-    std::make_shared<autoware_utils_debug::TimeKeeper>();
-  double last_no_critical_dpt_time_{0.0};
-  double last_found_critical_dpt_time_{0.0};
-  Side<ProjectionsToBound> critical_departure_;
-
   DepartureType apply_hysteresis(const Side<ProjectionsToBound> & evaluated_projections);
 };
 }  // namespace autoware::boundary_departure_checker
