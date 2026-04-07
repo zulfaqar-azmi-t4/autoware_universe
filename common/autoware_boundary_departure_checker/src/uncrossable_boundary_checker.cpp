@@ -45,11 +45,6 @@
 
 namespace autoware::boundary_departure_checker
 {
-void UncrossableBoundaryChecker::set_clock(const rclcpp::Clock::SharedPtr clock_ptr)
-{
-  clock_ptr_ = clock_ptr;
-}
-
 void UncrossableBoundaryChecker::set_lanelet_map(const lanelet::LaneletMapPtr lanelet_map_ptr)
 {
   lanelet_map_ptr_ = lanelet_map_ptr;
@@ -112,21 +107,22 @@ tl::expected<DepartureData, std::string> UncrossableBoundaryChecker::check_depar
   departure_data.evaluated_projections = evaluate_projections_across_sides(
     departure_data.projections_to_bound, ego_state.velocity, ego_state.acceleration);
 
-  departure_data.status = apply_hysteresis(departure_data.evaluated_projections);
+  departure_data.status =
+    determine_departure_type(departure_data.evaluated_projections, ego_state.current_time_s);
 
   return departure_data;
 }
 
-DepartureType UncrossableBoundaryChecker::apply_hysteresis(
-  const Side<ProjectionsToBound> & evaluated_projections)
+DepartureType UncrossableBoundaryChecker::determine_departure_type(
+  const Side<ProjectionsToBound> & evaluated_projections, const double current_time_s)
 {
   const bool current_is_critical = utils::is_critical(evaluated_projections);
 
   if (current_is_critical) {
     // Geometrically critical. Check if the ON buffer has expired.
-    if (clock_ptr_->now().seconds() - last_no_critical_dpt_time_ >= param_.on_time_buffer_s) {
+    if (current_time_s - last_no_critical_dpt_time_ >= param_.on_time_buffer_s) {
       // We officially entered the CRITICAL state. Record this exact time!
-      last_found_critical_dpt_time_ = clock_ptr_->now().seconds();
+      last_found_critical_dpt_time_ = current_time_s;
 
       // Save the critical points for visualization/downstream use
       critical_departure_.for_each_side([](auto & side) { side.clear(); });
@@ -143,11 +139,11 @@ DepartureType UncrossableBoundaryChecker::apply_hysteresis(
     return DepartureType::NONE;
   }
   // Geometrically safe. Continually update the safe timestamp.
-  last_no_critical_dpt_time_ = clock_ptr_->now().seconds();
+  last_no_critical_dpt_time_ = current_time_s;
 
   // If we were previously in a CRITICAL state, check the OFF buffer
   if (!critical_departure_.all_empty()) {
-    if (clock_ptr_->now().seconds() - last_found_critical_dpt_time_ < param_.off_time_buffer_s) {
+    if (current_time_s - last_found_critical_dpt_time_ < param_.off_time_buffer_s) {
       return DepartureType::CRITICAL;  // Hold the CRITICAL state!
     }
     // The OFF buffer has officially expired. Clear the saved state.

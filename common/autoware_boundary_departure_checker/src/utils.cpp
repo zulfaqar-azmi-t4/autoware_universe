@@ -69,16 +69,20 @@ ProjectionsToBound filter_and_assign_departure_types(
   ProjectionsToBound out;
   out.reserve(side_value.size());
 
-  const DepartureCheckThresholds thresholds{
-    min_braking_dist, param.time_to_departure_cutoff_s, param.lateral_margin_m};
+  DepartureCheckThresholds thresholds;
+  thresholds.min_braking_distance = min_braking_dist;
+  thresholds.cutoff_time = param.time_to_departure_cutoff_s;
+  thresholds.th_lat_critical = param.lateral_margin_m;
 
   for (size_t idx = 0; idx < side_value.size(); ++idx) {
     const auto & original_candidate = side_value[idx];
     if (original_candidate.pose_index != idx) continue;
 
-    const ProjectionEvaluationMetrics metrics{
-      original_candidate.dist_along_trajectory_m - original_candidate.ego_front_to_proj_offset_m,
-      original_candidate.time_from_start, original_candidate.lat_dist};
+    ProjectionEvaluationMetrics metrics;
+    metrics.lon_dist_to_departure =
+      original_candidate.dist_along_trajectory_m - original_candidate.ego_front_to_proj_offset_m;
+    metrics.time_from_start = original_candidate.time_from_start;
+    metrics.lat_dist = original_candidate.lat_dist;
 
     out.push_back(original_candidate);
     out.back().departure_type = assign_departure_type(metrics, thresholds);

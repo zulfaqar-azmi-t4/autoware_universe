@@ -79,7 +79,8 @@ protected:
     return traj;
   }
 
-  static EgoDynamicState create_ego_state(const TrajectoryPoints & traj, double velocity)
+  static EgoDynamicState create_ego_state(
+    const TrajectoryPoints & traj, double velocity, double current_time_s = 0.0)
   {
     EgoDynamicState state;
     if (!traj.empty()) {
@@ -89,6 +90,7 @@ protected:
     for (auto & c : state.pose_with_cov.covariance) c = 0.0;
     state.velocity = velocity;
     state.acceleration = 0.0;
+    state.current_time_s = current_time_s;
     return state;
   }
 
@@ -114,9 +116,8 @@ TEST_F(UncrossableBoundaryCheckerTest, TestInitializationFailure)
 TEST_F(UncrossableBoundaryCheckerTest, TestCheckDepartureEmptyTrajectory)
 {
   TrajectoryPoints empty_traj;
-  auto ego_state = create_ego_state(empty_traj, 0.0);
+  auto ego_state = create_ego_state(empty_traj, 0.0, clock_->now().seconds());
 
-  checker_.set_clock(clock_);
   checker_.set_lanelet_map(map_);
   checker_.set_param(param_);
   auto result = checker_.initialize();
@@ -131,7 +132,7 @@ TEST_F(UncrossableBoundaryCheckerTest, TestCheckDepartureZeroVelocity)
 {
   // If velocity is exactly 0, braking distance math might fail or boundary isn't reachable
   auto traj = create_trajectory(0.0, 0.0, 0.0);  // 0 velocity
-  auto ego_state = create_ego_state(traj, 0.0);
+  auto ego_state = create_ego_state(traj, 0.0, clock_->now().seconds());
 
   auto result = checker_.check_departure(traj, vehicle_info_, ego_state);
 
@@ -146,7 +147,6 @@ TEST_F(UncrossableBoundaryCheckerTest, TestCheckDepartureZeroVelocity)
 
 TEST_F(UncrossableBoundaryCheckerTest, TestTimeBufferingHysteresis)
 {
-  checker_.set_clock(clock_);
   checker_.set_lanelet_map(map_);
   checker_.set_param(param_);
   ASSERT_TRUE(checker_.initialize().has_value());
@@ -161,7 +161,7 @@ TEST_F(UncrossableBoundaryCheckerTest, TestTimeBufferingHysteresis)
   // STEP 1: Safe Driving
   // ----------------------------------------------------------------------------
   auto traj_safe = create_trajectory(0.0, safe_y, test_velocity, 0.0);
-  auto state_safe = create_ego_state(traj_safe, test_velocity);
+  auto state_safe = create_ego_state(traj_safe, test_velocity, clock_->now().seconds());
 
   auto res1 = checker_.check_departure(traj_safe, vehicle_info_, state_safe);
   ASSERT_TRUE(res1.has_value());
@@ -171,7 +171,7 @@ TEST_F(UncrossableBoundaryCheckerTest, TestTimeBufferingHysteresis)
   // STEP 2: Instantly teleport to Danger Zone
   // ----------------------------------------------------------------------------
   auto traj_danger = create_trajectory(0.0, danger_y, test_velocity, danger_yaw);
-  auto state_danger = create_ego_state(traj_danger, test_velocity);
+  auto state_danger = create_ego_state(traj_danger, test_velocity, clock_->now().seconds());
 
   auto res2 = checker_.check_departure(traj_danger, vehicle_info_, state_danger);
   ASSERT_TRUE(res2.has_value());
@@ -183,7 +183,9 @@ TEST_F(UncrossableBoundaryCheckerTest, TestTimeBufferingHysteresis)
   // ----------------------------------------------------------------------------
   std::this_thread::sleep_for(std::chrono::milliseconds(200));  // Sleep > 150ms
 
-  auto res3 = checker_.check_departure(traj_danger, vehicle_info_, state_danger);
+  auto res3 = checker_.check_departure(
+    traj_danger, vehicle_info_,
+    create_ego_state(traj_danger, test_velocity, clock_->now().seconds()));
   ASSERT_TRUE(res3.has_value());
   EXPECT_EQ(res3->status, DepartureType::CRITICAL)
     << "Should trigger CRITICAL after buffer expires.";
@@ -191,7 +193,8 @@ TEST_F(UncrossableBoundaryCheckerTest, TestTimeBufferingHysteresis)
   // ----------------------------------------------------------------------------
   // STEP 4: Instantly teleport back to Safe Zone
   // ----------------------------------------------------------------------------
-  auto res4 = checker_.check_departure(traj_safe, vehicle_info_, state_safe);
+  auto res4 = checker_.check_departure(
+    traj_safe, vehicle_info_, create_ego_state(traj_safe, test_velocity, clock_->now().seconds()));
   ASSERT_TRUE(res4.has_value());
   // Even though it is physically safe, the off_time_buffer_s (0.15s) holds the CRITICAL state!
   EXPECT_EQ(res4->status, DepartureType::CRITICAL)
@@ -202,7 +205,8 @@ TEST_F(UncrossableBoundaryCheckerTest, TestTimeBufferingHysteresis)
   // ----------------------------------------------------------------------------
   std::this_thread::sleep_for(std::chrono::milliseconds(200));  // Sleep > 150ms
 
-  auto res5 = checker_.check_departure(traj_safe, vehicle_info_, state_safe);
+  auto res5 = checker_.check_departure(
+    traj_safe, vehicle_info_, create_ego_state(traj_safe, test_velocity, clock_->now().seconds()));
   ASSERT_TRUE(res5.has_value());
   EXPECT_EQ(res5->status, DepartureType::NONE) << "Should return to NONE after OFF buffer expires.";
 

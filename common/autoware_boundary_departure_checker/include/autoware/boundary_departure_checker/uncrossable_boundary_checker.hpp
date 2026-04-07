@@ -38,7 +38,6 @@ class UncrossableBoundaryChecker
 {
 public:
   UncrossableBoundaryChecker() = default;
-  void set_clock(const rclcpp::Clock::SharedPtr clock_ptr);
   void set_lanelet_map(const lanelet::LaneletMapPtr lanelet_map_ptr);
   tl::expected<void, std::string> initialize();
 
@@ -65,7 +64,6 @@ public:
 private:
   // Member variables
   UncrossableBoundaryDepartureParam param_;
-  rclcpp::Clock::SharedPtr clock_ptr_;
   lanelet::LaneletMapPtr lanelet_map_ptr_;
   std::unique_ptr<UncrossableBoundsRTree> uncrossable_boundaries_rtree_ptr_;
   mutable std::shared_ptr<autoware_utils_debug::TimeKeeper> time_keeper_ =
@@ -120,7 +118,8 @@ private:
   [[nodiscard]] Side<ProjectionsToBound> evaluate_projections_across_sides(
     const Side<ProjectionsToBound> & projections_to_bound, const double curr_vel,
     const double curr_acc) const;
-  DepartureType apply_hysteresis(const Side<ProjectionsToBound> & evaluated_projections);
+  DepartureType determine_departure_type(
+    const Side<ProjectionsToBound> & evaluated_projections, const double current_time_s);
 };
 }  // namespace autoware::boundary_departure_checker
 

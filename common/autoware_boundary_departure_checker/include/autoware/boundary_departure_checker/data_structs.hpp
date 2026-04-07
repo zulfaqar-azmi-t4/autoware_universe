@@ -146,6 +146,7 @@ struct EgoDynamicState
   geometry_msgs::msg::PoseWithCovariance pose_with_cov;
   double velocity{0.0};
   double acceleration{0.0};
+  double current_time_s{0.0};
 };
 
 struct DepartureCheckThresholds
