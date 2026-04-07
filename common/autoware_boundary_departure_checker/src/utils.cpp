@@ -62,43 +62,39 @@ std::vector<SegmentWithIdx> create_local_segments(const lanelet::ConstLineString
 
 namespace autoware::boundary_departure_checker::utils
 {
-Side<ProjectionsToBound> evaluate_projections_severity(
-  const Side<ProjectionsToBound> & projections_to_bound,
-  const UncrossableBoundaryDepartureParam & param, const double min_braking_dist)
+ProjectionsToBound filter_and_assign_departure_types(
+  const ProjectionsToBound & side_value, const UncrossableBoundaryDepartureParam & param,
+  const double min_braking_dist)
 {
-  if (projections_to_bound.all_empty() && !projections_to_bound.equal_size()) {
-    return {};
+  ProjectionsToBound out;
+  out.reserve(side_value.size());
+
+  const DepartureCheckThresholds thresholds{
+    min_braking_dist, param.time_to_departure_cutoff_s, param.lateral_margin_m};
+
+  for (size_t idx = 0; idx < side_value.size(); ++idx) {
+    const auto & original_candidate = side_value[idx];
+    if (original_candidate.pose_index != idx) continue;
+
+    const ProjectionEvaluationMetrics metrics{
+      original_candidate.dist_along_trajectory_m - original_candidate.ego_front_to_proj_offset_m,
+      original_candidate.time_from_start, original_candidate.lat_dist};
+
+    out.push_back(original_candidate);
+    out.back().departure_type = assign_departure_type(metrics, thresholds);
+
+    if (out.back().is_critical()) break;
   }
 
-  const auto get_min_to_bound = [&](const auto & side_value) {
-    ProjectionsToBound out;
-    out.reserve(side_value.size());
+  return out;
+}
 
-    for (size_t idx = 0; idx < side_value.size(); ++idx) {
-      const auto & original_candidate = side_value[idx];
-      if (original_candidate.pose_index != idx) continue;
+void apply_backward_buffer_and_filter(
+  ProjectionsToBound & mut_side_value, const double longitudinal_margin_m)
+{
+  if (mut_side_value.empty()) return;
 
-      const ProjectionEvaluationMetrics metrics{
-        original_candidate.dist_along_trajectory_m - original_candidate.ego_front_to_proj_offset_m,
-        original_candidate.time_from_start, original_candidate.lat_dist};
-      const DepartureCheckThresholds thresholds{
-        min_braking_dist, param.time_to_departure_cutoff_s, param.lateral_margin_m};
-
-      out.push_back(original_candidate);  // Copy once directly into the vector
-      out.back().departure_type = assign_departure_type(metrics, thresholds);  // Mutate in place
-
-      if (out.back().is_critical()) break;
-    }
-
-    return out;
-  };
-
-  Side<ProjectionsToBound> min_to_bounds =
-    projections_to_bound.transform_each_side(get_min_to_bound);
-
-  const auto erase_non_departure_points = [&param](ProjectionsToBound & mut_side_value) {
-    if (mut_side_value.empty() || !mut_side_value.back().is_critical()) return;
-
+  if (mut_side_value.back().is_critical()) {
     const double crash_s = mut_side_value.back().dist_along_trajectory_m -
                            mut_side_value.back().ego_front_to_proj_offset_m;
     auto earliest_critical_it = mut_side_value.end() - 1;
@@ -106,7 +102,7 @@ Side<ProjectionsToBound> evaluate_projections_severity(
     for (auto itr = mut_side_value.rbegin(); itr != mut_side_value.rend(); ++itr) {
       const double dist_to_crash = crash_s - itr->dist_along_trajectory_m;
 
-      if (dist_to_crash <= param.longitudinal_margin_m) {
+      if (dist_to_crash <= longitudinal_margin_m) {
         itr->departure_type = DepartureType::CRITICAL;
         earliest_critical_it = itr.base() - 1;
       } else {
@@ -118,13 +114,32 @@ Side<ProjectionsToBound> evaluate_projections_severity(
     if (earliest_critical_it != mut_side_value.end() - 1) {
       mut_side_value.erase(earliest_critical_it + 1, mut_side_value.end());
     }
-    mut_side_value.erase(
-      std::remove_if(
-        mut_side_value.begin(), mut_side_value.end(),
-        [](const ProjectionToBound & p) { return p.departure_type == DepartureType::NONE; }),
-      mut_side_value.end());
-  };
-  min_to_bounds.for_each_side(erase_non_departure_points);
+  }
+
+  // ALWAYS sweep up the NONE points
+  mut_side_value.erase(
+    std::remove_if(
+      mut_side_value.begin(), mut_side_value.end(),
+      [](const ProjectionToBound & p) { return p.departure_type == DepartureType::NONE; }),
+    mut_side_value.end());
+}
+
+Side<ProjectionsToBound> evaluate_projections_severity(
+  const Side<ProjectionsToBound> & projections_to_bound,
+  const UncrossableBoundaryDepartureParam & param, const double min_braking_dist)
+{
+  if (projections_to_bound.all_empty() && !projections_to_bound.equal_size()) {
+    return {};
+  }
+
+  Side<ProjectionsToBound> min_to_bounds =
+    projections_to_bound.transform_each_side([&](const auto & side_value) {
+      return filter_and_assign_departure_types(side_value, param, min_braking_dist);
+    });
+
+  min_to_bounds.for_each_side([&](auto & mut_side_value) {
+    apply_backward_buffer_and_filter(mut_side_value, param.longitudinal_margin_m);
+  });
 
   return min_to_bounds;
 }
@@ -361,43 +376,6 @@ Side<ProjectionsToBound> get_closest_boundary_segments_from_side(
   return side;
 }
 
-tl::expected<std::vector<lanelet::LineString3d>, std::string> get_uncrossable_linestrings_near_pose(
-  const lanelet::LaneletMapPtr & lanelet_map_ptr, const Pose & ego_pose,
-  const double search_distance, const std::vector<std::string> & uncrossable_boundary_types)
-{
-  if (!lanelet_map_ptr) {
-    return tl::make_unexpected("lanelet_map_ptr is null");
-  }
-
-  if (search_distance < 0.0) {
-    return tl::make_unexpected("Search distance must be non-negative.");
-  }
-
-  const auto p = lanelet::BasicPoint2d(ego_pose.position.x, ego_pose.position.y);
-
-  if (!std::isfinite(p.x()) || !std::isfinite(p.y())) {
-    return tl::make_unexpected("ego_pose contains non-finite values.");
-  }
-
-  const auto offset = lanelet::BasicPoint2d(search_distance, search_distance);
-  auto bbox = lanelet::BoundingBox2d(p - offset, p + offset);
-
-  auto nearby_linestrings = lanelet_map_ptr->lineStringLayer.search(bbox);
-
-  const auto remove_itr = std::remove_if(
-    nearby_linestrings.begin(), nearby_linestrings.end(),
-    [&](const auto & ls) { return !is_uncrossable_type(uncrossable_boundary_types, ls); });
-
-  nearby_linestrings.erase(remove_itr, nearby_linestrings.end());
-
-  if (nearby_linestrings.empty()) {
-    return tl::make_unexpected(
-      "No nearby uncrossable boundaries within " + std::to_string(search_distance) + " meter.");
-  }
-
-  return nearby_linestrings;
-}
-
 std::optional<double> calc_signed_lateral_distance_to_boundary(
   const lanelet::ConstLineString3d & boundary, const Pose & reference_pose)
 {
@@ -447,4 +425,55 @@ std::optional<double> calc_signed_lateral_distance_to_boundary(
 
   return signed_lateral_distance;
 }
+
+autoware_utils_geometry::Segment3d get_segment_3d_from_id(
+  const lanelet::LaneletMapPtr & lanelet_map_ptr,
+  const autoware::boundary_departure_checker::IdxForRTreeSegment & seg_id)
+{
+  const auto & linestring_layer = lanelet_map_ptr->lineStringLayer;
+  const auto basic_ls = linestring_layer.get(seg_id.linestring_id).basicLineString();
+
+  auto p_start = autoware_utils_geometry::Point3d{
+    basic_ls.at(seg_id.segment_start_idx).x(), basic_ls.at(seg_id.segment_start_idx).y(),
+    basic_ls.at(seg_id.segment_start_idx).z()};
+
+  auto p_end = autoware_utils_geometry::Point3d{
+    basic_ls.at(seg_id.segment_end_idx).x(), basic_ls.at(seg_id.segment_end_idx).y(),
+    basic_ls.at(seg_id.segment_end_idx).z()};
+
+  return {p_start, p_end};
+}
+
+bool is_closest_to_boundary_segment(
+  const autoware_utils_geometry::Segment2d & boundary_segment,
+  const autoware_utils_geometry::Segment2d & ego_side_ref_segment,
+  const autoware_utils_geometry::Segment2d & ego_side_opposite_ref_segment)
+{
+  const auto dist_from_curr_side = bg::comparable_distance(ego_side_ref_segment, boundary_segment);
+  const auto dist_from_compare_side =
+    bg::comparable_distance(ego_side_opposite_ref_segment, boundary_segment);
+
+  return dist_from_curr_side <= dist_from_compare_side;
+}
+
+bool is_segment_within_ego_height(
+  const autoware_utils_geometry::Segment3d & boundary_segment, const double ego_z_position,
+  const double ego_height)
+{
+  auto height_diff = std::min(
+    std::abs(boundary_segment.first.z() - ego_z_position),
+    std::abs(boundary_segment.second.z() - ego_z_position));
+  return height_diff < ego_height;
+}
+
+bool is_critical(const Side<ProjectionsToBound> & evaluated_projections)
+{
+  const auto check_side_for_critical = [&](const ProjectionsToBound & side_value) {
+    return std::any_of(
+      side_value.rbegin(), side_value.rend(), [](const auto & pt) { return pt.is_critical(); });
+  };
+
+  return evaluated_projections.any_of_side(check_side_for_critical);
+}
+
 }  // namespace autoware::boundary_departure_checker::utils

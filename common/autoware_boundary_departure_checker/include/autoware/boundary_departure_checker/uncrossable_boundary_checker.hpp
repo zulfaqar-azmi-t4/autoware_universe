@@ -37,15 +37,10 @@ class FootprintManager;
 class UncrossableBoundaryChecker
 {
 public:
-  UncrossableBoundaryChecker(
-    const rclcpp::Clock::SharedPtr clock_ptr, lanelet::LaneletMapPtr lanelet_map_ptr);
-
-  UncrossableBoundaryChecker() = delete;
-  UncrossableBoundaryChecker(const UncrossableBoundaryChecker &) = delete;
-  UncrossableBoundaryChecker(UncrossableBoundaryChecker &&) = delete;
-  UncrossableBoundaryChecker & operator=(const UncrossableBoundaryChecker &) = delete;
-  UncrossableBoundaryChecker & operator=(UncrossableBoundaryChecker &&) = delete;
-  ~UncrossableBoundaryChecker();
+  UncrossableBoundaryChecker() = default;
+  void set_clock(const rclcpp::Clock::SharedPtr clock_ptr);
+  void set_lanelet_map(const lanelet::LaneletMapPtr lanelet_map_ptr);
+  tl::expected<void, std::string> initialize();
 
   void set_param(const UncrossableBoundaryDepartureParam & param);
 
@@ -120,28 +115,13 @@ private:
   rclcpp::Clock::SharedPtr clock_ptr_;
   lanelet::LaneletMapPtr lanelet_map_ptr_;
   std::unique_ptr<UncrossableBoundsRTree> uncrossable_boundaries_rtree_ptr_;
-  mutable std::shared_ptr<autoware_utils_debug::TimeKeeper> time_keeper_;
+  mutable std::shared_ptr<autoware_utils_debug::TimeKeeper> time_keeper_ =
+    std::make_shared<autoware_utils_debug::TimeKeeper>();
   double last_no_critical_dpt_time_{0.0};
   double last_found_critical_dpt_time_{0.0};
   Side<ProjectionsToBound> critical_departure_;
 
-  // Private member functions
-  /**
-   * @brief Build an R-tree of uncrossable boundaries (e.g., road_border) from a lanelet map.
-   *
-   * Filters the map's line strings by type and constructs a spatial index used to detect boundary
-   * violations.
-   *
-   * @param lanelet_map_ptr Shared pointer to the lanelet map.
-   * @return Constructed R-tree or an error message if map or parameters are invalid.
-   */
-  tl::expected<UncrossableBoundsRTree, std::string> build_uncrossable_boundaries_tree(
-    const lanelet::LaneletMapPtr & lanelet_map_ptr);
-
-  bool is_continuous_critical_departure(const Side<ProjectionsToBound> & evaluated_projections);
-  bool is_critical_departure_persist(const Side<ProjectionsToBound> & evaluated_projections);
-
-  DepartureType determine_departure_type(const Side<ProjectionsToBound> & evaluated_projections);
+  DepartureType apply_hysteresis(const Side<ProjectionsToBound> & evaluated_projections);
 };
 }  // namespace autoware::boundary_departure_checker
 

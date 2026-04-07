@@ -30,6 +30,35 @@
 
 namespace autoware::boundary_departure_checker::utils
 {
+ProjectionsToBound filter_and_assign_departure_types(
+  const ProjectionsToBound & side_value, const UncrossableBoundaryDepartureParam & param,
+  const double min_braking_dist);
+
+void apply_backward_buffer_and_filter(
+  ProjectionsToBound & mut_side_value, const double longitudinal_margin_m);
+
+/**
+ * @brief Evaluates all footprint projections for a specific side and selects the most
+ * critical/closest ones.
+ *
+ * Evaluates multiple abnormality-aware projections (e.g., NORMAL, LOCALIZATION) for each
+ * trajectory index, and selects the best candidate based on lateral distance and classification
+ * logic (CRITICAL/NEAR).
+ *
+ * @param projections_to_bound Footprint sides' projections to boundaries.
+ * @param param Checker parameters.
+ * @param min_braking_dist Minimum braking distance.
+ * @param max_braking_dist Maximum braking distance.
+ * @param side_key Side to process (left or right).
+ * @return Vector of closest projections with departure classification, or std::nullopt on failure.
+ */
+Side<ProjectionsToBound> evaluate_projections_severity(
+  const Side<ProjectionsToBound> & projections_to_bound,
+  const UncrossableBoundaryDepartureParam & param, const double min_braking_dist);
+
+DepartureType assign_departure_type(
+  const ProjectionEvaluationMetrics & metrics, const DepartureCheckThresholds & thresholds);
+
 /**
  * @brief Check if a line string matches one of the uncrossable boundary types.
  *
@@ -136,47 +165,52 @@ Side<ProjectionsToBound> get_closest_boundary_segments_from_side(
   const TrajectoryPoints & ego_pred_traj, const BoundarySegmentsBySide & boundaries,
   const FootprintSideSegmentsArray & footprints_sides);
 
-/**
- * @brief Find nearby uncrossable linestrings around the given pose.
- *
- * Searches for linestrings within a square area centered at the ego pose.
- * Filters results to include only those tagged with uncrossable boundary types.
- *
- * @param lanelet_map_ptr Shared pointer to the lanelet map.
- * @param ego_pose Center of the search area.
- * @param search_distance Distance from the pose to define the square search area (in meters).
- * @param uncrossable_boundary_types List of boundary type tags considered uncrossable.
- * @return List of uncrossable linestrings near the given pose, or an error string if none found.
- */
-tl::expected<std::vector<lanelet::LineString3d>, std::string> get_uncrossable_linestrings_near_pose(
-  const lanelet::LaneletMapPtr & lanelet_map_ptr, const Pose & ego_pose,
-  const double search_distance,
-  const std::vector<std::string> & uncrossable_boundary_types = {"road_border"});
-
 std::optional<double> calc_signed_lateral_distance_to_boundary(
   const lanelet::ConstLineString3d & boundary, const Pose & reference_pose);
 
 /**
- * @brief Evaluates all footprint projections for a specific side and selects the most
- * critical/closest ones.
+ * @brief Retrieves a 3D line segment from the Lanelet2 map.
  *
- * Evaluates multiple abnormality-aware projections (e.g., NORMAL, LOCALIZATION) for each
- * trajectory index, and selects the best candidate based on lateral distance and classification
- * logic (CRITICAL/NEAR).
- *
- * @param projections_to_bound Footprint sides' projections to boundaries.
- * @param param Checker parameters.
- * @param min_braking_dist Minimum braking distance.
- * @param max_braking_dist Maximum braking distance.
- * @param side_key Side to process (left or right).
- * @return Vector of closest projections with departure classification, or std::nullopt on failure.
+ * @param lanelet_map_ptr A pointer to the Lanelet2 map from which to retrieve the data.
+ * @param seg_id An identifier struct containing the ID of the parent LineString and the start/end
+ * indices of the specific segment within it.
+ * @return The corresponding Segment3d defined by the start and end points.
  */
-Side<ProjectionsToBound> evaluate_projections_severity(
-  const Side<ProjectionsToBound> & projections_to_bound,
-  const UncrossableBoundaryDepartureParam & param, const double min_braking_dist);
+autoware_utils_geometry::Segment3d get_segment_3d_from_id(
+  const lanelet::LaneletMapPtr & lanelet_map_ptr,
+  const autoware::boundary_departure_checker::IdxForRTreeSegment & seg_id);
 
-DepartureType assign_departure_type(
-  const ProjectionEvaluationMetrics & metrics, const DepartureCheckThresholds & thresholds);
+/**
+ * @brief Checks if a given boundary segment is closer to the reference ego side than the opposite
+ * side.
+ *
+ * @param boundary_segment The boundary segment to check.
+ * @param ego_side_ref_segment The reference side of the ego vehicle (e.g., the left side).
+ * @param ego_side_opposite_ref_segment The opposite side of the ego vehicle (e.g., the right side).
+ * @return True if the boundary is closer to or equidistant to the reference side; false otherwise.
+ */
+bool is_closest_to_boundary_segment(
+  const autoware_utils_geometry::Segment2d & boundary_segment,
+  const autoware_utils_geometry::Segment2d & ego_side_ref_segment,
+  const autoware_utils_geometry::Segment2d & ego_side_opposite_ref_segment);
+
+/**
+ * @brief Checks if a 3D boundary segment is vertically within the height range of the ego vehicle.
+ *
+ * This helps filter out irrelevant boundaries like overpasses (too high) or underpass (too low).
+ *
+ * @param boundary_segment The 3D boundary segment to check.
+ * @param ego_z_position The reference vertical (Z-axis) position of the ego vehicle (e.g., at its
+ * base).
+ * @param ego_height The total height of the ego vehicle.
+ * @return True if the segment's closest vertical point is within the vehicle's height; false
+ * otherwise.
+ */
+bool is_segment_within_ego_height(
+  const autoware_utils_geometry::Segment3d & boundary_segment, const double ego_z_position,
+  const double ego_height);
+
+bool is_critical(const Side<ProjectionsToBound> & evaluated_projections);
 }  // namespace autoware::boundary_departure_checker::utils
 
 #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__UTILS_HPP_

@@ -23,12 +23,12 @@ namespace autoware::boundary_departure_checker
 struct UncrossableBoundaryDepartureParam
 {
   int max_lateral_rtree_queries{5};
-  double lateral_margin_m{0.0};
-  double longitudinal_margin_m{0.0};
-  double max_deceleration_mps2{0.0};
-  double max_jerk_mps3{0.0};
-  double brake_delay_s{0.0};
-  double time_to_departure_cutoff_s{0.0};
+  double lateral_margin_m{0.01};
+  double longitudinal_margin_m{1.0};
+  double max_deceleration_mps2{-4.0};
+  double max_jerk_mps3{-5.0};
+  double brake_delay_s{1.0};
+  double time_to_departure_cutoff_s{2.0};
   double on_time_buffer_s{0.15};
   double off_time_buffer_s{0.15};
   std::vector<std::string> boundary_types_to_detect{"road_border"};

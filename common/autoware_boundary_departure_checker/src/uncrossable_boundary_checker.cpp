@@ -43,97 +43,28 @@
 #include <utility>
 #include <vector>
 
-namespace
-{
-namespace bg = boost::geometry;
-
-/**
- * @brief Retrieves a 3D line segment from the Lanelet2 map.
- *
- * @param lanelet_map_ptr A pointer to the Lanelet2 map from which to retrieve the data.
- * @param seg_id An identifier struct containing the ID of the parent LineString and the start/end
- * indices of the specific segment within it.
- * @return The corresponding Segment3d defined by the start and end points.
- */
-autoware_utils_geometry::Segment3d get_segment_3d_from_id(
-  const lanelet::LaneletMapPtr & lanelet_map_ptr,
-  const autoware::boundary_departure_checker::IdxForRTreeSegment & seg_id)
-{
-  const auto & linestring_layer = lanelet_map_ptr->lineStringLayer;
-  const auto basic_ls = linestring_layer.get(seg_id.linestring_id).basicLineString();
-
-  auto p_start = autoware_utils_geometry::Point3d{
-    basic_ls.at(seg_id.segment_start_idx).x(), basic_ls.at(seg_id.segment_start_idx).y(),
-    basic_ls.at(seg_id.segment_start_idx).z()};
-
-  auto p_end = autoware_utils_geometry::Point3d{
-    basic_ls.at(seg_id.segment_end_idx).x(), basic_ls.at(seg_id.segment_end_idx).y(),
-    basic_ls.at(seg_id.segment_end_idx).z()};
-
-  return {p_start, p_end};
-}
-
-/**
- * @brief Checks if a given boundary segment is closer to the reference ego side than the opposite
- * side.
- *
- * @param boundary_segment The boundary segment to check.
- * @param ego_side_ref_segment The reference side of the ego vehicle (e.g., the left side).
- * @param ego_side_opposite_ref_segment The opposite side of the ego vehicle (e.g., the right side).
- * @return True if the boundary is closer to or equidistant to the reference side; false otherwise.
- */
-bool is_closest_to_boundary_segment(
-  const autoware_utils_geometry::Segment2d & boundary_segment,
-  const autoware_utils_geometry::Segment2d & ego_side_ref_segment,
-  const autoware_utils_geometry::Segment2d & ego_side_opposite_ref_segment)
-{
-  const auto dist_from_curr_side = bg::comparable_distance(ego_side_ref_segment, boundary_segment);
-  const auto dist_from_compare_side =
-    bg::comparable_distance(ego_side_opposite_ref_segment, boundary_segment);
-
-  return dist_from_curr_side <= dist_from_compare_side;
-}
-
-/**
- * @brief Checks if a 3D boundary segment is vertically within the height range of the ego vehicle.
- *
- * This helps filter out irrelevant boundaries like overpasses (too high) or underpass (too low).
- *
- * @param boundary_segment The 3D boundary segment to check.
- * @param ego_z_position The reference vertical (Z-axis) position of the ego vehicle (e.g., at its
- * base).
- * @param ego_height The total height of the ego vehicle.
- * @return True if the segment's closest vertical point is within the vehicle's height; false
- * otherwise.
- */
-bool is_segment_within_ego_height(
-  const autoware_utils_geometry::Segment3d & boundary_segment, const double ego_z_position,
-  const double ego_height)
-{
-  auto height_diff = std::min(
-    std::abs(boundary_segment.first.z() - ego_z_position),
-    std::abs(boundary_segment.second.z() - ego_z_position));
-  return height_diff < ego_height;
-}
-}  // namespace
-
 namespace autoware::boundary_departure_checker
 {
-UncrossableBoundaryChecker::UncrossableBoundaryChecker(
-  const rclcpp::Clock::SharedPtr clock_ptr, lanelet::LaneletMapPtr lanelet_map_ptr)
-: clock_ptr_(clock_ptr), lanelet_map_ptr_(lanelet_map_ptr)
+void UncrossableBoundaryChecker::set_clock(const rclcpp::Clock::SharedPtr clock_ptr)
 {
-  if (!lanelet_map_ptr) {
-    throw std::runtime_error("lanelet_map_ptr is null");
-  }
-  auto try_uncrossable_boundaries_rtree = build_uncrossable_boundaries_tree(lanelet_map_ptr);
+  clock_ptr_ = clock_ptr;
+}
 
-  if (!try_uncrossable_boundaries_rtree) {
-    throw std::runtime_error(try_uncrossable_boundaries_rtree.error());
+void UncrossableBoundaryChecker::set_lanelet_map(const lanelet::LaneletMapPtr lanelet_map_ptr)
+{
+  lanelet_map_ptr_ = lanelet_map_ptr;
+}
+
+tl::expected<void, std::string> UncrossableBoundaryChecker::initialize()
+{
+  if (!lanelet_map_ptr_ || lanelet_map_ptr_->lineStringLayer.empty()) {
+    return tl::make_unexpected("Invalid lanelet map pointer or empty linestring layer");
   }
 
-  uncrossable_boundaries_rtree_ptr_ =
-    std::make_unique<UncrossableBoundsRTree>(*try_uncrossable_boundaries_rtree);
+  uncrossable_boundaries_rtree_ptr_ = std::make_unique<UncrossableBoundsRTree>(
+    utils::build_uncrossable_boundaries_rtree(*lanelet_map_ptr_, param_.boundary_types_to_detect));
+
+  return {};
 }
 
 void UncrossableBoundaryChecker::set_param(const UncrossableBoundaryDepartureParam & param)
@@ -141,29 +72,6 @@ void UncrossableBoundaryChecker::set_param(const UncrossableBoundaryDeparturePar
   param_ = param;
 }
 
-tl::expected<UncrossableBoundsRTree, std::string>
-UncrossableBoundaryChecker::build_uncrossable_boundaries_tree(
-  const lanelet::LaneletMapPtr & lanelet_map_ptr)
-{
-  autoware_utils_debug::ScopedTimeTrack st(__func__, *time_keeper_);
-
-  if (!lanelet_map_ptr) {
-    return tl::make_unexpected("lanelet_map_ptr is null");
-  }
-
-  return utils::build_uncrossable_boundaries_rtree(
-    *lanelet_map_ptr, param_.boundary_types_to_detect);
-}
-
-bool is_critical(const Side<ProjectionsToBound> & evaluated_projections)
-{
-  const auto check_side_for_critical = [&](const ProjectionsToBound & side_value) {
-    return std::any_of(
-      side_value.rbegin(), side_value.rend(), [](const auto & pt) { return pt.is_critical(); });
-  };
-
-  return evaluated_projections.any_of_side(check_side_for_critical);
-}
 tl::expected<DepartureData, std::string> UncrossableBoundaryChecker::check_departure(
   const TrajectoryPoints & predicted_traj, const vehicle_info_utils::VehicleInfo & vehicle_info,
   const EgoDynamicState & ego_state)
@@ -204,39 +112,51 @@ tl::expected<DepartureData, std::string> UncrossableBoundaryChecker::check_depar
   departure_data.evaluated_projections = evaluate_projections_across_sides(
     departure_data.projections_to_bound, ego_state.velocity, ego_state.acceleration);
 
-  departure_data.status = determine_departure_type(departure_data.evaluated_projections);
+  departure_data.status = apply_hysteresis(departure_data.evaluated_projections);
 
   return departure_data;
 }
 
-DepartureType UncrossableBoundaryChecker::determine_departure_type(
+DepartureType UncrossableBoundaryChecker::apply_hysteresis(
   const Side<ProjectionsToBound> & evaluated_projections)
 {
-  if (!is_critical_departure_persist(evaluated_projections)) {
-    critical_departure_.for_each_side([](auto & side) { side.clear(); });
-    return DepartureType::NONE;
-  }
+  const bool current_is_critical = utils::is_critical(evaluated_projections);
 
-  if (!is_continuous_critical_departure(evaluated_projections)) {
-    return DepartureType::NONE;
-  }
+  if (current_is_critical) {
+    // Geometrically critical. Check if the ON buffer has expired.
+    if (clock_ptr_->now().seconds() - last_no_critical_dpt_time_ >= param_.on_time_buffer_s) {
+      // We officially entered the CRITICAL state. Record this exact time!
+      last_found_critical_dpt_time_ = clock_ptr_->now().seconds();
 
-  evaluated_projections.for_each([&](auto key_constant, auto & side_value) {
-    constexpr SideKey side_key = key_constant.value;
-    for (const auto & proj : side_value) {
-      if (proj.is_critical()) {
-        critical_departure_[side_key].push_back(proj);
-      }
+      // Save the critical points for visualization/downstream use
+      critical_departure_.for_each_side([](auto & side) { side.clear(); });
+      evaluated_projections.for_each([&](auto key_constant, auto & side_value) {
+        for (const auto & proj : side_value) {
+          if (proj.is_critical()) {
+            critical_departure_[key_constant.value].push_back(proj);
+          }
+        }
+      });
+      return DepartureType::CRITICAL;
     }
-  });
+    // Geometrically critical, but still waiting for the ON buffer to expire
+    return DepartureType::NONE;
+  }
+  // Geometrically safe. Continually update the safe timestamp.
+  last_no_critical_dpt_time_ = clock_ptr_->now().seconds();
 
-  return critical_departure_.any_of_side([](const auto & side_value) {
-    return std::any_of(
-      side_value.begin(), side_value.end(), [](const auto & proj) { return proj.is_critical(); });
-  })
-           ? DepartureType::CRITICAL
-           : DepartureType::NONE;
+  // If we were previously in a CRITICAL state, check the OFF buffer
+  if (!critical_departure_.all_empty()) {
+    if (clock_ptr_->now().seconds() - last_found_critical_dpt_time_ < param_.off_time_buffer_s) {
+      return DepartureType::CRITICAL;  // Hold the CRITICAL state!
+    }
+    // The OFF buffer has officially expired. Clear the saved state.
+    critical_departure_.for_each_side([](auto & side) { side.clear(); });
+  }
+
+  return DepartureType::NONE;
 }
+
 std::vector<SegmentWithIdx> UncrossableBoundaryChecker::find_closest_boundary_segments(
   const Segment2d & ego_ref_segment, const Segment2d & ego_opposite_ref_segment,
   const double ego_z_position, const double ego_vehicle_height,
@@ -260,15 +180,16 @@ std::vector<SegmentWithIdx> UncrossableBoundaryChecker::find_closest_boundary_se
       continue;  // Skip if this segment has already been added
     }
 
-    auto boundary_segment_3d = get_segment_3d_from_id(lanelet_map_ptr_, id);
+    auto boundary_segment_3d = utils::get_segment_3d_from_id(lanelet_map_ptr_, id);
 
-    if (!is_segment_within_ego_height(boundary_segment_3d, ego_z_position, ego_vehicle_height)) {
+    if (!utils::is_segment_within_ego_height(
+          boundary_segment_3d, ego_z_position, ego_vehicle_height)) {
       continue;
     }
 
     auto boundary_segment = utils::to_segment_2d(boundary_segment_3d);
 
-    if (is_closest_to_boundary_segment(
+    if (utils::is_closest_to_boundary_segment(
           boundary_segment, ego_ref_segment, ego_opposite_ref_segment)) {
       new_segments.emplace_back(boundary_segment, id);
     }
@@ -326,7 +247,7 @@ Side<ProjectionsToBound> UncrossableBoundaryChecker::evaluate_projections_across
 bool UncrossableBoundaryChecker::is_continuous_critical_departure(
   const Side<ProjectionsToBound> & evaluated_projections)
 {
-  const auto is_critical_departure_detected = is_critical(evaluated_projections);
+  const auto is_critical_departure_detected = utils::is_critical(evaluated_projections);
 
   if (!is_critical_departure_detected) {
     last_no_critical_dpt_time_ = clock_ptr_->now().seconds();
@@ -341,7 +262,7 @@ bool UncrossableBoundaryChecker::is_critical_departure_persist(
   const Side<ProjectionsToBound> & evaluated_projections)
 {
   const auto is_critical_departure_detected =
-    is_critical(evaluated_projections) && !critical_departure_.all_empty();
+    utils::is_critical(evaluated_projections) && !critical_departure_.all_empty();
 
   if (is_critical_departure_detected) {
     last_found_critical_dpt_time_ = clock_ptr_->now().seconds();
@@ -351,6 +272,4 @@ bool UncrossableBoundaryChecker::is_critical_departure_persist(
   const auto t_diff = clock_ptr_->now().seconds() - last_found_critical_dpt_time_;
   return t_diff >= param_.off_time_buffer_s;
 }
-
-UncrossableBoundaryChecker::~UncrossableBoundaryChecker() = default;
 }  // namespace autoware::boundary_departure_checker
