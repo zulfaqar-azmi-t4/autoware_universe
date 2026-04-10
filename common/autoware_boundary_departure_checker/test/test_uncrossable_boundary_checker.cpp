@@ -134,10 +134,13 @@ TEST_F(UncrossableBoundaryCheckerTest, TestCheckDepartureZeroVelocity)
   auto traj = create_trajectory(0.0, 0.0, 0.0);  // 0 velocity
   auto ego_state = create_ego_state(traj, 0.0, clock_->now().seconds());
 
+  checker_.set_lanelet_map(map_);
+  checker_.set_param(param_);
+
+  ASSERT_TRUE(checker_.initialize().has_value());
   auto result = checker_.check_departure(traj, vehicle_info_, ego_state);
 
   // It shouldn't crash. It should just return DepartureType::NONE.
-  ASSERT_TRUE(result.has_value());
   EXPECT_EQ(result->status, DepartureType::NONE);
 }
 

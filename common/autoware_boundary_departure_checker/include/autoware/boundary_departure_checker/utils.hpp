@@ -34,27 +34,13 @@ ProjectionsToBound filter_and_assign_departure_types(
   const ProjectionsToBound & side_value, const UncrossableBoundaryDepartureParam & param,
   const double min_braking_dist);
 
-void apply_backward_buffer_and_filter(
-  ProjectionsToBound & mut_side_value, const double longitudinal_margin_m);
+std::optional<CriticalPointPair> apply_backward_buffer_and_filter(
+  const ProjectionsToBound & side_value, const UncrossableBoundaryDepartureParam & param);
 
-/**
- * @brief Evaluates all footprint projections for a specific side and selects the most
- * critical/closest ones.
- *
- * Evaluates multiple abnormality-aware projections (e.g., NORMAL, LOCALIZATION) for each
- * trajectory index, and selects the best candidate based on lateral distance and classification
- * logic (CRITICAL/NEAR).
- *
- * @param projections_to_bound Footprint sides' projections to boundaries.
- * @param param Checker parameters.
- * @param min_braking_dist Minimum braking distance.
- * @param max_braking_dist Maximum braking distance.
- * @param side_key Side to process (left or right).
- * @return Vector of closest projections with departure classification, or std::nullopt on failure.
- */
-Side<ProjectionsToBound> evaluate_projections_severity(
+Side<std::optional<CriticalPointPair>> evaluate_projections_severity(
   const Side<ProjectionsToBound> & projections_to_bound,
-  const UncrossableBoundaryDepartureParam & param, const double min_braking_dist);
+  const UncrossableBoundaryDepartureParam & param, const EgoDynamicState & ego_state,
+  const vehicle_info_utils::VehicleInfo & vehicle_info);
 
 DepartureType assign_departure_type(
   const ProjectionEvaluationMetrics & metrics, const DepartureCheckThresholds & thresholds);
@@ -210,7 +196,11 @@ bool is_segment_within_ego_height(
   const autoware_utils_geometry::Segment3d & boundary_segment, const double ego_z_position,
   const double ego_height);
 
-bool is_critical(const Side<ProjectionsToBound> & evaluated_projections);
+bool is_critical(const Side<std::optional<CriticalPointPair>> & evaluated_projections);
+
+double calc_minimum_braking_distance(
+  const EgoDynamicState & ego_state, const UncrossableBoundaryDepartureParam & param,
+  const vehicle_info_utils::VehicleInfo & vehicle_info);
 }  // namespace autoware::boundary_departure_checker::utils
 
 #endif  // AUTOWARE__BOUNDARY_DEPARTURE_CHECKER__UTILS_HPP_

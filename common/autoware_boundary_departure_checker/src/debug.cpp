@@ -23,6 +23,7 @@
 #include <std_msgs/msg/detail/color_rgba__struct.hpp>
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -68,22 +69,39 @@ inline ColorRGBA white(float a = 0.99)
 
 namespace autoware::boundary_departure_checker::debug
 {
+void add_projection_to_marker(
+  Marker & marker, const ProjectionToBound & pt, const double base_link_z)
+{
+  const auto to_geom = [base_link_z](const auto & p) {
+    return autoware_utils_geometry::to_msg(p.to_3d(base_link_z));
+  };
+  marker.points.push_back(to_geom(pt.pt_on_ego));
+  marker.points.push_back(to_geom(pt.pt_on_bound));
+  marker.points.push_back(to_geom(pt.nearest_bound_seg.first));
+  marker.points.push_back(to_geom(pt.nearest_bound_seg.second));
+}
+
 template <typename T>
 Marker create_projections_to_bound_marker(
   const T & projections_to_bound, Marker marker, const std::string & type_str,
   const std::string & side_key_str, const double base_link_z)
 {
   marker.ns = type_str + "_projection_to_bound_" + side_key_str;
-  const auto to_geom = [base_link_z](const auto & pt) {
-    return autoware_utils_geometry::to_msg(pt.to_3d(base_link_z));
-  };
+  marker.color = color::blue();
   for (const auto & pt : projections_to_bound) {
-    marker.color = color::blue();
-    marker.points.push_back(to_geom(pt.pt_on_ego));
-    marker.points.push_back(to_geom(pt.pt_on_bound));
-    marker.points.push_back(to_geom(pt.nearest_bound_seg.first));
-    marker.points.push_back(to_geom(pt.nearest_bound_seg.second));
+    add_projection_to_marker(marker, pt, base_link_z);
   }
+  return marker;
+}
+
+Marker create_result_projection_marker(
+  const CriticalPointPair & result_pair, Marker marker, const std::string & side_key_str,
+  const double base_link_z)
+{
+  marker.ns = "result_projection_to_bound_" + side_key_str;
+  marker.color = color::aqua();
+  add_projection_to_marker(marker, result_pair.physical_departure_point, base_link_z);
+  add_projection_to_marker(marker, result_pair.safety_buffer_start, base_link_z);
   return marker;
 }
 
@@ -226,17 +244,24 @@ MarkerArray create_debug_markers(
   marker_array.markers.push_back(create_boundary_segments_marker(
     departure_data.boundary_segments, marker, "boundary_segments", base_link_z));
 
-  departure_data.evaluated_projections.for_each([&](auto key_constant, auto & side_value) {
-    marker_array.markers.push_back(create_projections_to_bound_marker(
-      side_value, marker, "closest", to_string(key_constant.value), base_link_z));
+  departure_data.projections_to_bound.for_each([&](auto key_constant, auto & side_value) {
+    const std::string side_str = to_string(key_constant.value);
+    marker_array.markers.push_back(
+      create_projections_to_bound_marker(side_value, marker, "closest", side_str, base_link_z));
     autoware_utils_visualization::append_marker_array(
-      create_projections_type_wall_marker(
-        side_value, curr_time, to_string(key_constant.value), base_link_z),
+      create_projections_type_wall_marker(side_value, curr_time, side_str, base_link_z),
       &marker_array);
     autoware_utils_visualization::append_marker_array(
       create_departure_footprint_marker(
         side_value, departure_data.footprints, curr_time, base_link_z),
       &marker_array);
+  });
+
+  departure_data.evaluated_projections.for_each([&](auto key_constant, auto & side_value) {
+    if (side_value.has_value()) {
+      marker_array.markers.push_back(create_result_projection_marker(
+        side_value.value(), marker, to_string(key_constant.value), base_link_z));
+    }
   });
 
   return marker_array;

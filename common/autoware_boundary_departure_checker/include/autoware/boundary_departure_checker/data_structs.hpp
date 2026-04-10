@@ -81,6 +81,12 @@ struct ProjectionToBound
 };
 using ProjectionsToBound = std::vector<ProjectionToBound>;
 
+struct CriticalPointPair
+{
+  ProjectionToBound physical_departure_point;
+  ProjectionToBound safety_buffer_start;
+};
+
 using BoundarySide = Side<std::vector<Segment2d>>;
 
 struct IdxForRTreeSegment
@@ -137,7 +143,7 @@ struct DepartureData
   BoundarySegmentsBySide boundary_segments;
 
   Side<ProjectionsToBound> projections_to_bound;
-  Side<ProjectionsToBound> evaluated_projections;
+  Side<std::optional<CriticalPointPair>> evaluated_projections;
   DepartureType status{DepartureType::NONE};
 };
 

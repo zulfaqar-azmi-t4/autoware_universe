@@ -106,20 +106,9 @@ private:
     const FootprintSideSegmentsArray & footprints_sides,
     const TrajectoryPoints & trimmed_pred_trajectory, const double ego_vehicle_height) const;
 
-  /**
-   * @brief Select the closest projections to boundaries for both sides based on all abnormality
-   * types.
-   *
-   * Invokes `evaluate_projections_severity` for each side.
-   *
-   * @param projections_to_bound Footprint sides' projections to boundaries.
-   * @return Side<ProjectionsToBound> structure containing selected points for both sides.
-   */
-  [[nodiscard]] Side<ProjectionsToBound> evaluate_projections_across_sides(
-    const Side<ProjectionsToBound> & projections_to_bound, const double curr_vel,
-    const double curr_acc) const;
   DepartureType determine_departure_type(
-    const Side<ProjectionsToBound> & evaluated_projections, const double current_time_s);
+    const Side<std::optional<CriticalPointPair>> & evaluated_projections,
+    const double current_time_s);
 };
 }  // namespace autoware::boundary_departure_checker
 

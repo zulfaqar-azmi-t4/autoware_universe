@@ -605,7 +605,9 @@ TEST(UncrossableBoundaryUtilsTest, TestEvaluateProjectionsSeverityEmpty)
 {
   Side<ProjectionsToBound> input;
   UncrossableBoundaryDepartureParam param;
-  auto result = utils::evaluate_projections_severity(input, param, 10.0);
+  auto result = input.transform_each_side([&](const auto & side_value) {
+    return utils::filter_and_assign_departure_types(side_value, param, 10.0);
+  });
 
   EXPECT_TRUE(result.left.empty());
   EXPECT_TRUE(result.right.empty());
@@ -624,10 +626,17 @@ TEST(UncrossableBoundaryUtilsTest, TestEvaluateProjectionsSeverityNone)
   safe_pt.time_from_start = 1.0;
   input.left.push_back(safe_pt);
 
-  auto result = utils::evaluate_projections_severity(input, param, 10.0);
+  auto transformed = input.transform_each_side([&](const auto & side_value) {
+    return utils::filter_and_assign_departure_types(side_value, param, 10.0);
+  });
 
   // Should be empty because DepartureType::NONE points are erased automatically
-  EXPECT_TRUE(result.left.empty());
+  EXPECT_TRUE(!transformed.left.empty());
+  auto result = transformed.transform_each_side([&](const auto & side_value) {
+    return utils::apply_backward_buffer_and_filter(side_value, param);
+  });
+
+  EXPECT_FALSE(result.left.has_value());
 }
 
 TEST(UncrossableBoundaryUtilsTest, TestEvaluateProjectionsSeverityApproaching)
@@ -647,7 +656,9 @@ TEST(UncrossableBoundaryUtilsTest, TestEvaluateProjectionsSeverityApproaching)
   app_pt.time_from_start = 3.0;
   input.left.push_back(app_pt);
 
-  auto result = utils::evaluate_projections_severity(input, param, min_braking_dist);
+  auto result = input.transform_each_side([&](const auto & side_value) {
+    return utils::filter_and_assign_departure_types(side_value, param, min_braking_dist);
+  });
 
   ASSERT_EQ(result.left.size(), 1);
   EXPECT_TRUE(result.left.front().is_approaching());
@@ -688,24 +699,24 @@ TEST(UncrossableBoundaryUtilsTest, TestEvaluateProjectionsSeverityBackwardBuffer
   // P4: Should never be processed because the loop breaks on first CRITICAL
   input.left.push_back(create_pt(4, 16.0, 1.8));
 
-  auto result = utils::evaluate_projections_severity(input, param, min_braking_dist);
+  auto result = input.transform_each_side([&](const auto & side_value) {
+    const auto min_to_bounds =
+      utils::filter_and_assign_departure_types(side_value, param, min_braking_dist);
+    return utils::apply_backward_buffer_and_filter(min_to_bounds, param);
+  });
 
-  // 1. Verify Cleanup: P4 isn't processed. P3 (physical crash) is erased. Left with P0, P1, P2.
-  ASSERT_EQ(result.left.size(), 3);
+  // 1. Verify Left Side Result
+  ASSERT_TRUE(result.left.has_value());
+  const auto & crit_pair = result.left.value();
 
-  // 2. Verify P0 & P1 remain APPROACHING
-  EXPECT_EQ(result.left[0].pose_index, 0);
-  EXPECT_TRUE(result.left[0].is_approaching());
+  // physical_departure_point should be P3 (dist = 15.0)
+  EXPECT_DOUBLE_EQ(crit_pair.physical_departure_point.dist_along_trajectory_m, 15.0);
+  EXPECT_TRUE(crit_pair.physical_departure_point.is_critical());
 
-  EXPECT_EQ(result.left[1].pose_index, 1);
-  EXPECT_TRUE(result.left[1].is_approaching());
-
-  // 3. Verify P2 becomes the newly buffered critical point
-  // The distance between physical crash (15.0) and P2 (14.0) is exactly 1.0m (<=
-  // longitudinal_margin_m)
-  EXPECT_EQ(result.left[2].pose_index, 2);
-  EXPECT_TRUE(result.left[2].is_critical());
-  EXPECT_DOUBLE_EQ(result.left[2].dist_along_trajectory_m, 14.0);
+  // safety_buffer_start should be P2 (dist = 14.0)
+  EXPECT_EQ(crit_pair.safety_buffer_start.pose_index, 2);
+  EXPECT_TRUE(crit_pair.safety_buffer_start.is_critical());
+  EXPECT_DOUBLE_EQ(crit_pair.safety_buffer_start.dist_along_trajectory_m, 14.0);
 
   BDC_PLOT_RESULT({
     auto plt = autoware::pyplot::import();
@@ -720,22 +731,13 @@ TEST(UncrossableBoundaryUtilsTest, TestEvaluateProjectionsSeverityBackwardBuffer
                               "color"_a = "gray", "marker"_a = "x", "s"_a = 60,
                               "label"_a = "All Candidates", "alpha"_a = 0.5));
 
-    std::vector<double> app_x, app_y, crit_x, crit_y;
-    for (const auto & res : result.left) {
-      if (res.is_approaching()) {
-        app_x.push_back(res.dist_along_trajectory_m);
-        app_y.push_back(res.lat_dist);
-      } else if (res.is_critical()) {
-        crit_x.push_back(res.dist_along_trajectory_m);
-        crit_y.push_back(res.lat_dist);
-      }
-    }
+    std::vector<double> crit_x, crit_y;
+    crit_x.push_back(crit_pair.physical_departure_point.dist_along_trajectory_m);
+    crit_y.push_back(crit_pair.physical_departure_point.lat_dist);
+    crit_x.push_back(crit_pair.safety_buffer_start.dist_along_trajectory_m);
+    crit_y.push_back(crit_pair.safety_buffer_start.lat_dist);
 
-    if (!app_x.empty())
-      plt.scatter(Args(app_x, app_y), Kwargs("color"_a = "orange", "label"_a = "Approaching"));
-    if (!crit_x.empty())
-      plt.scatter(
-        Args(crit_x, crit_y), Kwargs("color"_a = "red", "label"_a = "Critical (Buffered)"));
+    plt.scatter(Args(crit_x, crit_y), Kwargs("color"_a = "red", "label"_a = "Critical (Buffered)"));
 
     plt.axvline(
       Args(15.0), Kwargs("color"_a = "black", "linestyle"_a = ":", "label"_a = "Crash Point"));

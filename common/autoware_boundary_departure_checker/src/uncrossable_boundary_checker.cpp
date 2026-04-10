@@ -18,7 +18,6 @@
 #include "autoware/boundary_departure_checker/footprints_generator.hpp"
 #include "autoware/boundary_departure_checker/utils.hpp"
 
-#include <autoware/motion_utils/distance/distance.hpp>
 #include <autoware/motion_utils/trajectory/interpolation.hpp>
 #include <autoware/motion_utils/trajectory/trajectory.hpp>
 #include <autoware/trajectory/trajectory_point.hpp>
@@ -73,6 +72,10 @@ tl::expected<DepartureData, std::string> UncrossableBoundaryChecker::check_depar
 {
   autoware_utils_debug::ScopedTimeTrack st(__func__, *time_keeper_);
 
+  if (!lanelet_map_ptr_ || !uncrossable_boundaries_rtree_ptr_) {
+    return tl::make_unexpected("Checker not properly initialized with lanelet map and R-tree");
+  }
+
   if (predicted_traj.empty()) {
     return {};
   }
@@ -98,14 +101,16 @@ tl::expected<DepartureData, std::string> UncrossableBoundaryChecker::check_depar
     departure_data.footprints_sides, predicted_traj, vehicle_info.vehicle_height_m);
 
   if (departure_data.boundary_segments.all_empty()) {
-    return {};
+    // couldn't find any nearby boundary segments, so we can skip the rest of the processing and
+    // return early
+    return departure_data;
   }
 
   departure_data.projections_to_bound = utils::get_closest_boundary_segments_from_side(
     predicted_traj, departure_data.boundary_segments, departure_data.footprints_sides);
 
-  departure_data.evaluated_projections = evaluate_projections_across_sides(
-    departure_data.projections_to_bound, ego_state.velocity, ego_state.acceleration);
+  departure_data.evaluated_projections = utils::evaluate_projections_severity(
+    departure_data.projections_to_bound, param_, ego_state, vehicle_info);
 
   departure_data.status =
     determine_departure_type(departure_data.evaluated_projections, ego_state.current_time_s);
@@ -114,7 +119,7 @@ tl::expected<DepartureData, std::string> UncrossableBoundaryChecker::check_depar
 }
 
 DepartureType UncrossableBoundaryChecker::determine_departure_type(
-  const Side<ProjectionsToBound> & evaluated_projections, const double current_time_s)
+  const Side<std::optional<CriticalPointPair>> & evaluated_projections, const double current_time_s)
 {
   const bool current_is_critical = utils::is_critical(evaluated_projections);
 
@@ -127,10 +132,8 @@ DepartureType UncrossableBoundaryChecker::determine_departure_type(
       // Save the critical points for visualization/downstream use
       critical_departure_.for_each_side([](auto & side) { side.clear(); });
       evaluated_projections.for_each([&](auto key_constant, auto & side_value) {
-        for (const auto & proj : side_value) {
-          if (proj.is_critical()) {
-            critical_departure_[key_constant.value].push_back(proj);
-          }
+        if (side_value.has_value() && side_value->safety_buffer_start.is_critical()) {
+          critical_departure_[key_constant.value].push_back(side_value->safety_buffer_start);
         }
       });
       return DepartureType::CRITICAL;
@@ -219,24 +222,5 @@ BoundarySegmentsBySide UncrossableBoundaryChecker::get_boundary_segments(
     }
   }
   return boundary_sides_with_idx;
-}
-
-Side<ProjectionsToBound> UncrossableBoundaryChecker::evaluate_projections_across_sides(
-  const Side<ProjectionsToBound> & projections_to_bound, const double curr_vel,
-  const double curr_acc) const
-{
-  autoware_utils_debug::ScopedTimeTrack st(__func__, *time_keeper_);
-
-  const auto min_braking_dist_opt = motion_utils::calculate_stop_distance(
-    curr_vel, curr_acc, param_.max_deceleration_mps2, param_.max_jerk_mps3, param_.brake_delay_s);
-
-  if (!min_braking_dist_opt) {
-    return {};
-  }
-
-  Side<ProjectionsToBound> min_to_bound =
-    utils::evaluate_projections_severity(projections_to_bound, param_, *min_braking_dist_opt);
-
-  return min_to_bound;
 }
 }  // namespace autoware::boundary_departure_checker

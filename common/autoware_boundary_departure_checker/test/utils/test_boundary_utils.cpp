@@ -411,30 +411,30 @@ TEST(UncrossableBoundaryUtilsTest, TestIsSegmentWithinEgoHeight)
 
 TEST(UncrossableBoundaryUtilsTest, TestIsCritical)
 {
-  Side<ProjectionsToBound> projections;
+  Side<std::optional<CriticalPointPair>> projections;
 
   // 1. Empty sides -> Not critical
   EXPECT_FALSE(utils::is_critical(projections));
 
   // 2. Contains only safe and approaching points -> Not critical
-  ProjectionToBound pt_safe;
-  pt_safe.departure_type = DepartureType::NONE;
-  ProjectionToBound pt_app;
-  pt_app.departure_type = DepartureType::APPROACHING;
+  CriticalPointPair pair_safe;
+  pair_safe.physical_departure_point.departure_type = DepartureType::NONE;
+  CriticalPointPair pair_app;
+  pair_app.physical_departure_point.departure_type = DepartureType::APPROACHING;
 
-  projections.left.push_back(pt_safe);
-  projections.right.push_back(pt_app);
+  projections.left = pair_safe;
+  projections.right = pair_app;
   EXPECT_FALSE(utils::is_critical(projections));
 
   // 3. Add a critical point to the left side -> Critical
-  ProjectionToBound pt_crit;
-  pt_crit.departure_type = DepartureType::CRITICAL;
-  projections.left.push_back(pt_crit);
+  CriticalPointPair pair_crit;
+  pair_crit.physical_departure_point.departure_type = DepartureType::CRITICAL;
+  projections.left = pair_crit;
   EXPECT_TRUE(utils::is_critical(projections));
 
   // 4. Critical point on the right side -> Critical
-  projections.left.clear();
-  projections.right.push_back(pt_crit);
+  projections.left = std::nullopt;
+  projections.right = pair_crit;
   EXPECT_TRUE(utils::is_critical(projections));
 }
 }  // namespace autoware::boundary_departure_checker

@@ -18,6 +18,7 @@
 #include "autoware/boundary_departure_checker/data_structs.hpp"
 #include "autoware/boundary_departure_checker/parameters.hpp"
 
+#include <autoware/motion_utils/distance/distance.hpp>
 #include <autoware/motion_utils/trajectory/trajectory.hpp>
 #include <autoware/trajectory/trajectory_point.hpp>
 #include <autoware/trajectory/utils/closest.hpp>
@@ -93,59 +94,54 @@ ProjectionsToBound filter_and_assign_departure_types(
   return out;
 }
 
-void apply_backward_buffer_and_filter(
-  ProjectionsToBound & mut_side_value, const double longitudinal_margin_m)
+std::optional<CriticalPointPair> apply_backward_buffer_and_filter(
+  const ProjectionsToBound & side_value, const UncrossableBoundaryDepartureParam & param)
 {
-  if (mut_side_value.empty()) return;
+  if (side_value.empty() || side_value.back().is_none_departure()) return std::nullopt;
 
-  if (mut_side_value.back().is_critical()) {
-    const double crash_s = mut_side_value.back().dist_along_trajectory_m -
-                           mut_side_value.back().ego_front_to_proj_offset_m;
-    auto earliest_critical_it = mut_side_value.end() - 1;
+  const auto & departure_point = side_value.back();
 
-    for (auto itr = mut_side_value.rbegin(); itr != mut_side_value.rend(); ++itr) {
-      const double dist_to_crash = crash_s - itr->dist_along_trajectory_m;
+  CriticalPointPair result;
+  result.physical_departure_point = departure_point;
+  result.safety_buffer_start = departure_point;  // Default to the crash point itself
 
-      if (dist_to_crash <= longitudinal_margin_m) {
-        itr->departure_type = DepartureType::CRITICAL;
-        earliest_critical_it = itr.base() - 1;
-      } else {
-        itr->departure_type = DepartureType::APPROACHING;
-      }
-    }
+  // Only apply buffering if the intersection is actually critical
+  if (!departure_point.is_critical()) {
+    return result;  // No need to search backwards if it's not critical
+  }
 
-    // Erase the physical crash points, keeping ONLY the newly buffered critical point
-    if (earliest_critical_it != mut_side_value.end() - 1) {
-      mut_side_value.erase(earliest_critical_it + 1, mut_side_value.end());
+  const double departure_s =
+    departure_point.dist_along_trajectory_m - departure_point.ego_front_to_proj_offset_m;
+
+  // Search backwards for the earliest point within the longitudinal buffer
+  for (auto it = std::next(side_value.rbegin()); it != side_value.rend(); ++it) {
+    const double dist_to_crash = departure_s - it->dist_along_trajectory_m;
+
+    if (dist_to_crash <= param.longitudinal_margin_m) {
+      result.safety_buffer_start = *it;
+      result.safety_buffer_start.departure_type = DepartureType::CRITICAL;
+    } else {
+      // dist_to_crash strictly increases, so we can stop searching.
+      break;
     }
   }
 
-  // ALWAYS sweep up the NONE points
-  mut_side_value.erase(
-    std::remove_if(
-      mut_side_value.begin(), mut_side_value.end(),
-      [](const ProjectionToBound & p) { return p.departure_type == DepartureType::NONE; }),
-    mut_side_value.end());
+  return result;
 }
 
-Side<ProjectionsToBound> evaluate_projections_severity(
+Side<std::optional<CriticalPointPair>> evaluate_projections_severity(
   const Side<ProjectionsToBound> & projections_to_bound,
-  const UncrossableBoundaryDepartureParam & param, const double min_braking_dist)
+  const UncrossableBoundaryDepartureParam & param, const EgoDynamicState & ego_state,
+  const vehicle_info_utils::VehicleInfo & vehicle_info)
 {
-  if (projections_to_bound.all_empty() && !projections_to_bound.equal_size()) {
-    return {};
-  }
+  const auto min_braking_dist =
+    utils::calc_minimum_braking_distance(ego_state, param, vehicle_info);
 
-  Side<ProjectionsToBound> min_to_bounds =
-    projections_to_bound.transform_each_side([&](const auto & side_value) {
-      return filter_and_assign_departure_types(side_value, param, min_braking_dist);
-    });
-
-  min_to_bounds.for_each_side([&](auto & mut_side_value) {
-    apply_backward_buffer_and_filter(mut_side_value, param.longitudinal_margin_m);
+  return projections_to_bound.transform_each_side([&](const auto & side_value) {
+    const auto min_to_bounds =
+      filter_and_assign_departure_types(side_value, param, min_braking_dist);
+    return apply_backward_buffer_and_filter(min_to_bounds, param);
   });
-
-  return min_to_bounds;
 }
 
 DepartureType assign_departure_type(
@@ -358,13 +354,10 @@ Side<ProjectionsToBound> get_closest_boundary_segments_from_side(
         // 2D Cross Product (Z-component)
         const double cross_prod = v_fwd_x * v_lat_y - v_fwd_y * v_lat_x;
 
-        // If cross_prod < 0, boundary is to the RIGHT. If > 0, boundary is to the LEFT.
-        if constexpr (side_key == SideKey::LEFT) {
-          if (cross_prod < 0.0)
-            closest_bound.lat_dist = -closest_bound.lat_dist;  // crossed left boundary
-        } else {
-          if (cross_prod > 0.0)
-            closest_bound.lat_dist = -closest_bound.lat_dist;  // crossed right boundary
+        const bool is_crossing_left_boundary = side_key == SideKey::LEFT && cross_prod < 0.0;
+        const bool is_crossing_right_boundary = side_key == SideKey::RIGHT && cross_prod > 0.0;
+        if (is_crossing_left_boundary || is_crossing_right_boundary) {
+          closest_bound.lat_dist = -closest_bound.lat_dist;  // crossed left boundary
         }
       }
 
@@ -470,14 +463,26 @@ bool is_segment_within_ego_height(
   return height_diff < ego_height;
 }
 
-bool is_critical(const Side<ProjectionsToBound> & evaluated_projections)
+bool is_critical(const Side<std::optional<CriticalPointPair>> & evaluated_projections)
 {
-  const auto check_side_for_critical = [&](const ProjectionsToBound & side_value) {
-    return std::any_of(
-      side_value.rbegin(), side_value.rend(), [](const auto & pt) { return pt.is_critical(); });
-  };
-
-  return evaluated_projections.any_of_side(check_side_for_critical);
+  return evaluated_projections.any_of_side([](const auto & critical_pair_opt) {
+    return critical_pair_opt.has_value() &&
+           critical_pair_opt->physical_departure_point.is_critical();
+  });
 }
 
+double calc_minimum_braking_distance(
+  const EgoDynamicState & ego_state, const UncrossableBoundaryDepartureParam & param,
+  const vehicle_info_utils::VehicleInfo & vehicle_info)
+{
+  // 1. Calculate the kinematic distance needed to stop the base_link coordinate
+  const auto kinematic_stop_dist = motion_utils::calculate_stop_distance(
+    ego_state.velocity, ego_state.acceleration, param.max_deceleration_mps2, param.max_jerk_mps3,
+    param.brake_delay_s);
+
+  // 2. Total distance = (Front Overhang) + (Kinematic Braking Distance)
+  // Even at zero velocity, the "braking zone" is the front of the car.
+  return vehicle_info.front_overhang_m +
+         (kinematic_stop_dist ? std::max(0.0, *kinematic_stop_dist) : 0.0);
+}
 }  // namespace autoware::boundary_departure_checker::utils
