@@ -176,13 +176,16 @@ struct TimeOverlapInterval
   double to{};
   FootprintIntersection first_intersection;
   FootprintIntersection last_intersection;
+  bool is_open{};  // true if the interval has no observed end: the predicted path of the object
+                   // stopped while it was still overlapping the trajectory of ego
   TimeOverlapInterval(
     const double from_, const double to_, FootprintIntersection first_intersection_,
-    FootprintIntersection last_intersection_)
+    FootprintIntersection last_intersection_, const bool is_open_ = false)
   : from(from_),
     to(to_),
     first_intersection(std::move(first_intersection_)),
-    last_intersection(std::move(last_intersection_))
+    last_intersection(std::move(last_intersection_)),
+    is_open(is_open_)
   {
   }
 
@@ -210,6 +213,8 @@ struct TimeOverlapInterval
       to = o.to;
       last_intersection = o.last_intersection;
     }
+    // the combined interval has no observed end if any of its parts has none
+    is_open = is_open || o.is_open;
   }
 };
 

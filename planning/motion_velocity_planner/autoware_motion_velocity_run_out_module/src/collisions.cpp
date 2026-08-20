@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "collision.hpp"
 #include "parameters.hpp"
 #include "types.hpp"
 
@@ -118,7 +119,7 @@ FootprintIntersection calculate_footprint_intersection(
 std::pair<autoware_planning_msgs::msg::TrajectoryPoint, double>
 calculate_closest_interpolated_point_and_arc_length(
   const std::vector<autoware_planning_msgs::msg::TrajectoryPoint> & trajectory,
-  const universe_utils::Point2d & p, const double longitudinal_offset = 0.0)
+  const universe_utils::Point2d & p, const double longitudinal_offset)
 {
   autoware_planning_msgs::msg::TrajectoryPoint trajectory_point;
   geometry_msgs::msg::Point pt;
@@ -143,40 +144,43 @@ calculate_closest_interpolated_point_and_arc_length(
 }
 
 std::optional<FootprintIntersection> calculate_end_point_intersection(
-  const universe_utils::LineString2d & ls, const TrajectoryCornerFootprint & footprint,
-  const double ls_time_step, const bool check_front)
+  const universe_utils::LineString2d & object_corner_ls,
+  const TrajectoryCornerFootprint & ego_footprint, const double obj_ls_time_step,
+  const bool check_front)
 {
-  const auto & end_point = check_front ? ls.front() : ls.back();
+  const auto & end_point = check_front ? object_corner_ls.front() : object_corner_ls.back();
   const auto is_inside_front_polygon =
-    !footprint.front_polygons_rtree.is_geometry_disjoint_from_rtree_polygons(
-      end_point, footprint.front_polygons);
+    !ego_footprint.front_polygons_rtree.is_geometry_disjoint_from_rtree_polygons(
+      end_point, ego_footprint.front_polygons);
   const auto is_inside_rear_polygon =
-    !footprint.rear_polygons_rtree.is_geometry_disjoint_from_rtree_polygons(
-      end_point, footprint.rear_polygons);
+    !ego_footprint.rear_polygons_rtree.is_geometry_disjoint_from_rtree_polygons(
+      end_point, ego_footprint.rear_polygons);
   if (!is_inside_front_polygon && !is_inside_rear_polygon) {
     return std::nullopt;
   }
+
   FootprintIntersection fi;
   fi.intersection = end_point;
   const auto [ego_point, arc_length] = calculate_closest_interpolated_point_and_arc_length(
-    footprint.ego_trajectory, fi.intersection, footprint.max_longitudinal_offset);
+    ego_footprint.ego_trajectory, fi.intersection, ego_footprint.max_longitudinal_offset);
   fi.arc_length = arc_length;
   fi.ego_time = rclcpp::Duration(ego_point.time_from_start).seconds();
   universe_utils::Segment2d object_segment;
   if (check_front) {
-    object_segment.first = ls.front();
-    object_segment.second = ls[1];
+    object_segment.first = object_corner_ls.front();
+    object_segment.second = object_corner_ls[1];
     fi.object_time = 0.0;
   } else {
-    object_segment.first = ls[ls.size() - 2];
-    object_segment.second = ls.back();
-    fi.object_time = static_cast<double>(ls.size() - 1) * ls_time_step;
+    object_segment.first = object_corner_ls[object_corner_ls.size() - 2];
+    object_segment.second = object_corner_ls.back();
+    fi.object_time = static_cast<double>(object_corner_ls.size() - 1) * obj_ls_time_step;
   }
   const auto obj_segment_vector = object_segment.second - object_segment.first;
   const auto obj_yaw = std::atan2(obj_segment_vector.y(), obj_segment_vector.x());
   fi.yaw_diff =
     autoware::universe_utils::normalizeRadian(tf2::getYaw(ego_point.pose.orientation) - obj_yaw);
-  const auto obj_vel = boost::geometry::distance(ls[0], ls[1]) / ls_time_step;
+  const auto obj_vel =
+    boost::geometry::distance(object_corner_ls[0], object_corner_ls[1]) / obj_ls_time_step;
   fi.ego_vel = ego_point.longitudinal_velocity_mps;
   fi.vel_diff = fi.ego_vel - obj_vel;
   if (is_inside_front_polygon && is_inside_rear_polygon) {
@@ -190,63 +194,56 @@ std::optional<FootprintIntersection> calculate_end_point_intersection(
 }
 
 std::vector<FootprintIntersection> calculate_intersections(
-  const universe_utils::LineString2d & ls, const TrajectoryCornerFootprint & footprint,
-  const double ls_time_step)
+  const universe_utils::LineString2d & obj_corner_ls,
+  const TrajectoryCornerFootprint & ego_footprint, const double obj_ls_time_step)
 {
   std::vector<FootprintIntersection> intersections;
-  if (ls.size() < 2) {
+  if (obj_corner_ls.size() < 2) {
     return intersections;
   }
   const auto first_intersection =
-    calculate_end_point_intersection(ls, footprint, ls_time_step, true);
+    calculate_end_point_intersection(obj_corner_ls, ego_footprint, obj_ls_time_step, true);
   if (first_intersection) {
     intersections.push_back(*first_intersection);
   }
-  for (auto i = 0UL; i + 1 < ls.size(); ++i) {
+  for (auto i = 0UL; i + 1 < obj_corner_ls.size(); ++i) {
     universe_utils::Segment2d segment;
-    segment.first = ls[i];
-    segment.second = ls[i + 1];
+    segment.first = obj_corner_ls[i];
+    segment.second = obj_corner_ls[i + 1];
     std::vector<FootprintSegmentNode> query_results;
-    footprint.segments_rtree.query(
+    ego_footprint.segments_rtree.query(
       boost::geometry::index::intersects(segment), std::back_inserter(query_results));
     for (const auto & query_result : query_results) {
       const auto intersection = universe_utils::intersect(
         segment.first, segment.second, query_result.first.first, query_result.first.second);
       if (intersection) {
         const auto footprint_intersection = calculate_footprint_intersection(
-          segment, *intersection, query_result, footprint.ego_trajectory,
-          {ls_time_step * static_cast<double>(i), ls_time_step * (static_cast<double>(i) + 1)});
+          segment, *intersection, query_result, ego_footprint.ego_trajectory,
+          {obj_ls_time_step * static_cast<double>(i),
+           obj_ls_time_step * (static_cast<double>(i) + 1)});
         intersections.push_back(footprint_intersection);
       }
     }
   }
   const auto last_intersection =
-    calculate_end_point_intersection(ls, footprint, ls_time_step, false);
+    calculate_end_point_intersection(obj_corner_ls, ego_footprint, obj_ls_time_step, false);
   if (last_intersection) {
     intersections.push_back(*last_intersection);
   }
   return intersections;
 }
 
-struct TimeOverlapIntervalPair
-{
-  TimeOverlapInterval ego;
-  TimeOverlapInterval object;
-
-  TimeOverlapIntervalPair(TimeOverlapInterval e, TimeOverlapInterval o)
-  : ego(std::move(e)), object(std::move(o))
-  {
-  }
-};
-
 void create_overlap(
   std::vector<TimeOverlapIntervalPair> & overlap_intervals,
   const std::vector<FootprintIntersection> & intersections, const size_t entering_id,
   const size_t exiting_id)
 {
+  // a single intersection both opens and closes the overlap when the predicted path of the object
+  // stops while it still overlaps the trajectory of ego: there is no observed end to the overlap
+  const auto is_open = entering_id == exiting_id;
   TimeOverlapInterval object_interval(
     intersections[entering_id].object_time, intersections[exiting_id].object_time,
-    intersections[entering_id], intersections[exiting_id]);
+    intersections[entering_id], intersections[exiting_id], is_open);
   auto ego_entering = intersections[entering_id];
   auto ego_exiting = intersections[exiting_id];
   for (auto i = entering_id + 1; i <= exiting_id; ++i) {
@@ -259,7 +256,7 @@ void create_overlap(
     }
   }
   TimeOverlapInterval ego_interval(
-    ego_entering.ego_time, ego_exiting.ego_time, ego_entering, ego_exiting);
+    ego_entering.ego_time, ego_exiting.ego_time, ego_entering, ego_exiting, is_open);
   overlap_intervals.emplace_back(ego_interval, object_interval);
 };
 
@@ -344,10 +341,21 @@ void calculate_overlapping_collision(
       ego.last_intersection.ego_time - ego.first_intersection.ego_time;
     const auto object_overlap_duration =
       object.last_intersection.object_time - object.first_intersection.object_time;
-    const auto ego_vel = overlap_length / ego_overlap_duration;
-    const auto obj_vel = overlap_length / object_overlap_duration;
-    const auto lon_buffer = std::min(overlap_length, 4.0);
-    const auto collision_time_within_overlap = (overlap_length - lon_buffer) / (ego_vel + obj_vel);
+    // an open overlap has no span to refine the collision time over, so the collision is placed
+    // where ego enters the overlap. the epsilon check is an arithmetic invariant that keeps the
+    // divisions below defined for any caller
+    constexpr auto epsilon = 1e-3;
+    const auto overlap_has_no_span = overlap_length < epsilon || ego_overlap_duration < epsilon ||
+                                     object_overlap_duration < epsilon;
+    const auto collision_time_within_overlap = [&]() {
+      if (ego.is_open || object.is_open || overlap_has_no_span) {
+        return 0.0;
+      }
+      const auto ego_vel = overlap_length / ego_overlap_duration;
+      const auto obj_vel = overlap_length / object_overlap_duration;
+      const auto lon_buffer = std::min(overlap_length, 4.0);
+      return (overlap_length - lon_buffer) / (ego_vel + obj_vel);
+    }();
     // TODO(Maxime): we need to correctly account for the agents' longitudinal offsets
     c.ego_collision_time += collision_time_within_overlap;
     std::stringstream ss;
