@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "collision.hpp"
 #include "parameters.hpp"
 #include "types.hpp"
 
@@ -42,7 +43,6 @@
 
 namespace autoware::motion_velocity_planner::run_out
 {
-
 namespace
 {
 bool is_same_direction(const TimeOverlapInterval & ego, const Parameters & params)
@@ -117,7 +117,7 @@ FootprintIntersection calculate_footprint_intersection(
 std::pair<autoware_planning_msgs::msg::TrajectoryPoint, double>
 calculate_closest_interpolated_point_and_arc_length(
   const std::vector<autoware_planning_msgs::msg::TrajectoryPoint> & trajectory,
-  const universe_utils::Point2d & p, const double longitudinal_offset = 0.0)
+  const universe_utils::Point2d & p, const double longitudinal_offset)
 {
   autoware_planning_msgs::msg::TrajectoryPoint trajectory_point;
   geometry_msgs::msg::Point pt;
@@ -227,17 +227,6 @@ std::vector<FootprintIntersection> calculate_intersections(
   }
   return intersections;
 }
-
-struct TimeOverlapIntervalPair
-{
-  TimeOverlapInterval ego;
-  TimeOverlapInterval object;
-
-  TimeOverlapIntervalPair(TimeOverlapInterval e, TimeOverlapInterval o)
-  : ego(std::move(e)), object(std::move(o))
-  {
-  }
-};
 
 void create_overlap(
   std::vector<TimeOverlapIntervalPair> & overlap_intervals,
