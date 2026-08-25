@@ -188,7 +188,6 @@ tl::expected<PredictedObjects, std::string> CollisionDetectorNode::filterObjects
 {
   PredictedObjects filtered_objects;
   filtered_objects.header = input_objects.header;
-  filtered_objects.header.stamp = this->now();
 
   const rclcpp::Time current_object_time = input_objects.header.stamp;
   const rclcpp::Duration observed_objects_keep_time =
