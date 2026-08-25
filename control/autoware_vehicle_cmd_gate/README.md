@@ -69,6 +69,7 @@ Receive multiple control commands and select one to forward to the vehicle.
 | `nominal.steer_cmd_lim`                               | <double> | array of limits for steering angle (activated in AUTONOMOUS operation mode)                                                                                                                 |
 | `nominal.steer_rate_lim_for_steer_cmd`                | <double> | array of limits for command steering rate (activated in AUTONOMOUS operation mode)                                                                                                          |
 | `nominal.lat_jerk_lim_for_steer_rate`                 | double   | limit for lateral jerk constraint on steering rate (activated in AUTONOMOUS operation mode)                                                                                                 |
+| `nominal.steer_acc_lim_for_steer_cmd`                 | <double> | array of limits for command steering acceleration (activated in AUTONOMOUS operation mode). An empty array disables the limit.                                                              |
 | `nominal.steer_cmd_diff_lim_from_current_steer`       | <double> | array of limits for difference between current and command steering angle (activated in AUTONOMOUS operation mode)                                                                          |
 | `on_transition.vel_lim`                               | double   | limit of longitudinal velocity (activated in TRANSITION operation mode)                                                                                                                     |
 | `on_transition.reference_speed_points`                | <double> | velocity point used as a reference when calculate control command limit (activated in TRANSITION operation mode). The size of this array must be equivalent to the size of the limit array. |
@@ -79,6 +80,7 @@ Receive multiple control commands and select one to forward to the vehicle.
 | `on_transition.steer_cmd_lim`                         | <double> | array of limits for steering angle (activated in TRANSITION operation mode)                                                                                                                 |
 | `on_transition.steer_rate_lim_for_steer_cmd`          | <double> | array of limits for command steering rate (activated in TRANSITION operation mode)                                                                                                          |
 | `on_transition.lat_jerk_lim_for_steer_rate`           | double   | limit for lateral jerk constraint on steering rate (activated in TRANSITION operation mode)                                                                                                 |
+| `on_transition.steer_acc_lim_for_steer_cmd`           | <double> | array of limits for command steering acceleration (activated in TRANSITION operation mode). An empty array disables the limit.                                                              |
 | `on_transition.steer_cmd_diff_lim_from_current_steer` | <double> | array of limits for difference between current and command steering angle (activated in TRANSITION operation mode)                                                                          |
 
 ### Parameter Naming Convention
@@ -127,6 +129,49 @@ Notation: this filter is not designed to enhance ride comfort. Its main purpose 
 Notation 2: If you use vehicles in which the driving force is controlled by the accelerator/brake pedal, the jerk limit, denoting the pedal rate limit, must be sufficiently relaxed at low speeds.
 Otherwise, quick pedal changes at start/stop will not be possible, resulting in slow starts and creep down on hills.
 This functionality for starting/stopping was embedded in the source code but was removed because it was complex and could be achieved by parameters.
+
+### Steering acceleration limit
+
+`steer_acc_lim_for_steer_cmd` bounds how fast the commanded steering **rate** may change,
+which is the second derivative of the steering angle. It complements
+`steer_rate_lim_for_steer_cmd`: a rate limit alone still permits a square wave, where the
+command jumps to the maximum rate, holds, and jumps back to zero. That is unbounded
+acceleration at both ends, and it is what a driver feels as a sudden pull on the wheel.
+
+`limitLateralSteerAcc()` applies it in two places, because a `Control` message carries the
+steering angle and the steering rate as separate fields:
+
+- `steering_tire_rotation_rate` is held within `limit * dt` of the previous command;
+- `steering_tire_angle` is held so that its second difference stays within
+  `limit * dt^2`, and additionally is never stepped past the requested angle. The second
+  difference on its own behaves like a double integrator: once it engages it would keep
+  coasting at the previous step size and walk away from what was asked for. Clamping
+  towards the request keeps the command converging on it.
+
+The angle part needs two previous commands, so it starts one cycle after the rate part.
+Until then only the rate field is limited.
+
+Leave the array empty to disable the limit. A parameter file written before this limit
+existed therefore keeps working unchanged.
+
+### The reference speed grid
+
+`reference_speed_points` is the shared x axis for every limit array in its block. The
+arrays are read index by index, so reading down a column gives one `(speed, limit)` pair,
+and all of them must be the same length. Outside the range the end value is held flat;
+inside it, the limit is linearly interpolated.
+
+The grid carries entries at 1.0 and 2.0 m/s that no other limit needs. They are there for
+`steer_acc_lim_for_steer_cmd`, whose demand falls off with speed far more sharply than the
+other limits: without them the nominal grid jumps from 0.3 straight to 20 m/s, and
+anything defined on it is one straight line across that whole range.
+
+Adding those two entries did not change any other limit, because every other array is flat
+across that region and the inserted entries simply repeat their neighbour.
+`VehicleCmdFilter.SharedSpeedGridMigrationIsIdentity` holds that property: it evaluates
+every limiter on the previous grid and the current one at a sweep of speeds and requires
+the results to agree. Keep that test passing when editing the grid, or state deliberately
+in the review that a limit was meant to change.
 
 ## Assumptions / Known limits
 

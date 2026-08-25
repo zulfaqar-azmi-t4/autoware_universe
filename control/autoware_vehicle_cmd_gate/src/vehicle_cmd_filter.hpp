@@ -41,6 +41,7 @@ struct VehicleCmdFilterParam
   LimitArray steer_rate_lim_for_steer_cmd;
   LimitArray steer_cmd_diff_lim_from_current_steer;
   double lat_jerk_lim_for_steer_rate;
+  LimitArray steer_acc_lim_for_steer_cmd;
 };
 class VehicleCmdFilter
 {
@@ -51,7 +52,12 @@ public:
   void setCurrentSpeed(double v) { current_speed_ = v; }
   void setParam(const VehicleCmdFilterParam & p);
   VehicleCmdFilterParam getParam() const;
-  void setPrevCmd(const Control & v) { prev_cmd_ = v; }
+  void setPrevCmd(const Control & v)
+  {
+    prev_steer_angle_diff_ =
+      v.lateral.steering_tire_angle - prev_cmd_.lateral.steering_tire_angle;
+    prev_cmd_ = v;
+  }
 
   void limitLongitudinalWithVel(Control & input) const;
   void limitLongitudinalWithAcc(const double dt, Control & input) const;
@@ -61,6 +67,7 @@ public:
   void limitActualSteerDiff(const double current_steer_angle, Control & input) const;
   void limitLateralSteer(Control & input) const;
   void limitLateralSteerRate(const double dt, Control & input) const;
+  void limitLateralSteerAcc(const double dt, Control & input) const;
   void filterAll(
     const double dt, const double current_steer_angle, Control & cmd,
     IsFilterActivated & is_activated) const;
@@ -70,6 +77,7 @@ public:
 private:
   VehicleCmdFilterParam param_;
   Control prev_cmd_;
+  double prev_steer_angle_diff_ = 0.0;
   double current_speed_ = 0.0;
 
   bool setParameterWithValidation(const VehicleCmdFilterParam & p);
@@ -88,6 +96,7 @@ private:
   double getSteerCmdRateLimForSteerCmdRate() const;
   double getSteerCmdDiffLimFromCurrentSteer() const;
   double getLatJerkLimForSteerRate() const;
+  double getSteerAccLimForSteerCmd() const;
 };
 }  // namespace autoware::vehicle_cmd_gate
 

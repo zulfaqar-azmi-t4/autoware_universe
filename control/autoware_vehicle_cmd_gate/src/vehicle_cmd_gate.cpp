@@ -166,6 +166,8 @@ VehicleCmdGate::VehicleCmdGate(const rclcpp::NodeOptions & node_options)
       declare_parameter<std::vector<double>>("nominal.steer_rate_lim_for_steer_cmd");
     p.lat_jerk_lim_for_steer_rate =
       declare_parameter<double>("nominal.lat_jerk_lim_for_steer_rate");
+    p.steer_acc_lim_for_steer_cmd = declare_parameter<std::vector<double>>(
+      "nominal.steer_acc_lim_for_steer_cmd", std::vector<double>{});
     filter_.setParam(p);
   }
 
@@ -190,6 +192,8 @@ VehicleCmdGate::VehicleCmdGate(const rclcpp::NodeOptions & node_options)
       declare_parameter<std::vector<double>>("on_transition.steer_rate_lim_for_steer_cmd");
     p.lat_jerk_lim_for_steer_rate =
       declare_parameter<double>("on_transition.lat_jerk_lim_for_steer_rate");
+    p.steer_acc_lim_for_steer_cmd = declare_parameter<std::vector<double>>(
+      "on_transition.steer_acc_lim_for_steer_cmd", std::vector<double>{});
     filter_on_transition_.setParam(p);
   }
 
@@ -287,6 +291,8 @@ rcl_interfaces::msg::SetParametersResult VehicleCmdGate::onParameter(
       p.steer_cmd_diff_lim_from_current_steer);
     update_param<double>(
       parameters, "nominal.lat_jerk_lim_for_steer_rate", p.lat_jerk_lim_for_steer_rate);
+    update_param<std::vector<double>>(
+      parameters, "nominal.steer_acc_lim_for_steer_cmd", p.steer_acc_lim_for_steer_cmd);
     filter_.setParam(p);
   }
 
@@ -312,6 +318,8 @@ rcl_interfaces::msg::SetParametersResult VehicleCmdGate::onParameter(
       p.steer_cmd_diff_lim_from_current_steer);
     update_param<double>(
       parameters, "on_transition.lat_jerk_lim_for_steer_rate", p.lat_jerk_lim_for_steer_rate);
+    update_param<std::vector<double>>(
+      parameters, "on_transition.steer_acc_lim_for_steer_cmd", p.steer_acc_lim_for_steer_cmd);
     filter_on_transition_.setParam(p);
   }
 

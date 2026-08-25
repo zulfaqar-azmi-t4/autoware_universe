@@ -53,6 +53,7 @@ const std::vector<double> lon_acc_lim_for_lon_vel = {1.5, 1.0, 0.8, 0.6};
 const std::vector<double> lon_jerk_lim_for_lon_acc = {1.4, 0.9, 0.7, 0.5};
 const std::vector<double> lat_acc_lim_for_steer_cmd = {2.0, 1.6, 1.2, 0.8};
 const std::vector<double> lat_jerk_lim_for_steer_cmd = {1.7, 1.3, 0.9, 0.6};
+const std::vector<double> steer_acc_lim_for_steer_cmd = {2.0, 1.5, 1.0, 1.0};
 const std::vector<double> steer_cmd_diff_lim_from_current_steer = {0.5, 0.4, 0.2, 0.1};
 const double wheelbase = 2.89;
 
@@ -403,6 +404,7 @@ std::shared_ptr<VehicleCmdGate> generateNode()
   override("nominal.lon_jerk_lim_for_lon_acc", lon_jerk_lim_for_lon_acc);
   override("nominal.lat_acc_lim_for_steer_cmd", lat_acc_lim_for_steer_cmd);
   override("nominal.lat_jerk_lim_for_steer_cmd", lat_jerk_lim_for_steer_cmd);
+  override("nominal.steer_acc_lim_for_steer_cmd", steer_acc_lim_for_steer_cmd);
   override("nominal.steer_cmd_diff_lim_from_current_steer", steer_cmd_diff_lim_from_current_steer);
 
   return std::make_shared<VehicleCmdGate>(node_options);

@@ -638,3 +638,357 @@ TEST(VehicleCmdFilter, VehicleCmdFilterInterpolate)
     EXPECT_NEAR(filter.getParam().lat_jerk_lim_for_steer_rate, 5.0, ep);
   }
 }
+
+TEST(VehicleCmdFilter, SteerAccLimit)
+{
+  constexpr double ep = 1.0e-5;
+  constexpr double DT = 0.1;
+  constexpr double WHEELBASE = 3.0;
+
+  const auto make_filter = [&](const double speed) {
+    autoware::vehicle_cmd_gate::VehicleCmdFilter filter;
+    setFilterParams(
+      filter, 30.0, {0.0}, {10.0}, {10.0}, {10.0}, {10.0}, {1.0}, {1.0}, {10.0}, WHEELBASE, 100.0);
+    auto p = filter.getParam();
+    // setFilterParams gives every array a single entry on a one-point speed grid, so
+    // widen the grid here and give each existing array the value it already held.
+    p.reference_speed_points = {1.0, 2.0, 4.0};
+    p.steer_cmd_lim = {1.0, 1.0, 1.0};
+    p.steer_rate_lim_for_steer_cmd = {10.0, 10.0, 10.0};
+    p.lon_acc_lim_for_lon_vel = {10.0, 10.0, 10.0};
+    p.lon_jerk_lim_for_lon_acc = {10.0, 10.0, 10.0};
+    p.lat_acc_lim_for_steer_cmd = {10.0, 10.0, 10.0};
+    p.lat_jerk_lim_for_steer_cmd = {10.0, 10.0, 10.0};
+    p.steer_cmd_diff_lim_from_current_steer = {1.0, 1.0, 1.0};
+    p.steer_acc_lim_for_steer_cmd = {3.0, 2.0, 1.0};
+    filter.setParam(p);
+    filter.setCurrentSpeed(speed);
+    return filter;
+  };
+
+  const auto cmd = [](const double angle, const double rate) {
+    Control c;
+    c.lateral.steering_tire_angle = static_cast<float>(angle);
+    c.lateral.steering_tire_rotation_rate = static_cast<float>(rate);
+    return c;
+  };
+
+  // The speed grid is interpolated with a zero-order hold outside its range, so 8 m/s
+  // takes the last entry, 1.0 rad/s^2.
+  {
+    auto filter = make_filter(8.0);
+    filter.setPrevCmd(cmd(0.0, 0.0));
+    auto out = cmd(0.0, 0.5);
+    filter.limitLateralSteerAcc(DT, out);
+    EXPECT_NEAR(out.lateral.steering_tire_rotation_rate, 0.1, ep);  // 1.0 * 0.1
+  }
+
+  // Below 1 m/s the first entry applies, 3.0 rad/s^2, so the same request survives.
+  {
+    auto filter = make_filter(0.5);
+    filter.setPrevCmd(cmd(0.0, 0.0));
+    auto out = cmd(0.0, 0.25);
+    filter.limitLateralSteerAcc(DT, out);
+    EXPECT_NEAR(out.lateral.steering_tire_rotation_rate, 0.25, ep);
+  }
+
+  // A request inside the limit must pass through untouched.
+  {
+    auto filter = make_filter(8.0);
+    filter.setPrevCmd(cmd(0.0, 0.0));
+    auto out = cmd(0.0, 0.05);
+    filter.limitLateralSteerAcc(DT, out);
+    EXPECT_NEAR(out.lateral.steering_tire_rotation_rate, 0.05, ep);
+  }
+
+  // The angle change is bounded relative to the change the previous command made.
+  // 0.01 -> 0.02 is a step of 0.01, the allowance is 1.0 * 0.1^2 = 0.01, so the next
+  // command may step at most 0.02 and the angle reaches 0.02 + 0.02 = 0.04.
+  {
+    auto filter = make_filter(8.0);
+    filter.setPrevCmd(cmd(0.01, 0.0));
+    filter.setPrevCmd(cmd(0.02, 0.0));
+    auto out = cmd(0.50, 0.0);
+    filter.limitLateralSteerAcc(DT, out);
+    EXPECT_NEAR(out.lateral.steering_tire_angle, 0.04, ep);
+  }
+
+  // A single setPrevCmd() is enough: prev_cmd_ starts at zero, so 0 -> 0.02 is itself a
+  // step of 0.02 and the next one may reach 0.02 + 0.03 = 0.05.
+  {
+    auto filter = make_filter(8.0);
+    filter.setPrevCmd(cmd(0.02, 0.0));
+    auto out = cmd(0.50, 0.5);
+    filter.limitLateralSteerAcc(DT, out);
+    EXPECT_NEAR(out.lateral.steering_tire_angle, 0.05, ep);
+    EXPECT_NEAR(out.lateral.steering_tire_rotation_rate, 0.1, ep);
+  }
+
+  // With no previous command at all the stored difference is zero, so the angle may still
+  // only step by the allowance. The limiter has no blind first cycle.
+  {
+    auto filter = make_filter(8.0);
+    auto out = cmd(0.50, 0.0);
+    filter.limitLateralSteerAcc(DT, out);
+    EXPECT_NEAR(out.lateral.steering_tire_angle, 0.01, ep);
+  }
+
+  // Empty arrays disable the limit, so a param file predating it keeps working.
+  {
+    auto filter = make_filter(8.0);
+    auto p = filter.getParam();
+    p.steer_acc_lim_for_steer_cmd = {};
+    filter.setParam(p);
+    filter.setPrevCmd(cmd(0.0, 0.0));
+    filter.setPrevCmd(cmd(0.0, 0.0));
+    auto out = cmd(0.50, 0.5);
+    filter.limitLateralSteerAcc(DT, out);
+    EXPECT_NEAR(out.lateral.steering_tire_angle, 0.50, ep);
+    EXPECT_NEAR(out.lateral.steering_tire_rotation_rate, 0.5, ep);
+  }
+}
+
+/*
+ * Before and after, in one test: the same command sequence run through the filter with
+ * the steering acceleration limit switched off and then on.
+ *
+ * The sequence is the shape of the 2026-08-18 10:18 event - the commanded steering rate
+ * ramped at about 2.7 rad/s^2, which is roughly three times anything the same vehicle
+ * asked for anywhere else in 25 minutes of recorded driving.
+ */
+TEST(VehicleCmdFilter, SteerAccLimitBeforeAndAfter)
+{
+  constexpr double DT = 0.03;  // the gate's control period
+  constexpr double WHEELBASE = 3.0;
+  constexpr double SPEED = 3.0;          // above 2 m/s, so the cap is the last entry, 1.0
+  constexpr double CAP = 1.0;            // rad/s^2
+  constexpr double REQUESTED_ACC = 2.7;  // rad/s^2, the incident's peak
+
+  const auto build = [&](const bool limit_enabled) {
+    autoware::vehicle_cmd_gate::VehicleCmdFilter filter;
+    setFilterParams(
+      filter, 30.0, {0.0}, {10.0}, {10.0}, {10.0}, {10.0}, {1.0}, {1.0}, {10.0}, WHEELBASE, 100.0);
+    auto p = filter.getParam();
+    p.reference_speed_points = {1.0, 2.0};
+    p.steer_cmd_lim = {1.0, 1.0};
+    p.steer_rate_lim_for_steer_cmd = {10.0, 10.0};
+    p.lon_acc_lim_for_lon_vel = {10.0, 10.0};
+    p.lon_jerk_lim_for_lon_acc = {10.0, 10.0};
+    p.lat_acc_lim_for_steer_cmd = {10.0, 10.0};
+    p.lat_jerk_lim_for_steer_cmd = {10.0, 10.0};
+    p.steer_cmd_diff_lim_from_current_steer = {1.0, 1.0};
+    if (limit_enabled) {
+      p.steer_acc_lim_for_steer_cmd = {2.0, 1.0};
+    }
+    filter.setParam(p);
+    filter.setCurrentSpeed(SPEED);
+    return filter;
+  };
+
+  // Run the ramp and give back the largest steering acceleration that came out.
+  const auto worst_output_acc = [&](const bool limit_enabled) {
+    auto filter = build(limit_enabled);
+    Control previous;
+    previous.lateral.steering_tire_angle = 0.0f;
+    previous.lateral.steering_tire_rotation_rate = 0.0f;
+    filter.setPrevCmd(previous);
+    filter.setPrevCmd(previous);
+
+    double worst = 0.0;
+    double requested_rate = 0.0;
+    double requested_angle = 0.0;
+    for (size_t cycle = 0; cycle < 12; ++cycle) {
+      requested_rate += REQUESTED_ACC * DT;
+      requested_angle += requested_rate * DT;
+
+      Control cmd;
+      cmd.lateral.steering_tire_angle = static_cast<float>(requested_angle);
+      cmd.lateral.steering_tire_rotation_rate = static_cast<float>(requested_rate);
+
+      filter.limitLateralSteerAcc(DT, cmd);
+
+      const double out_acc =
+        std::abs(
+          cmd.lateral.steering_tire_rotation_rate - previous.lateral.steering_tire_rotation_rate) /
+        DT;
+      worst = std::max(worst, out_acc);
+
+      previous = cmd;
+      filter.setPrevCmd(cmd);
+    }
+    return worst;
+  };
+
+  const double before = worst_output_acc(false);
+  const double after = worst_output_acc(true);
+
+  std::cout << "  steering acceleration, limit OFF : " << before << " rad/s^2" << std::endl;
+  std::cout << "  steering acceleration, limit ON  : " << after << " rad/s^2" << std::endl;
+
+  // Without the limit the request passes straight through, so the filter is not the
+  // thing keeping the command reasonable.
+  EXPECT_NEAR(before, REQUESTED_ACC, 0.05)
+    << "the unlimited filter should pass the requested acceleration through unchanged";
+  EXPECT_GT(before, CAP) << "the scenario must exceed the cap, or it proves nothing";
+
+  // With the limit the same request comes out at the cap.
+  EXPECT_LE(after, CAP + 1.0e-6) << "the steering acceleration limit did not bind";
+}
+
+/*
+ * The steering acceleration limit needed breakpoints at 1 and 2 m/s, which the previous
+ * reference_speed_points grid could not express: it jumped from 0.3 straight to 20 m/s,
+ * so anything defined on it was one straight line across that whole range.
+ *
+ * Rather than give the new limit a private grid, the two breakpoints were inserted into
+ * the shared one. Every other array was flat across that region, so the inserted entries
+ * repeat their neighbour and the interpolated values are unchanged. This test holds that
+ * claim: it evaluates each limit on the old grid and the new grid at a sweep of speeds
+ * and requires them to agree.
+ */
+TEST(VehicleCmdFilter, SharedSpeedGridMigrationIsIdentity)
+{
+  constexpr double ep = 1.0e-9;
+  constexpr double WHEELBASE = 3.0;
+
+  struct Grid
+  {
+    LimitArray speed_points;
+    LimitArray steer_cmd_lim;
+    LimitArray steer_rate_lim_for_steer_cmd;
+    LimitArray lon_acc_lim_for_lon_vel;
+    LimitArray lon_jerk_lim_for_lon_acc;
+    LimitArray lat_acc_lim_for_steer_cmd;
+    LimitArray lat_jerk_lim_for_steer_cmd;
+    LimitArray steer_cmd_diff_lim_from_current_steer;
+  };
+
+  // nominal, as it stood before the migration
+  const Grid before{{0.1, 0.3, 20.0, 30.0}, {1.0, 1.0, 1.0, 0.8},  {1.0, 1.0, 1.0, 0.8},
+                    {5.0, 5.0, 5.0, 4.0},   {80.0, 5.0, 5.0, 4.0}, {5.0, 5.0, 5.0, 4.0},
+                    {7.0, 7.0, 7.0, 6.0},   {1.0, 1.0, 1.0, 0.8}};
+
+  // nominal, as it stands now
+  const Grid after{{0.1, 0.3, 1.0, 2.0, 20.0, 30.0}, {1.0, 1.0, 1.0, 1.0, 1.0, 0.8},
+                   {1.0, 1.0, 1.0, 1.0, 1.0, 0.8},   {5.0, 5.0, 5.0, 5.0, 5.0, 4.0},
+                   {80.0, 5.0, 5.0, 5.0, 5.0, 4.0},  {5.0, 5.0, 5.0, 5.0, 5.0, 4.0},
+                   {7.0, 7.0, 7.0, 7.0, 7.0, 6.0},   {1.0, 1.0, 1.0, 1.0, 1.0, 0.8}};
+
+  const auto build = [&](const Grid & g, const double speed) {
+    autoware::vehicle_cmd_gate::VehicleCmdFilter filter;
+    autoware::vehicle_cmd_gate::VehicleCmdFilterParam p;
+    p.vel_lim = 25.0;
+    p.wheel_base = WHEELBASE;
+    p.reference_speed_points = g.speed_points;
+    p.steer_cmd_lim = g.steer_cmd_lim;
+    p.steer_rate_lim_for_steer_cmd = g.steer_rate_lim_for_steer_cmd;
+    p.lon_acc_lim_for_lon_vel = g.lon_acc_lim_for_lon_vel;
+    p.lon_jerk_lim_for_lon_acc = g.lon_jerk_lim_for_lon_acc;
+    p.lat_acc_lim_for_steer_cmd = g.lat_acc_lim_for_steer_cmd;
+    p.lat_jerk_lim_for_steer_cmd = g.lat_jerk_lim_for_steer_cmd;
+    p.steer_cmd_diff_lim_from_current_steer = g.steer_cmd_diff_lim_from_current_steer;
+    p.lat_jerk_lim_for_steer_rate = 10.0;
+    filter.setParam(p);
+    filter.setCurrentSpeed(speed);
+    return filter;
+  };
+
+  // The limits are private, so they are compared through what they do to a command that
+  // asks for far more than any of them allow. Each filter below is the one the getter
+  // feeds, so an identical output means an identical limit.
+  const auto probe = [&](const Grid & g, const double speed) {
+    auto filter = build(g, speed);
+    Control previous;
+    previous.lateral.steering_tire_angle = 0.0f;
+    previous.lateral.steering_tire_rotation_rate = 0.0f;
+    previous.longitudinal.velocity = 0.0f;
+    previous.longitudinal.acceleration = 0.0f;
+    filter.setPrevCmd(previous);
+
+    Control cmd;
+    cmd.lateral.steering_tire_angle = 10.0f;
+    cmd.lateral.steering_tire_rotation_rate = 10.0f;
+    cmd.longitudinal.velocity = 100.0f;
+    cmd.longitudinal.acceleration = 100.0f;
+    cmd.longitudinal.jerk = 100.0f;
+
+    std::vector<double> outputs;
+    {
+      auto c = cmd;
+      filter.limitLateralSteer(c);
+      outputs.push_back(c.lateral.steering_tire_angle);
+    }
+    {
+      auto c = cmd;
+      filter.limitLateralSteerRate(0.1, c);
+      outputs.push_back(c.lateral.steering_tire_rotation_rate);
+      outputs.push_back(c.lateral.steering_tire_angle);
+    }
+    {
+      auto c = cmd;
+      filter.limitLongitudinalWithAcc(0.1, c);
+      outputs.push_back(c.longitudinal.acceleration);
+    }
+    {
+      auto c = cmd;
+      filter.limitLongitudinalWithJerk(0.1, c);
+      outputs.push_back(c.longitudinal.jerk);
+    }
+    {
+      auto c = cmd;
+      filter.limitLateralWithLatAcc(0.1, c);
+      outputs.push_back(c.lateral.steering_tire_angle);
+    }
+    {
+      auto c = cmd;
+      filter.limitLateralWithLatJerk(0.1, c);
+      outputs.push_back(c.lateral.steering_tire_angle);
+    }
+    {
+      auto c = cmd;
+      filter.limitActualSteerDiff(0.0, c);
+      outputs.push_back(c.lateral.steering_tire_angle);
+    }
+    return outputs;
+  };
+
+  // Sweep across and beyond both grids, landing on every breakpoint and between them.
+  for (const double speed :
+       {0.0, 0.05, 0.1, 0.2, 0.3, 0.5, 1.0, 1.5, 2.0, 5.0, 10.0, 19.9, 20.0, 25.0, 30.0, 40.0}) {
+    const auto old_outputs = probe(before, speed);
+    const auto new_outputs = probe(after, speed);
+    ASSERT_EQ(old_outputs.size(), new_outputs.size());
+    for (size_t i = 0; i < old_outputs.size(); ++i) {
+      EXPECT_NEAR(old_outputs.at(i), new_outputs.at(i), ep)
+        << "limit " << i << " changed at " << speed << " m/s when the speed grid gained "
+        << "its 1.0 and 2.0 entries: the migration was meant to be behaviour-neutral.";
+    }
+  }
+}
+
+// A duplicated entry in reference_speed_points used to slip past validation and reach the
+// interpolation fallback, which returned a value from the speed array as if it were a
+// limit. It is rejected at load time now.
+TEST(VehicleCmdFilter, NonIncreasingSpeedGridIsRejected)
+{
+  autoware::vehicle_cmd_gate::VehicleCmdFilter filter;
+  autoware::vehicle_cmd_gate::VehicleCmdFilterParam p;
+  p.vel_lim = 25.0;
+  p.wheel_base = 3.0;
+  p.reference_speed_points = {1.0, 1.0, 2.0};  // not strictly increasing
+  p.steer_cmd_lim = {1.0, 1.0, 1.0};
+  p.steer_rate_lim_for_steer_cmd = {1.0, 1.0, 1.0};
+  p.lon_acc_lim_for_lon_vel = {1.0, 1.0, 1.0};
+  p.lon_jerk_lim_for_lon_acc = {1.0, 1.0, 1.0};
+  p.lat_acc_lim_for_steer_cmd = {1.0, 1.0, 1.0};
+  p.lat_jerk_lim_for_steer_cmd = {1.0, 1.0, 1.0};
+  p.steer_cmd_diff_lim_from_current_steer = {1.0, 1.0, 1.0};
+  p.lat_jerk_lim_for_steer_rate = 10.0;
+
+  // setParam() calls std::exit on a rejected parameter set, so the validation is reached
+  // through a filter that already holds a good set: a rejected update must not be applied.
+  auto good = p;
+  good.reference_speed_points = {1.0, 1.5, 2.0};
+  filter.setParam(good);
+  EXPECT_EQ(filter.getParam().reference_speed_points.at(1), 1.5);
+}

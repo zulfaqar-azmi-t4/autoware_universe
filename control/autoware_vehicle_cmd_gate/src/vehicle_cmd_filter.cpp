@@ -14,6 +14,9 @@
 
 #include "vehicle_cmd_filter.hpp"
 
+#include <autoware/interpolation/interpolation_utils.hpp>
+#include <autoware/interpolation/linear_interpolation.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -32,9 +35,19 @@ bool VehicleCmdFilter::setParameterWithValidation(const VehicleCmdFilterParam & 
     p.lon_acc_lim_for_lon_vel.size() != s || p.lon_jerk_lim_for_lon_acc.size() != s ||
     p.lat_acc_lim_for_steer_cmd.size() != s || p.lat_jerk_lim_for_steer_cmd.size() != s ||
     p.steer_cmd_diff_lim_from_current_steer.size() != s || p.steer_cmd_lim.size() != s ||
-    p.steer_rate_lim_for_steer_cmd.size() != s) {
+    p.steer_rate_lim_for_steer_cmd.size() != s ||
+    (!p.steer_acc_lim_for_steer_cmd.empty() && p.steer_acc_lim_for_steer_cmd.size() != s)) {
     std::cerr << "VehicleCmdFilter::setParam() There is a size mismatch in the parameter. "
                  "Parameter initialization failed."
+              << std::endl;
+    return false;
+  }
+
+  if (
+    p.reference_speed_points.empty() ||
+    !autoware::interpolation::isIncreasing(p.reference_speed_points)) {
+    std::cerr << "VehicleCmdFilter::setParam() reference_speed_points is not strictly "
+                 "increasing. Parameter initialization failed."
               << std::endl;
     return false;
   }
@@ -177,6 +190,39 @@ void VehicleCmdFilter::limitLateralSteerRate(const double dt, Control & input) c
   input.lateral.steering_tire_angle = prev_cmd_.lateral.steering_tire_angle + ds;
 }
 
+double VehicleCmdFilter::getSteerAccLimForSteerCmd() const
+{
+  return interpolateFromSpeed(param_.steer_acc_lim_for_steer_cmd);
+}
+
+void VehicleCmdFilter::limitLateralSteerAcc(const double dt, Control & input) const
+{
+  if (param_.steer_acc_lim_for_steer_cmd.empty()) {
+    return;
+  }
+
+  const double steer_acc_lim = getSteerAccLimForSteerCmd();
+
+  input.lateral.steering_tire_rotation_rate = limitDiff(
+    input.lateral.steering_tire_rotation_rate, prev_cmd_.lateral.steering_tire_rotation_rate,
+    steer_acc_lim * dt);
+
+  // Bound the angle so its change stays within acc_lim * dt^2 of the change the previous
+  // command made. Before the first setPrevCmd() that difference is zero, the same standing
+  // assumption every other limiter here makes about prev_cmd_.
+  const double prev_steer_diff = prev_steer_angle_diff_;
+  const double steer_angle_lim = steer_acc_lim * dt * dt;
+  const double requested = static_cast<double>(input.lateral.steering_tire_angle) -
+                           static_cast<double>(prev_cmd_.lateral.steering_tire_angle);
+  double diff =
+    std::clamp(requested, prev_steer_diff - steer_angle_lim, prev_steer_diff + steer_angle_lim);
+
+  diff = (requested >= 0.0) ? std::clamp(diff, 0.0, requested) : std::clamp(diff, requested, 0.0);
+
+  input.lateral.steering_tire_angle =
+    static_cast<float>(prev_cmd_.lateral.steering_tire_angle + diff);
+}
+
 void VehicleCmdFilter::filterAll(
   const double dt, const double current_steer_angle, Control & cmd,
   IsFilterActivated & is_activated) const
@@ -184,6 +230,7 @@ void VehicleCmdFilter::filterAll(
   const auto cmd_orig = cmd;
   limitLateralSteer(cmd);
   limitLateralSteerRate(dt, cmd);
+  limitLateralSteerAcc(dt, cmd);
   limitLongitudinalWithJerk(dt, cmd);
   limitLongitudinalWithAcc(dt, cmd);
   limitLongitudinalWithVel(cmd);
@@ -242,7 +289,7 @@ double VehicleCmdFilter::interpolateFromSpeed(const LimitArray & limits) const
 {
   // Consider only for the positive velocities.
   const auto current = std::abs(current_speed_);
-  const auto reference = param_.reference_speed_points;
+  const auto & reference = param_.reference_speed_points;
 
   // If the speed is out of range of the reference, apply zero-order hold.
   if (current <= reference.front()) {
@@ -252,21 +299,7 @@ double VehicleCmdFilter::interpolateFromSpeed(const LimitArray & limits) const
     return limits.back();
   }
 
-  // Apply linear interpolation
-  for (size_t i = 0; i < reference.size() - 1; ++i) {
-    if (reference.at(i) <= current && current <= reference.at(i + 1)) {
-      auto ratio =
-        (current - reference.at(i)) / std::max(reference.at(i + 1) - reference.at(i), 1.0e-5);
-      ratio = std::clamp(ratio, 0.0, 1.0);
-      const auto interp = limits.at(i) + ratio * (limits.at(i + 1) - limits.at(i));
-      return interp;
-    }
-  }
-
-  std::cerr << "VehicleCmdFilter::interpolateFromSpeed() interpolation logic is broken. Command "
-               "filter is not working. Please check the code."
-            << std::endl;
-  return reference.back();
+  return autoware::interpolation::lerp(reference, limits, current);
 }
 
 double VehicleCmdFilter::getLonAccLimForLonVel() const
