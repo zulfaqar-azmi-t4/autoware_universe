@@ -15,6 +15,8 @@
 #ifndef AUTOWARE__COLLISION_DETECTOR__NODE_HPP_
 #define AUTOWARE__COLLISION_DETECTOR__NODE_HPP_
 
+#include "autoware/collision_detector/types.hpp"
+
 #include <autoware/motion_utils/vehicle/vehicle_state_checker.hpp>
 #include <autoware_utils/ros/polling_subscriber.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info_utils.hpp>
@@ -22,6 +24,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
 #include <tf2/utils.hpp>
+#include <tl_expected/expected.hpp>
 
 #include <autoware_adapi_v1_msgs/msg/operation_mode_state.hpp>
 #include <autoware_perception_msgs/msg/predicted_objects.hpp>
@@ -47,8 +50,6 @@ using autoware_adapi_v1_msgs::msg::OperationModeState;
 using autoware_perception_msgs::msg::PredictedObject;
 using autoware_perception_msgs::msg::PredictedObjects;
 using autoware_perception_msgs::msg::Shape;
-
-using Obstacle = std::pair<double /* distance */, geometry_msgs::msg::Point>;
 
 class CollisionDetectorNode : public rclcpp::Node
 {
@@ -95,7 +96,7 @@ public:
   };
 
 private:
-  PredictedObjects filterObjects(const PredictedObjects & objects);
+  tl::expected<PredictedObjects, std::string> filterObjects(const PredictedObjects & objects);
 
   void removeOldObjects(
     std::vector<TimestampedObject> & container, const rclcpp::Time & current_time,
@@ -106,13 +107,12 @@ private:
 
   void checkCollision(diagnostic_updater::DiagnosticStatusWrapper & stat);
 
-  std::optional<Obstacle> getNearestObstacle(
+  result_t getNearestObstacle(const autoware_utils_geometry::Polygon2d & ego_polygon) const;
+
+  result_t getNearestObstacleByPointCloud(
     const autoware_utils_geometry::Polygon2d & ego_polygon) const;
 
-  std::optional<Obstacle> getNearestObstacleByPointCloud(
-    const autoware_utils_geometry::Polygon2d & ego_polygon) const;
-
-  std::optional<Obstacle> getNearestObstacleByDynamicObject(
+  result_t getNearestObstacleByDynamicObject(
     const autoware_utils_geometry::Polygon2d & ego_polygon) const;
 
   std::optional<geometry_msgs::msg::TransformStamped> getTransform(

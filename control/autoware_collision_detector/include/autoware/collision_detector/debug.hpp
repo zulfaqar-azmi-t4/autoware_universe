@@ -15,6 +15,8 @@
 #ifndef AUTOWARE__COLLISION_DETECTOR__DEBUG_HPP_
 #define AUTOWARE__COLLISION_DETECTOR__DEBUG_HPP_
 
+#include "autoware/collision_detector/types.hpp"
+
 #include <autoware_utils/ros/marker_helper.hpp>
 #include <autoware_utils_geometry/boost_geometry.hpp>
 #include <autoware_utils_visualization/marker_helper.hpp>
@@ -22,13 +24,10 @@
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
-#include <optional>
-
 namespace autoware::collision_detector
 {
 inline visualization_msgs::msg::MarkerArray generate_debug_markers(
-  const autoware_utils_geometry::Polygon2d & ego_polygon,
-  const std::optional<std::pair<double, geometry_msgs::msg::Point>> & nearest_obstacle_data,
+  const autoware_utils_geometry::Polygon2d & ego_polygon, const result_t & nearest_obstacle,
   const bool is_error)
 {
   visualization_msgs::msg::MarkerArray marker_array;
@@ -57,8 +56,8 @@ inline visualization_msgs::msg::MarkerArray generate_debug_markers(
   marker.type = visualization_msgs::msg::Marker::SPHERE;
   marker.scale = autoware_utils::create_marker_scale(0.5, 0.5, 0.5);       // Sphere diameter
   marker.color = autoware_utils::create_marker_color(1.0, 0.0, 0.0, 0.8);  // Red
-  if (nearest_obstacle_data) {
-    const auto & [_, nearest_point_msg] = *nearest_obstacle_data;
+  if (nearest_obstacle) {
+    const auto & [distance, nearest_point_msg] = *nearest_obstacle;
     marker.pose.position = nearest_point_msg;
     marker.action = visualization_msgs::msg::Marker::ADD;
   } else {

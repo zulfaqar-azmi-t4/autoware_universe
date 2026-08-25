@@ -183,7 +183,8 @@ CollisionDetectorNode::CollisionDetectorNode(const rclcpp::NodeOptions & node_op
   vehicle_stop_checker_ = std::make_unique<autoware::motion_utils::VehicleStopChecker>(this);
 }
 
-PredictedObjects CollisionDetectorNode::filterObjects(const PredictedObjects & input_objects)
+tl::expected<PredictedObjects, std::string> CollisionDetectorNode::filterObjects(
+  const PredictedObjects & input_objects)
 {
   PredictedObjects filtered_objects;
   filtered_objects.header = input_objects.header;
@@ -204,8 +205,8 @@ PredictedObjects CollisionDetectorNode::filterObjects(const PredictedObjects & i
     getTransform("base_link", input_objects.header.frame_id, input_objects.header.stamp, 0.5);
 
   if (!transform_stamped) {
-    RCLCPP_ERROR(this->get_logger(), "Failed to get transform from object frame to base_link");
-    return filtered_objects;
+    return tl::make_unexpected(
+      "failed to get transform from " + input_objects.header.frame_id + " to base_link");
   }
 
   Eigen::Affine3f isometry = tf2::transformToEigen(transform_stamped->transform).cast<float>();
@@ -381,15 +382,33 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
       this->get_logger(), *this->get_clock(), 5000 /* ms */, "waiting for operation mode info...");
     return;
   }
-  filtered_object_ptr_ = std::make_shared<PredictedObjects>(filterObjects(*object_ptr_));
-
   const auto hysteresis = is_error_diag_ ? node_param_.time_buffer.off_distance_hysteresis : 0.0;
   const auto ego_polygon =
     createSelfPolygon(vehicle_info_, hysteresis, node_param_.ignore_behind_rear_axle);
+
+  const auto filtered_objects = filterObjects(*object_ptr_);
+  if (!filtered_objects) {
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *this->get_clock(), 5000 /* ms */, "%s",
+      filtered_objects.error().c_str());
+    stat.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, filtered_objects.error());
+    return;
+  }
+  filtered_object_ptr_ = std::make_shared<PredictedObjects>(*filtered_objects);
+
   const auto nearest_obstacle = getNearestObstacle(ego_polygon);
 
+  if (!nearest_obstacle && nearest_obstacle.error() == ObstacleSearchError::transform_unavailable) {
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *this->get_clock(), 5000 /* ms */,
+      "failed to get transform to search for obstacles");
+    stat.summary(
+      diagnostic_msgs::msg::DiagnosticStatus::WARN, "failed to get transform to search obstacles");
+    return;
+  }
+
   const auto is_collision_found =
-    !nearest_obstacle ? false : nearest_obstacle->first < node_param_.collision_distance;
+    nearest_obstacle && nearest_obstacle->first < node_param_.collision_distance;
 
   // When a collision is detected, update timestamps to track collision duration
   // - start_of_consecutive_collision_stamp_: marks when a continuous collision began
@@ -441,36 +460,40 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
   pub_debug_->publish(generate_debug_markers(ego_polygon, nearest_obstacle, is_error_diag_));
 }
 
-std::optional<Obstacle> CollisionDetectorNode::getNearestObstacle(
+result_t CollisionDetectorNode::getNearestObstacle(
   const autoware_utils_geometry::Polygon2d & ego_polygon) const
 {
-  std::optional<Obstacle> nearest_pointcloud;
-  std::optional<Obstacle> nearest_object;
+  const auto search_failed = [](const result_t & result) {
+    return !result && result.error() == ObstacleSearchError::transform_unavailable;
+  };
+
+  const auto closer_of = [&search_failed](const result_t & nearest, const result_t & candidate) {
+    if (search_failed(nearest)) {
+      return nearest;
+    }
+    if (search_failed(candidate) || !nearest) {
+      return candidate;
+    }
+    if (!candidate) {
+      return nearest;
+    }
+    return candidate->first < nearest->first ? candidate : nearest;
+  };
+
+  result_t nearest_obstacle = tl::make_unexpected(ObstacleSearchError::no_obstacle_found);
 
   if (node_param_.use_pointcloud) {
-    nearest_pointcloud = getNearestObstacleByPointCloud(ego_polygon);
+    nearest_obstacle = closer_of(nearest_obstacle, getNearestObstacleByPointCloud(ego_polygon));
   }
 
   if (node_param_.use_dynamic_object) {
-    nearest_object = getNearestObstacleByDynamicObject(ego_polygon);
+    nearest_obstacle = closer_of(nearest_obstacle, getNearestObstacleByDynamicObject(ego_polygon));
   }
 
-  if (!nearest_pointcloud && !nearest_object) {
-    return {};
-  }
-
-  if (!nearest_pointcloud) {
-    return nearest_object;
-  }
-
-  if (!nearest_object) {
-    return nearest_pointcloud;
-  }
-
-  return nearest_pointcloud->first < nearest_object->first ? nearest_pointcloud : nearest_object;
+  return nearest_obstacle;
 }
 
-std::optional<Obstacle> CollisionDetectorNode::getNearestObstacleByPointCloud(
+result_t CollisionDetectorNode::getNearestObstacleByPointCloud(
   const autoware_utils_geometry::Polygon2d & ego_polygon) const
 {
   const auto transform_stamped =
@@ -480,7 +503,7 @@ std::optional<Obstacle> CollisionDetectorNode::getNearestObstacleByPointCloud(
   auto minimum_distance = std::numeric_limits<double>::max();
 
   if (!transform_stamped) {
-    return {};
+    return tl::make_unexpected(ObstacleSearchError::transform_unavailable);
   }
 
   Eigen::Affine3f isometry = tf2::transformToEigen(transform_stamped->transform).cast<float>();
@@ -502,7 +525,7 @@ std::optional<Obstacle> CollisionDetectorNode::getNearestObstacleByPointCloud(
   return std::make_pair(minimum_distance, nearest_point);
 }
 
-std::optional<Obstacle> CollisionDetectorNode::getNearestObstacleByDynamicObject(
+result_t CollisionDetectorNode::getNearestObstacleByDynamicObject(
   const autoware_utils_geometry::Polygon2d & ego_polygon) const
 {
   const auto transform_stamped = getTransform(
@@ -512,7 +535,7 @@ std::optional<Obstacle> CollisionDetectorNode::getNearestObstacleByDynamicObject
   auto minimum_distance = std::numeric_limits<double>::max();
 
   if (!transform_stamped) {
-    return {};
+    return tl::make_unexpected(ObstacleSearchError::transform_unavailable);
   }
 
   tf2::Transform tf_src2target;
