@@ -30,6 +30,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
 
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <string>
@@ -500,7 +501,7 @@ result_t CollisionDetectorNode::getNearestObstacleByPointCloud(
     getTransform("base_link", pointcloud_ptr_->header.frame_id, pointcloud_ptr_->header.stamp, 0.5);
 
   geometry_msgs::msg::Point nearest_point;
-  auto minimum_distance = std::numeric_limits<double>::max();
+  auto minimum_distance = std::numeric_limits<double>::infinity();
 
   if (!transform_stamped) {
     return tl::make_unexpected(ObstacleSearchError::transform_unavailable);
@@ -522,6 +523,10 @@ result_t CollisionDetectorNode::getNearestObstacleByPointCloud(
     }
   }
 
+  if (!std::isfinite(minimum_distance)) {
+    return tl::make_unexpected(ObstacleSearchError::no_obstacle_found);
+  }
+
   return std::make_pair(minimum_distance, nearest_point);
 }
 
@@ -532,7 +537,7 @@ result_t CollisionDetectorNode::getNearestObstacleByDynamicObject(
     filtered_object_ptr_->header.frame_id, "base_link", filtered_object_ptr_->header.stamp, 0.5);
 
   geometry_msgs::msg::Point nearest_point;
-  auto minimum_distance = std::numeric_limits<double>::max();
+  auto minimum_distance = std::numeric_limits<double>::infinity();
 
   if (!transform_stamped) {
     return tl::make_unexpected(ObstacleSearchError::transform_unavailable);
@@ -571,6 +576,10 @@ result_t CollisionDetectorNode::getNearestObstacleByDynamicObject(
       nearest_point = object_pose.position;
       minimum_distance = distance_to_object;
     }
+  }
+
+  if (!std::isfinite(minimum_distance)) {
+    return tl::make_unexpected(ObstacleSearchError::no_obstacle_found);
   }
 
   return std::make_pair(minimum_distance, nearest_point);
