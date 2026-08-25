@@ -533,6 +533,16 @@ validator:
       default_value: 0.01
       description: lateral margin [m]
       read_only: false
+    release_lateral_margin_m:
+      type: double
+      default_value: 0.30
+      description: lateral margin to release a critical verdict [m]
+      read_only: false
+    latch_critical_until_clear:
+      type: bool
+      default_value: true
+      description: hold a critical verdict until the boundary proximity clears
+      read_only: false
     longitudinal_margin_m:
       type: double
       default_value: 1.0

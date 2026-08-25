@@ -738,6 +738,17 @@
               "description": "Lateral clearance margin from an uncrossable boundary [m]. Trajectories whose footprint comes within this margin are rejected.",
               "default": 0.01
             },
+            "release_lateral_margin_m": {
+              "type": "number",
+              "description": "Lateral clearance margin required to release a held critical verdict [m]. Larger than `lateral_margin_m` so that a path which only grazes the boundary cannot release the verdict.",
+              "default": 0.3,
+              "minimum": 0.0
+            },
+            "latch_critical_until_clear": {
+              "type": "boolean",
+              "description": "Hold a critical verdict until the boundary proximity clears. When false, the verdict is released as soon as the severity drops, which lets a stop caused by the verdict release it.",
+              "default": true
+            },
             "longitudinal_margin_m": {
               "type": "number",
               "description": "Longitudinal look-ahead margin applied when projecting the vehicle footprint along the trajectory [m].",

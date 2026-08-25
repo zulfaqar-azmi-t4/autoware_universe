@@ -52,11 +52,14 @@ DepartureResult UncrossableBoundaryChecker::update_departure_status(
     footprints::generate(predicted_traj, vehicle_info_, ego_state.pose_with_cov);
   const auto footprints_sides = footprints::get_sides_from_footprints(footprints);
 
+  auto effective_param = param_;
+  effective_param.lateral_margin_m = calc_effective_lateral_margin(state, param_);
+
   const auto evaluation_result =
-    evaluator_ptr_->evaluate(predicted_traj, footprints_sides, ego_state);
+    evaluator_ptr_->evaluate(predicted_traj, footprints_sides, ego_state, effective_param);
 
   const auto hysteresis_result =
-    update_and_judge(state, evaluation_result, param_, ego_state.current_time_s);
+    update_and_judge(state, evaluation_result, effective_param, ego_state.current_time_s);
 
   state = hysteresis_result.updated_state;
 

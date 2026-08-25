@@ -49,11 +49,12 @@ public:
    * @param[in] predicted_traj predicted trajectory
    * @param[in] footprints_sides side segments of footprints along trajectory
    * @param[in] ego_state current ego dynamic state
+   * @param[in] param thresholds to evaluate under
    * @return evaluated critical point pairs if successful
    */
   [[nodiscard]] std::optional<Side<std::optional<CriticalPointPair>>> evaluate(
     const TrajectoryPoints & predicted_traj, const FootprintSideSegmentsArray & footprints_sides,
-    const EgoDynamicState & ego_state) const;
+    const EgoDynamicState & ego_state, const UncrossableBoundaryDepartureParam & param) const;
 
   /**
    * @brief Update parameters.

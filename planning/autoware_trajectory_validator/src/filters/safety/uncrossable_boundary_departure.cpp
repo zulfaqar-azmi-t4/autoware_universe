@@ -69,6 +69,8 @@ UncrossableBoundaryDepartureFilter::result_t UncrossableBoundaryDepartureFilter:
 void UncrossableBoundaryDepartureFilter::update_parameters(const validator::Params & params)
 {
   params_.lateral_margin_m = params.boundary_departure.lateral_margin_m;
+  params_.release_lateral_margin_m = params.boundary_departure.release_lateral_margin_m;
+  params_.latch_critical_until_clear = params.boundary_departure.latch_critical_until_clear;
   params_.longitudinal_margin_m = params.boundary_departure.longitudinal_margin_m;
   params_.max_deceleration_mps2 = params.boundary_departure.max_deceleration_mps2;
   params_.max_jerk_mps3 = params.boundary_departure.max_jerk_mps3;

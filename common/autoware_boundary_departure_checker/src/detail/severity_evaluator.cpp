@@ -119,6 +119,12 @@ bool is_critical(const Side<std::optional<CriticalPointPair>> & evaluated_projec
   });
 }
 
+bool is_departure_free(const Side<std::optional<CriticalPointPair>> & evaluated_projections)
+{
+  return evaluated_projections.all_of_side(
+    [](const auto & critical_pair_opt) { return !critical_pair_opt.has_value(); });
+}
+
 double calc_minimum_braking_distance(
   const EgoDynamicState & ego_state, const UncrossableBoundaryDepartureParam & param,
   const vehicle_info_utils::VehicleInfo & vehicle_info)

@@ -16,8 +16,21 @@
 
 #include "autoware/boundary_departure_checker/detail/severity_evaluator.hpp"
 
+#include <algorithm>
+
 namespace autoware::boundary_departure_checker
 {
+double calc_effective_lateral_margin(
+  const HysteresisState & state, const UncrossableBoundaryDepartureParam & param)
+{
+  // While a critical verdict is held, widen the margin so that a path which only just grazes the
+  // boundary cannot release it. This makes the hysteresis asymmetric in distance, not only in time.
+  if (!param.latch_critical_until_clear || state.critical_departure_history.all_empty()) {
+    return param.lateral_margin_m;
+  }
+  return std::max(param.lateral_margin_m, param.release_lateral_margin_m);
+}
+
 HysteresisResult update_and_judge(
   const HysteresisState & state,
   const std::optional<Side<std::optional<CriticalPointPair>>> & evaluation_result,
@@ -61,16 +74,26 @@ HysteresisResult update_and_judge(
     return result;
   }
 
-  result.updated_state.last_no_critical_dpt_time = current_time_s;
-
   if (!state.critical_departure_history.all_empty()) {
+    // Hold the critical verdict until the boundary proximity itself clears. A drop to APPROACHING
+    // only means ego slowed down, which is the effect of the verdict, not a recovery from it.
+    if (
+      param.latch_critical_until_clear &&
+      !severity_evaluator::is_departure_free(*evaluation_result)) {
+      result.status = DepartureType::CRITICAL;
+      return result;
+    }
+
     if (current_time_s - state.last_found_critical_dpt_time < param.off_time_buffer_s) {
       result.status = DepartureType::CRITICAL;
       return result;
     }
+
     result.updated_state.critical_departure_history.for_each_side(
       [](auto & side) { side.clear(); });
   }
+
+  result.updated_state.last_no_critical_dpt_time = current_time_s;
 
   return result;
 }

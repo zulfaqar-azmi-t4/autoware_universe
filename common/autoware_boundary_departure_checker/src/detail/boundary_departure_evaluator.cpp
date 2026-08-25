@@ -37,14 +37,14 @@ BoundaryDepartureEvaluator::BoundaryDepartureEvaluator(
 
 std::optional<Side<std::optional<CriticalPointPair>>> BoundaryDepartureEvaluator::evaluate(
   const TrajectoryPoints & predicted_traj, const FootprintSideSegmentsArray & footprints_sides,
-  const EgoDynamicState & ego_state) const
+  const EgoDynamicState & ego_state, const UncrossableBoundaryDepartureParam & param) const
 {
   if (predicted_traj.empty() || rtree_.empty()) {
     return std::nullopt;
   }
 
   const auto boundary_segments = boundary_segment_finder::get_boundary_segments(
-    rtree_, map_, param_, footprints_sides, predicted_traj, vehicle_info_.vehicle_height_m);
+    rtree_, map_, param, footprints_sides, predicted_traj, vehicle_info_.vehicle_height_m);
 
   if (boundary_segments.all_empty()) {
     return std::nullopt;
@@ -55,7 +55,7 @@ std::optional<Side<std::optional<CriticalPointPair>>> BoundaryDepartureEvaluator
       predicted_traj, boundary_segments, footprints_sides);
 
   return severity_evaluator::evaluate_projections_severity(
-    projections_to_bound, param_, ego_state, vehicle_info_);
+    projections_to_bound, param, ego_state, vehicle_info_);
 }
 
 }  // namespace autoware::boundary_departure_checker

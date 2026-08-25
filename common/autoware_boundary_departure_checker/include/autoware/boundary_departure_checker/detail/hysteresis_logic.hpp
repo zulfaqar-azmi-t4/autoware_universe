@@ -42,6 +42,15 @@ struct HysteresisResult
 };
 
 /**
+ * @brief Get the lateral margin to evaluate the next cycle under.
+ * @param[in] state current hysteresis state
+ * @param[in] param parameters
+ * @return release margin while a critical verdict is held, otherwise the trigger margin [m]
+ */
+double calc_effective_lateral_margin(
+  const HysteresisState & state, const UncrossableBoundaryDepartureParam & param);
+
+/**
  * @brief Pure function to determine departure status using hysteresis.
  * @param[in] state current hysteresis state
  * @param[in] evaluation_result result from stateless evaluator

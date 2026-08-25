@@ -154,9 +154,11 @@
 
     boundary_departure:
       boundary_types: ["road_border"]
+      latch_critical_until_clear: true
       brake_delay_s: 1.0
       enable_developer_marker: false
       lateral_margin_m: 0.01
+      release_lateral_margin_m: 0.30
       longitudinal_margin_m: 1.0
       max_deceleration_mps2: -4.0
       max_jerk_mps3: -5.0
