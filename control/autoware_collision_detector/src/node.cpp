@@ -356,6 +356,7 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
 
   if (vehicle_stop_checker_->isVehicleStopped()) {
     is_error_diag_ = false;
+    start_of_consecutive_collision_stamp_.reset();
     stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "vehicle is stopping");
     return;
   }
