@@ -45,7 +45,6 @@
 
 namespace autoware::collision_detector
 {
-using autoware::vehicle_info_utils::VehicleInfo;
 using autoware_adapi_v1_msgs::msg::OperationModeState;
 using autoware_perception_msgs::msg::PredictedObject;
 using autoware_perception_msgs::msg::PredictedObjects;
@@ -107,19 +106,20 @@ private:
 
   void checkCollision(diagnostic_updater::DiagnosticStatusWrapper & stat);
 
-  result_t getNearestObstacle(const autoware_utils_geometry::Polygon2d & ego_polygon) const;
+  result_t getNearestObstacle(const autoware_utils_geometry::LinearRing2d & ego_polygon) const;
 
   result_t getNearestObstacleByPointCloud(
-    const autoware_utils_geometry::Polygon2d & ego_polygon) const;
+    const autoware_utils_geometry::LinearRing2d & ego_polygon) const;
 
   result_t getNearestObstacleByDynamicObject(
-    const autoware_utils_geometry::Polygon2d & ego_polygon) const;
+    const autoware_utils_geometry::LinearRing2d & ego_polygon) const;
 
   std::optional<geometry_msgs::msg::TransformStamped> getTransform(
     const std::string & source, const std::string & target, const rclcpp::Time & stamp,
     double duration_sec) const;
 
   // ros
+  rclcpp::Clock::SharedPtr clock_{get_clock()};
   mutable tf2_ros::Buffer tf_buffer_{get_clock()};
   mutable tf2_ros::TransformListener tf_listener_{tf_buffer_};
   rclcpp::TimerBase::SharedPtr timer_;

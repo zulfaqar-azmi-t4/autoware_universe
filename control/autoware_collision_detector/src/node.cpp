@@ -20,6 +20,7 @@
 #include <autoware_utils/geometry/geometry.hpp>
 #include <autoware_utils/ros/uuid_helper.hpp>
 #include <autoware_utils_geometry/boost_geometry.hpp>
+#include <autoware_utils_geometry/boost_polygon_utils.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
 
 #include <sensor_msgs/point_cloud2_iterator.hpp>
@@ -43,92 +44,6 @@ namespace autoware::collision_detector
 {
 namespace bg = boost::geometry;
 using autoware_utils::create_point;
-using autoware_utils::pose2transform;
-
-namespace
-{
-
-geometry_msgs::msg::Point32 createPoint32(const double x, const double y, const double z)
-{
-  geometry_msgs::msg::Point32 p;
-  p.x = x;
-  p.y = y;
-  p.z = z;
-  return p;
-}
-
-autoware_utils_geometry::Polygon2d createObjPolygon(
-  const geometry_msgs::msg::Pose & pose, const geometry_msgs::msg::Polygon & footprint)
-{
-  geometry_msgs::msg::Polygon transformed_polygon{};
-  geometry_msgs::msg::TransformStamped geometry_tf{};
-  geometry_tf.transform = pose2transform(pose);
-  tf2::doTransform(footprint, transformed_polygon, geometry_tf);
-
-  autoware_utils_geometry::Polygon2d object_polygon;
-  for (const auto & p : transformed_polygon.points) {
-    object_polygon.outer().push_back(autoware_utils_geometry::Point2d(p.x, p.y));
-  }
-
-  bg::correct(object_polygon);
-
-  return object_polygon;
-}
-
-autoware_utils_geometry::Polygon2d createObjPolygon(
-  const geometry_msgs::msg::Pose & pose, const geometry_msgs::msg::Vector3 & size)
-{
-  const double length_m = size.x / 2.0;
-  const double width_m = size.y / 2.0;
-
-  geometry_msgs::msg::Polygon polygon{};
-
-  polygon.points.push_back(createPoint32(length_m, -width_m, 0.0));
-  polygon.points.push_back(createPoint32(length_m, width_m, 0.0));
-  polygon.points.push_back(createPoint32(-length_m, width_m, 0.0));
-  polygon.points.push_back(createPoint32(-length_m, -width_m, 0.0));
-
-  return createObjPolygon(pose, polygon);
-}
-
-autoware_utils_geometry::Polygon2d createObjPolygonForCylinder(
-  const geometry_msgs::msg::Pose & pose, const double diameter)
-{
-  geometry_msgs::msg::Polygon polygon{};
-
-  const double radius = diameter * 0.5;
-  // add hexagon points
-  for (int i = 0; i < 6; ++i) {
-    const double angle = 2.0 * M_PI * static_cast<double>(i) / 6.0;
-    const double x = radius * std::cos(angle);
-    const double y = radius * std::sin(angle);
-    polygon.points.push_back(createPoint32(x, y, 0.0));
-  }
-
-  return createObjPolygon(pose, polygon);
-}
-
-autoware_utils_geometry::Polygon2d createSelfPolygon(
-  const VehicleInfo & vehicle_info, const double extra_offset, const bool ignore_behind_rear_axle)
-{
-  const double & front_m = vehicle_info.max_longitudinal_offset_m + extra_offset;
-  const double & width_left_m = vehicle_info.max_lateral_offset_m + extra_offset;
-  const double & width_right_m = vehicle_info.min_lateral_offset_m - extra_offset;
-  const double & rear_m =
-    ignore_behind_rear_axle ? 0.0 : vehicle_info.min_longitudinal_offset_m - extra_offset;
-
-  autoware_utils_geometry::Polygon2d ego_polygon;
-
-  ego_polygon.outer().push_back(autoware_utils_geometry::Point2d(front_m, width_left_m));
-  ego_polygon.outer().push_back(autoware_utils_geometry::Point2d(front_m, width_right_m));
-  ego_polygon.outer().push_back(autoware_utils_geometry::Point2d(rear_m, width_right_m));
-  ego_polygon.outer().push_back(autoware_utils_geometry::Point2d(rear_m, width_left_m));
-
-  bg::correct(ego_polygon);
-
-  return ego_polygon;
-}
-}  // namespace
 
 CollisionDetectorNode::CollisionDetectorNode(const rclcpp::NodeOptions & node_options)
 : Node("collision_detector_node", node_options), updater_(this)
@@ -382,8 +297,11 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
     return;
   }
   const auto hysteresis = is_error_diag_ ? node_param_.time_buffer.off_distance_hysteresis : 0.0;
+  // The rear overhang is cancelled so that the rear edge sits on the rear axle.
+  const auto rear_margin =
+    node_param_.ignore_behind_rear_axle ? vehicle_info_.min_longitudinal_offset_m : hysteresis;
   const auto ego_polygon =
-    createSelfPolygon(vehicle_info_, hysteresis, node_param_.ignore_behind_rear_axle);
+    vehicle_info_.createFootprint(hysteresis, hysteresis, hysteresis, hysteresis, rear_margin);
 
   auto filtered_objects = filterObjects(*object_ptr_);
   if (!filtered_objects) {
@@ -460,7 +378,7 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
 }
 
 result_t CollisionDetectorNode::getNearestObstacle(
-  const autoware_utils_geometry::Polygon2d & ego_polygon) const
+  const autoware_utils_geometry::LinearRing2d & ego_polygon) const
 {
   const auto search_failed = [](const result_t & result) {
     return !result && result.error() == ObstacleSearchError::transform_unavailable;
@@ -493,7 +411,7 @@ result_t CollisionDetectorNode::getNearestObstacle(
 }
 
 result_t CollisionDetectorNode::getNearestObstacleByPointCloud(
-  const autoware_utils_geometry::Polygon2d & ego_polygon) const
+  const autoware_utils_geometry::LinearRing2d & ego_polygon) const
 {
   const auto transform_stamped =
     getTransform("base_link", pointcloud_ptr_->header.frame_id, pointcloud_ptr_->header.stamp, 0.5);
@@ -550,7 +468,7 @@ result_t CollisionDetectorNode::getNearestObstacleByPointCloud(
 }
 
 result_t CollisionDetectorNode::getNearestObstacleByDynamicObject(
-  const autoware_utils_geometry::Polygon2d & ego_polygon) const
+  const autoware_utils_geometry::LinearRing2d & ego_polygon) const
 {
   const auto transform_stamped = getTransform(
     filtered_object_ptr_->header.frame_id, "base_link", filtered_object_ptr_->header.stamp, 0.5);
@@ -575,20 +493,18 @@ result_t CollisionDetectorNode::getNearestObstacleByDynamicObject(
     geometry_msgs::msg::Pose transformed_object_pose;
     tf2::toMsg(tf_target2src * tf_src2object, transformed_object_pose);
 
-    const auto object_polygon = [&]() {
-      switch (object.shape.type) {
-        case Shape::POLYGON:
-          return createObjPolygon(transformed_object_pose, object.shape.footprint);
-        case Shape::CYLINDER:
-          return createObjPolygonForCylinder(transformed_object_pose, object.shape.dimensions.x);
-        case Shape::BOUNDING_BOX:
-          return createObjPolygon(transformed_object_pose, object.shape.dimensions);
-        default:
-          // node return warning
-          RCLCPP_WARN(this->get_logger(), "Unsupported shape type: %d", object.shape.type);
-          return createObjPolygon(transformed_object_pose, object.shape.dimensions);
-      }
-    }();
+    // to_polygon2d throws on an unknown type, so the shape falls back to a bounding box.
+    auto shape = object.shape;
+    if (
+      shape.type != Shape::POLYGON && shape.type != Shape::CYLINDER &&
+      shape.type != Shape::BOUNDING_BOX) {
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *clock_, 5000 /* ms */, "Unsupported shape type: %d", shape.type);
+      shape.type = Shape::BOUNDING_BOX;
+    }
+
+    const auto object_polygon =
+      autoware_utils_geometry::to_polygon2d(transformed_object_pose, shape);
 
     const auto distance_to_object = bg::distance(ego_polygon, object_polygon);
 

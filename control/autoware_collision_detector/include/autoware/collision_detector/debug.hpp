@@ -27,7 +27,7 @@
 namespace autoware::collision_detector
 {
 inline visualization_msgs::msg::MarkerArray generate_debug_markers(
-  const autoware_utils_geometry::Polygon2d & ego_polygon, const result_t & nearest_obstacle,
+  const autoware_utils_geometry::LinearRing2d & ego_polygon, const result_t & nearest_obstacle,
   const bool is_error)
 {
   visualization_msgs::msg::MarkerArray marker_array;
@@ -43,11 +43,9 @@ inline visualization_msgs::msg::MarkerArray generate_debug_markers(
     marker.color = autoware_utils::create_marker_color(0.0, 1.0, 0.0, 0.8);
   }
 
-  for (const auto & p : ego_polygon.outer()) {
+  // createFootprint returns a closed ring, so no extra point is needed to close the line strip.
+  for (const auto & p : ego_polygon) {
     marker.points.push_back(autoware_utils::create_marker_position(p.x(), p.y(), 0.0));
-  }
-  if (!ego_polygon.outer().empty()) {
-    marker.points.push_back(marker.points.front());
   }
   marker_array.markers.push_back(marker);
 
