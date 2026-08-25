@@ -429,7 +429,7 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
     } else {
       stat.addf(
         "Time since last detection", "%lf",
-        (this->now() - *most_recent_collision_stamp_).seconds() < node_param_.time_buffer.off);
+        (this->now() - *most_recent_collision_stamp_).seconds());
     }
   } else {
     is_error_diag_ = false;
