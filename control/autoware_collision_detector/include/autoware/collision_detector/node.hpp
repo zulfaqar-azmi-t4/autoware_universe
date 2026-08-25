@@ -20,6 +20,7 @@
 #include <autoware/motion_utils/vehicle/vehicle_state_checker.hpp>
 #include <autoware_utils/ros/polling_subscriber.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info_utils.hpp>
+#include <collision_detector_node_parameters.hpp>
 #include <diagnostic_updater/diagnostic_updater.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
@@ -54,39 +55,6 @@ class CollisionDetectorNode : public rclcpp::Node
 {
 public:
   explicit CollisionDetectorNode(const rclcpp::NodeOptions & node_options);
-
-  struct NearbyObjectTypeFilters
-  {
-    bool filter_car{false};
-    bool filter_truck{false};
-    bool filter_bus{false};
-    bool filter_trailer{false};
-    bool filter_unknown{false};
-    bool filter_bicycle{false};
-    bool filter_motorcycle{false};
-    bool filter_pedestrian{false};
-    bool filter_animal{false};
-    bool filter_hazard{false};
-    bool filter_over_drivable{false};
-    bool filter_under_drivable{false};
-  };
-
-  struct NodeParam
-  {
-    bool use_pointcloud{};
-    bool use_dynamic_object{};
-    double collision_distance{};
-    double nearby_filter_radius{};
-    double keep_ignoring_time{};
-    NearbyObjectTypeFilters nearby_object_type_filters;
-    bool ignore_behind_rear_axle{};
-    struct
-    {
-      double on{};
-      double off{};
-      double off_distance_hysteresis{};
-    } time_buffer;
-  };
 
   struct TimestampedObject
   {
@@ -137,7 +105,8 @@ private:
     create_publisher<visualization_msgs::msg::MarkerArray>("~/debug_markers", 1);
 
   // parameter
-  NodeParam node_param_;
+  std::shared_ptr<collision_detector_node::ParamListener> param_listener_;
+  collision_detector_node::Params params_;
   autoware::vehicle_info_utils::VehicleInfo vehicle_info_;
 
   // data

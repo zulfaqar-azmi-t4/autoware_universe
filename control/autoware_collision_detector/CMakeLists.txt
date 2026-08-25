@@ -12,8 +12,16 @@ include_directories(
     ${EIGEN3_INCLUDE_DIR}
 )
 
+generate_parameter_library(collision_detector_node_parameters
+  param/collision_detector_node_parameters.yaml
+)
+
 ament_auto_add_library(${PROJECT_NAME} SHARED
   src/node.cpp
+)
+
+target_link_libraries(${PROJECT_NAME}
+  collision_detector_node_parameters
 )
 
 rclcpp_components_register_node(${PROJECT_NAME}

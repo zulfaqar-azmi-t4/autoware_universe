@@ -1,0 +1,78 @@
+collision_detector_node:
+  use_pointcloud:
+    type: bool
+    description: Use the pointcloud as an obstacle source.
+  use_dynamic_object:
+    type: bool
+    description: Use the dynamic objects as an obstacle source.
+  collision_distance:
+    type: double
+    description: Distance below which an object counts as a collision with ego [m].
+    validation:
+      gt_eq<>: [0.0]
+  nearby_filter_radius:
+    type: double
+    description: Radius within which a newly appearing object is filtered [m].
+    validation:
+      gt_eq<>: [0.0]
+  keep_ignoring_time:
+    type: double
+    description: Time to keep ignoring an object that first appeared in the vicinity [s].
+    validation:
+      gt_eq<>: [0.0]
+  ignore_behind_rear_axle:
+    type: bool
+    description: Ignore the collisions that are detected behind the rear axle of ego.
+  nearby_object_type_filters:
+    filter_car:
+      type: bool
+      description: Filter a car that first appears in the vicinity.
+    filter_truck:
+      type: bool
+      description: Filter a truck that first appears in the vicinity.
+    filter_bus:
+      type: bool
+      description: Filter a bus that first appears in the vicinity.
+    filter_trailer:
+      type: bool
+      description: Filter a trailer that first appears in the vicinity.
+    filter_unknown:
+      type: bool
+      description: Filter an unknown object that first appears in the vicinity.
+    filter_bicycle:
+      type: bool
+      description: Filter a bicycle that first appears in the vicinity.
+    filter_motorcycle:
+      type: bool
+      description: Filter a motorcycle that first appears in the vicinity.
+    filter_pedestrian:
+      type: bool
+      description: Filter a pedestrian that first appears in the vicinity.
+    filter_animal:
+      type: bool
+      description: Filter an animal that first appears in the vicinity.
+    filter_hazard:
+      type: bool
+      description: Filter a hazard that first appears in the vicinity.
+    filter_over_drivable:
+      type: bool
+      description: Filter an over drivable object that first appears in the vicinity.
+    filter_under_drivable:
+      type: bool
+      description: Filter an under drivable object that first appears in the vicinity.
+  time_buffer:
+    on_duration:
+      type: double
+      description: Minimum consecutive detection time before the diagnostic is triggered [s].
+      validation:
+        gt_eq<>: [0.0]
+    off_duration:
+      type: double
+      description: Minimum time without a detection before the diagnostic is released [s].
+      validation:
+        gt_eq<>: [0.0]
+    off_distance_hysteresis:
+      type: double
+      description: Extra distance used to detect collisions once the diagnostic is triggered [m].
+      validation:
+        gt_eq<>: [0.0]

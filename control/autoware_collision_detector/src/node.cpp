@@ -21,6 +21,7 @@
 #include <autoware_utils/ros/uuid_helper.hpp>
 #include <autoware_utils_geometry/boost_geometry.hpp>
 #include <autoware_utils_geometry/boost_polygon_utils.hpp>
+#include <collision_detector_node_parameters.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
 
 #include <sensor_msgs/point_cloud2_iterator.hpp>
@@ -48,44 +49,9 @@ using autoware_utils::create_point;
 CollisionDetectorNode::CollisionDetectorNode(const rclcpp::NodeOptions & node_options)
 : Node("collision_detector_node", node_options), updater_(this)
 {
-  // Parameters
-  {
-    auto & p = node_param_;
-    p.use_pointcloud = this->declare_parameter<bool>("use_pointcloud");
-    p.use_dynamic_object = this->declare_parameter<bool>("use_dynamic_object");
-    p.collision_distance = this->declare_parameter<double>("collision_distance");
-    p.nearby_filter_radius = this->declare_parameter<double>("nearby_filter_radius");
-    p.keep_ignoring_time = this->declare_parameter<double>("keep_ignoring_time");
-    p.nearby_object_type_filters.filter_car =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_car");
-    p.nearby_object_type_filters.filter_truck =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_truck");
-    p.nearby_object_type_filters.filter_bus =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_bus");
-    p.nearby_object_type_filters.filter_trailer =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_trailer");
-    p.nearby_object_type_filters.filter_unknown =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_unknown");
-    p.nearby_object_type_filters.filter_bicycle =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_bicycle");
-    p.nearby_object_type_filters.filter_motorcycle =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_motorcycle");
-    p.nearby_object_type_filters.filter_pedestrian =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_pedestrian");
-    p.nearby_object_type_filters.filter_animal =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_animal");
-    p.nearby_object_type_filters.filter_hazard =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_hazard");
-    p.nearby_object_type_filters.filter_over_drivable =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_over_drivable");
-    p.nearby_object_type_filters.filter_under_drivable =
-      this->declare_parameter<bool>("nearby_object_type_filters.filter_under_drivable");
-    p.ignore_behind_rear_axle = this->declare_parameter<bool>("ignore_behind_rear_axle");
-    p.time_buffer.on = this->declare_parameter<double>("time_buffer.on_duration");
-    p.time_buffer.off = this->declare_parameter<double>("time_buffer.off_duration");
-    p.time_buffer.off_distance_hysteresis =
-      this->declare_parameter<double>("time_buffer.off_distance_hysteresis");
-  }
+  param_listener_ =
+    std::make_shared<collision_detector_node::ParamListener>(this->get_node_parameters_interface());
+  params_ = param_listener_->get_params();
 
   vehicle_info_ = autoware::vehicle_info_utils::VehicleInfoUtils(*this).getVehicleInfo();
 
@@ -134,7 +100,7 @@ tl::expected<PredictedObjects, std::string> CollisionDetectorNode::filterObjects
 
     // Calculate object distance from base_link
     const double object_distance = transformed_position.head<2>().norm();
-    const bool is_within_range = (object_distance <= node_param_.nearby_filter_radius);
+    const bool is_within_range = (object_distance <= params_.nearby_filter_radius);
 
     // Determine if the object should be excluded based on its classification
     const auto classification =
@@ -174,7 +140,7 @@ tl::expected<PredictedObjects, std::string> CollisionDetectorNode::filterObjects
     // If the object was ignored and is still within the ignore period, continue filtering
     if (
       was_ignored && (current_object_time - ignored_it->timestamp) <
-                       rclcpp::Duration::from_seconds(node_param_.keep_ignoring_time)) {
+                       rclcpp::Duration::from_seconds(params_.keep_ignoring_time)) {
       // Check if the object exists in observed_objects_
       auto observed_it = std::find_if(
         observed_objects_.begin(), observed_objects_.end(),
@@ -230,29 +196,29 @@ bool CollisionDetectorNode::shouldBeExcluded(
 {
   switch (classification) {
     case autoware_perception_msgs::msg::ObjectClassification::CAR:
-      return node_param_.nearby_object_type_filters.filter_car;
+      return params_.nearby_object_type_filters.filter_car;
     case autoware_perception_msgs::msg::ObjectClassification::TRUCK:
-      return node_param_.nearby_object_type_filters.filter_truck;
+      return params_.nearby_object_type_filters.filter_truck;
     case autoware_perception_msgs::msg::ObjectClassification::BUS:
-      return node_param_.nearby_object_type_filters.filter_bus;
+      return params_.nearby_object_type_filters.filter_bus;
     case autoware_perception_msgs::msg::ObjectClassification::TRAILER:
-      return node_param_.nearby_object_type_filters.filter_trailer;
+      return params_.nearby_object_type_filters.filter_trailer;
     case autoware_perception_msgs::msg::ObjectClassification::UNKNOWN:
-      return node_param_.nearby_object_type_filters.filter_unknown;
+      return params_.nearby_object_type_filters.filter_unknown;
     case autoware_perception_msgs::msg::ObjectClassification::BICYCLE:
-      return node_param_.nearby_object_type_filters.filter_bicycle;
+      return params_.nearby_object_type_filters.filter_bicycle;
     case autoware_perception_msgs::msg::ObjectClassification::MOTORCYCLE:
-      return node_param_.nearby_object_type_filters.filter_motorcycle;
+      return params_.nearby_object_type_filters.filter_motorcycle;
     case autoware_perception_msgs::msg::ObjectClassification::PEDESTRIAN:
-      return node_param_.nearby_object_type_filters.filter_pedestrian;
+      return params_.nearby_object_type_filters.filter_pedestrian;
     case autoware_perception_msgs::msg::ObjectClassification::ANIMAL:
-      return node_param_.nearby_object_type_filters.filter_animal;
+      return params_.nearby_object_type_filters.filter_animal;
     case autoware_perception_msgs::msg::ObjectClassification::HAZARD:
-      return node_param_.nearby_object_type_filters.filter_hazard;
+      return params_.nearby_object_type_filters.filter_hazard;
     case autoware_perception_msgs::msg::ObjectClassification::OVER_DRIVABLE:
-      return node_param_.nearby_object_type_filters.filter_over_drivable;
+      return params_.nearby_object_type_filters.filter_over_drivable;
     case autoware_perception_msgs::msg::ObjectClassification::UNDER_DRIVABLE:
-      return node_param_.nearby_object_type_filters.filter_under_drivable;
+      return params_.nearby_object_type_filters.filter_under_drivable;
     default:
       return false;
   }
@@ -260,6 +226,10 @@ bool CollisionDetectorNode::shouldBeExcluded(
 
 void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusWrapper & stat)
 {
+  if (param_listener_->is_old(params_)) {
+    params_ = param_listener_->get_params();
+  }
+
   odometry_ptr_ = sub_odometry_.take_data();
 
   if (!odometry_ptr_) {
@@ -279,13 +249,13 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
   object_ptr_ = sub_dynamic_objects_.take_data();
   operation_mode_ptr_ = sub_operation_mode_.take_data();
 
-  if (node_param_.use_pointcloud && !pointcloud_ptr_) {
+  if (params_.use_pointcloud && !pointcloud_ptr_) {
     RCLCPP_WARN_THROTTLE(
       this->get_logger(), *this->get_clock(), 5000 /* ms */, "waiting for pointcloud info...");
     return;
   }
 
-  if (node_param_.use_dynamic_object && !object_ptr_) {
+  if (params_.use_dynamic_object && !object_ptr_) {
     RCLCPP_WARN_THROTTLE(
       this->get_logger(), *this->get_clock(), 5000 /* ms */, "waiting for dynamic object info...");
     return;
@@ -296,10 +266,10 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
       this->get_logger(), *this->get_clock(), 5000 /* ms */, "waiting for operation mode info...");
     return;
   }
-  const auto hysteresis = is_error_diag_ ? node_param_.time_buffer.off_distance_hysteresis : 0.0;
+  const auto hysteresis = is_error_diag_ ? params_.time_buffer.off_distance_hysteresis : 0.0;
   // The rear overhang is cancelled so that the rear edge sits on the rear axle.
   const auto rear_margin =
-    node_param_.ignore_behind_rear_axle ? vehicle_info_.min_longitudinal_offset_m : hysteresis;
+    params_.ignore_behind_rear_axle ? vehicle_info_.min_longitudinal_offset_m : hysteresis;
   const auto ego_polygon =
     vehicle_info_.createFootprint(hysteresis, hysteresis, hysteresis, hysteresis, rear_margin);
 
@@ -325,7 +295,7 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
   }
 
   const auto is_collision_found =
-    nearest_obstacle && nearest_obstacle->first < node_param_.collision_distance;
+    nearest_obstacle && nearest_obstacle->first < params_.collision_distance;
 
   // When a collision is detected, update timestamps to track collision duration
   // - start_of_consecutive_collision_stamp_: marks when a continuous collision began
@@ -348,11 +318,12 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
   //    - This prevents triggering on brief/momentary collisions
   const auto condition_to_trigger_error = [&]() {
     if (is_error_diag_) {
-      return (this->now() - *most_recent_collision_stamp_).seconds() < node_param_.time_buffer.off;
+      return (this->now() - *most_recent_collision_stamp_).seconds() <
+             params_.time_buffer.off_duration;
     }
     return start_of_consecutive_collision_stamp_.has_value() &&
            (this->now() - *start_of_consecutive_collision_stamp_).seconds() >=
-             node_param_.time_buffer.on;
+             params_.time_buffer.on_duration;
   };
 
   diagnostic_msgs::msg::DiagnosticStatus status;
@@ -399,11 +370,11 @@ result_t CollisionDetectorNode::getNearestObstacle(
 
   result_t nearest_obstacle = tl::make_unexpected(ObstacleSearchError::no_obstacle_found);
 
-  if (node_param_.use_pointcloud) {
+  if (params_.use_pointcloud) {
     nearest_obstacle = closer_of(nearest_obstacle, getNearestObstacleByPointCloud(ego_polygon));
   }
 
-  if (node_param_.use_dynamic_object) {
+  if (params_.use_dynamic_object) {
     nearest_obstacle = closer_of(nearest_obstacle, getNearestObstacleByDynamicObject(ego_polygon));
   }
 
