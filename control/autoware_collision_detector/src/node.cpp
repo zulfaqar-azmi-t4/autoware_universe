@@ -22,13 +22,11 @@
 #include <autoware_utils_geometry/boost_geometry.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
 
+#include <sensor_msgs/point_cloud2_iterator.hpp>
+
 #include <boost/geometry.hpp>
 #include <boost/geometry/geometries/linestring.hpp>
 #include <boost/geometry/geometries/point_xy.hpp>
-
-#include <pcl/common/transforms.h>
-#include <pcl/point_cloud.h>
-#include <pcl_conversions/pcl_conversions.h>
 
 #include <cmath>
 #include <limits>
@@ -507,19 +505,40 @@ result_t CollisionDetectorNode::getNearestObstacleByPointCloud(
     return tl::make_unexpected(ObstacleSearchError::transform_unavailable);
   }
 
-  Eigen::Affine3f isometry = tf2::transformToEigen(transform_stamped->transform).cast<float>();
-  pcl::PointCloud<pcl::PointXYZ> transformed_pointcloud;
-  pcl::fromROSMsg(*pointcloud_ptr_, transformed_pointcloud);
-  pcl::transformPointCloud(transformed_pointcloud, transformed_pointcloud, isometry);
+  const Eigen::Affine3f isometry =
+    tf2::transformToEigen(transform_stamped->transform).cast<float>();
 
-  for (const auto & p : transformed_pointcloud) {
-    autoware_utils_geometry::Point2d boost_point(p.x, p.y);
+  // The bounding box rejects far points before the exact polygon distance is calculated.
+  const auto ego_box = bg::return_envelope<autoware_utils_geometry::Box2d>(ego_polygon);
 
+  sensor_msgs::PointCloud2ConstIterator<float> iter_x(*pointcloud_ptr_, "x");
+  sensor_msgs::PointCloud2ConstIterator<float> iter_y(*pointcloud_ptr_, "y");
+  sensor_msgs::PointCloud2ConstIterator<float> iter_z(*pointcloud_ptr_, "z");
+
+  for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z) {
+    const Eigen::Vector3f point = isometry * Eigen::Vector3f(*iter_x, *iter_y, *iter_z);
+
+    // An infinite minimum distance widens the box to infinity, so no point is rejected yet.
+    const bool is_outside_of_box =
+      point.x() < bg::get<bg::min_corner, 0>(ego_box) - minimum_distance ||
+      point.x() > bg::get<bg::max_corner, 0>(ego_box) + minimum_distance ||
+      point.y() < bg::get<bg::min_corner, 1>(ego_box) - minimum_distance ||
+      point.y() > bg::get<bg::max_corner, 1>(ego_box) + minimum_distance;
+    if (is_outside_of_box) {
+      continue;
+    }
+
+    const autoware_utils_geometry::Point2d boost_point(point.x(), point.y());
     const auto distance_to_object = bg::distance(ego_polygon, boost_point);
 
     if (distance_to_object < minimum_distance) {
-      nearest_point = create_point(p.x, p.y, p.z);
+      nearest_point = create_point(point.x(), point.y(), point.z());
       minimum_distance = distance_to_object;
+    }
+
+    // No point can be closer than a point inside the polygon, so the search is finished.
+    if (minimum_distance <= 0.0) {
+      break;
     }
   }
 
