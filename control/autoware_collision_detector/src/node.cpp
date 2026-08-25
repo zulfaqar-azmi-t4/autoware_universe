@@ -387,7 +387,7 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
   const auto ego_polygon =
     createSelfPolygon(vehicle_info_, hysteresis, node_param_.ignore_behind_rear_axle);
 
-  const auto filtered_objects = filterObjects(*object_ptr_);
+  auto filtered_objects = filterObjects(*object_ptr_);
   if (!filtered_objects) {
     RCLCPP_WARN_THROTTLE(
       this->get_logger(), *this->get_clock(), 5000 /* ms */, "%s",
@@ -395,7 +395,7 @@ void CollisionDetectorNode::checkCollision(diagnostic_updater::DiagnosticStatusW
     stat.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, filtered_objects.error());
     return;
   }
-  filtered_object_ptr_ = std::make_shared<PredictedObjects>(*filtered_objects);
+  filtered_object_ptr_ = std::make_shared<PredictedObjects>(std::move(*filtered_objects));
 
   const auto nearest_obstacle = getNearestObstacle(ego_polygon);
 
@@ -545,6 +545,7 @@ result_t CollisionDetectorNode::getNearestObstacleByDynamicObject(
 
   tf2::Transform tf_src2target;
   tf2::fromMsg(transform_stamped->transform, tf_src2target);
+  const auto tf_target2src = tf_src2target.inverse();
 
   for (const auto & object : filtered_object_ptr_->objects) {
     const auto & object_pose = object.kinematics.initial_pose_with_covariance.pose;
@@ -553,7 +554,7 @@ result_t CollisionDetectorNode::getNearestObstacleByDynamicObject(
     tf2::fromMsg(object_pose, tf_src2object);
 
     geometry_msgs::msg::Pose transformed_object_pose;
-    tf2::toMsg(tf_src2target.inverse() * tf_src2object, transformed_object_pose);
+    tf2::toMsg(tf_target2src * tf_src2object, transformed_object_pose);
 
     const auto object_polygon = [&]() {
       switch (object.shape.type) {
