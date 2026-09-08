@@ -12,35 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generate the acados OCP solver used by the ML planner trajectory optimization.
+"""Generate the acados OCP solver used by TrajectoryTimeSequenceRawOptimizer.
 
 Invoked by CMake at build time with CWD set to the build directory; the generated C code
 is exported to ./c_generated_code/ and never touches the source tree.
 
-The horizon must stay aligned with the model output: N = 80 steps of dt = 0.1 s (OUTPUT_T
-and PREDICTION_TIME_STEP_S on the C++ side). Cost weights and constraint bounds baked here
-are only defaults; the C++ wrapper overrides them at runtime from ROS parameters.
+Independent of the Temporal MPT plant (different model name, 6-state bicycle, pose-only
+tracking). Horizon stays aligned with diffusion-planner OUTPUT_T: N = 80, dt = 0.1 s.
+Cost weights and constraint bounds baked here are only defaults; the C++ wrapper overrides
+them at runtime from ROS parameters.
 """
 
 from acados_template import AcadosModel
 from acados_template import AcadosOcp
 from acados_template import AcadosOcpSolver
+from generators.vehicle_model import kinematic_bicycle_model
 import numpy as np
-from vehicle_model import kinematic_bicycle_model
 
 HORIZON_N = 80
 HORIZON_TF_S = 8.0
 
-# Default cost weights (see config/ml_planner.param.yaml for the runtime values).
-# Velocity and steering angle use zero references, so their weights penalize their magnitudes.
-# Note: the C++ wrapper overwrites W every solve with a position block rotated to the
-# per-stage reference heading (separate longitudinal/lateral weights); the isotropic
-# position weight baked here is only a placeholder.
 DEFAULT_WEIGHT_POSITION = 0.5
 DEFAULT_WEIGHT_YAW = 0.05
-DEFAULT_WEIGHT_VELOCITY = 0.01
-DEFAULT_WEIGHT_STEERING = 1.0
-DEFAULT_WEIGHT_ACCELERATION = 0.1
+DEFAULT_WEIGHT_VELOCITY = 0.0
+DEFAULT_WEIGHT_STEERING = 0.0
+DEFAULT_WEIGHT_ACCELERATION = 0.0
+DEFAULT_WEIGHT_JERK = 0.1
 DEFAULT_WEIGHT_STEERING_RATE = 10.0
 DEFAULT_TERMINAL_WEIGHT_SCALE = 2.5
 
@@ -69,8 +66,8 @@ def build_ocp(N=HORIZON_N, Tf=HORIZON_TF_S):
 
     ocp.code_export_directory = "c_generated_code"
 
-    nx = model.x.rows()  # 5: x, y, psi, v, delta
-    nu = model.u.rows()  # 2: a, delta_rate
+    nx = model.x.rows()  # 6: x, y, psi, v, delta, a
+    nu = model.u.rows()  # 2: jerk, delta_rate
     ny = nx + nu
     ny_e = nx
 
@@ -83,13 +80,11 @@ def build_ocp(N=HORIZON_N, Tf=HORIZON_TF_S):
             DEFAULT_WEIGHT_YAW,
             DEFAULT_WEIGHT_VELOCITY,
             DEFAULT_WEIGHT_STEERING,
+            DEFAULT_WEIGHT_ACCELERATION,
         ]
     )
-    r_diag = np.array([DEFAULT_WEIGHT_ACCELERATION, DEFAULT_WEIGHT_STEERING_RATE])
+    r_diag = np.array([DEFAULT_WEIGHT_JERK, DEFAULT_WEIGHT_STEERING_RATE])
 
-    # acados scales stage costs by the step length dt = Tf / N; multiply by N / Tf so the
-    # configured weights keep their intuitive per-sample magnitude (same convention on the
-    # C++ side when overriding W at runtime).
     unscale = N / Tf
     ocp.cost.cost_type = "LINEAR_LS"
     ocp.cost.cost_type_e = "LINEAR_LS"
@@ -109,24 +104,19 @@ def build_ocp(N=HORIZON_N, Tf=HORIZON_TF_S):
     ocp.cost.yref = np.zeros(ny)
     ocp.cost.yref_e = np.zeros(ny_e)
 
-    # Input box constraints
-    ocp.constraints.lbu = np.array([model.a_min, -model.delta_rate_max])
-    ocp.constraints.ubu = np.array([model.a_max, model.delta_rate_max])
+    ocp.constraints.lbu = np.array([model.jerk_min, -model.delta_rate_max])
+    ocp.constraints.ubu = np.array([model.jerk_max, model.delta_rate_max])
     ocp.constraints.idxbu = np.array([0, 1])
 
-    # State box constraints on v and delta (stages 1..N-1 and terminal stage)
-    ocp.constraints.idxbx = np.array([3, 4])
-    ocp.constraints.lbx = np.array([model.v_min, -model.delta_max])
-    ocp.constraints.ubx = np.array([model.v_max, model.delta_max])
-    ocp.constraints.idxbx_e = np.array([3, 4])
-    ocp.constraints.lbx_e = np.array([model.v_min, -model.delta_max])
-    ocp.constraints.ubx_e = np.array([model.v_max, model.delta_max])
+    ocp.constraints.idxbx = np.array([3, 4, 5])
+    ocp.constraints.lbx = np.array([model.v_min, -model.delta_max, model.a_min])
+    ocp.constraints.ubx = np.array([model.v_max, model.delta_max, model.a_max])
+    ocp.constraints.idxbx_e = np.array([3, 4, 5])
+    ocp.constraints.lbx_e = np.array([model.v_min, -model.delta_max, model.a_min])
+    ocp.constraints.ubx_e = np.array([model.v_max, model.delta_max, model.a_max])
 
-    # Initial state equality constraint (stage-0 lbx == ubx, set per solve)
     ocp.constraints.x0 = np.zeros(nx)
 
-    # Soft lateral acceleration constraint: |v^2 * tan(delta) / wheelbase| <= a_lat_max.
-    # Softened with slacks so a violating initial state cannot make the OCP infeasible.
     ocp.constraints.lh = np.array([-DEFAULT_A_LAT_MAX_MPS2])
     ocp.constraints.uh = np.array([DEFAULT_A_LAT_MAX_MPS2])
     ocp.constraints.idxsh = np.array([0])
@@ -148,12 +138,6 @@ def build_ocp(N=HORIZON_N, Tf=HORIZON_TF_S):
     ocp.solver_options.tol = SQP_TOL
 
     return ocp
-
-
-def create_solver(N=HORIZON_N, Tf=HORIZON_TF_S):
-    """Build a solver usable from Python (offline tuning / visualization)."""
-    ocp = build_ocp(N, Tf)
-    return AcadosOcpSolver(ocp, json_file="acados_ocp.json")
 
 
 def main():

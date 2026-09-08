@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "autoware/ml_planner/postprocessing/road_border_avoidance.hpp"
+#include "autoware/trajectory_processor/time_sequence_raw/road_border_avoidance.hpp"
 
-#include <rclcpp/duration.hpp>
+#include <Eigen/Core>
 
 #include <boost/geometry.hpp>
 
@@ -25,7 +25,7 @@
 #include <utility>
 #include <vector>
 
-namespace autoware::ml_planner::postprocess
+namespace autoware::trajectory_processor::time_sequence_raw
 {
 namespace bg = boost::geometry;
 using autoware_utils_geometry::LinearRing2d;
@@ -90,6 +90,58 @@ const LineString2d * find_nearest_overlapping_border(
   }
   return nearest_border;
 }
+
+constexpr int k_linear_shift_steps = 3;
+constexpr double k_bisection_eps_m = 1e-3;
+
+/// Clear a colliding pose: up to 3 `step` probes, then bisection to `max_shift`.
+/// If the cap is still colliding, finish with linear steps so a clear window
+/// between the last probe and an opposite curb is not skipped.
+template <typename CollidingFn>
+bool find_clear_offset(
+  double & offset, const double step, const double max_shift, const CollidingFn & colliding)
+{
+  const auto within_max = [max_shift](const double candidate) {
+    return std::abs(candidate) <= max_shift + 1e-9;
+  };
+
+  int linear_steps = 0;
+  while (linear_steps < k_linear_shift_steps && within_max(offset + step)) {
+    offset += step;
+    ++linear_steps;
+    if (!colliding(offset)) {
+      return true;
+    }
+  }
+
+  const double hi = std::copysign(max_shift, step);
+  if (!within_max(hi) || std::abs(hi - offset) <= k_bisection_eps_m) {
+    return false;
+  }
+
+  if (colliding(hi)) {
+    while (within_max(offset + step)) {
+      offset += step;
+      if (!colliding(offset)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  double lo = offset;
+  double clear = hi;
+  while (std::abs(clear - lo) > k_bisection_eps_m) {
+    const double mid = 0.5 * (lo + clear);
+    if (colliding(mid)) {
+      lo = mid;
+    } else {
+      clear = mid;
+    }
+  }
+  offset = clear;
+  return true;
+}
 }  // namespace
 
 RoadBorderAvoidance::RoadBorderAvoidance(
@@ -131,7 +183,6 @@ RoadBorderAvoidanceResult RoadBorderAvoidance::adjust(
     return result;
   }
 
-  // Pre-filter borders reachable within the horizon.
   const Point2d ego_point(ego_pose.position.x, ego_pose.position.y);
   std::vector<const LineString2d *> nearby_borders;
   for (const auto & border : road_borders_) {
@@ -149,16 +200,9 @@ RoadBorderAvoidanceResult RoadBorderAvoidance::adjust(
       [&footprint](const LineString2d * border) { return bg::intersects(footprint, *border); });
   };
 
-  // Signed lateral offset from the raw position (positive = left of the heading). With
-  // propagate_shift it is carried over to subsequent points along their own lateral
-  // direction; otherwise every point starts from the raw position again.
   double carried_offset_m = 0.0;
 
   for (auto & point : result.trajectory.points) {
-    if (rclcpp::Duration(point.time_from_start).seconds() < params_.start_time_s) {
-      continue;
-    }
-
     const double raw_x = point.pose.position.x;
     const double raw_y = point.pose.position.y;
     const double yaw = yaw_from_quaternion(point.pose.orientation);
@@ -178,7 +222,6 @@ RoadBorderAvoidanceResult RoadBorderAvoidance::adjust(
     const LinearRing2d footprint = footprint_at(offset);
     const Point2d position(raw_x + lateral_left.x() * offset, raw_y + lateral_left.y() * offset);
 
-    // The nearest overlapping border (if any) decides the shift direction.
     const LineString2d * offending_border =
       find_nearest_overlapping_border(nearby_borders, footprint, position);
     if (offending_border == nullptr) {
@@ -189,22 +232,14 @@ RoadBorderAvoidanceResult RoadBorderAvoidance::adjust(
       continue;
     }
 
-    // Step the offset perpendicular to the heading, away from the border side.
     const Point2d border_point = nearest_point_on_linestring(*offending_border, position);
     const Eigen::Vector2d to_border = border_point - position;
     const double cross = heading.x() * to_border.y() - heading.y() * to_border.x();
     const double step = (cross > 0.0) ? -params_.shift_step_m : params_.shift_step_m;
+    const bool resolved = find_clear_offset(
+      offset, step, params_.max_lateral_shift_m,
+      [&](const double off) { return intersects_any(footprint_at(off)); });
 
-    bool resolved = false;
-    while (std::abs(offset + step) <= params_.max_lateral_shift_m + 1e-9) {
-      offset += step;
-      if (!intersects_any(footprint_at(offset))) {
-        resolved = true;
-        break;
-      }
-    }
-
-    // Apply the (possibly capped) offset; moving away is better than staying overlapped.
     apply_offset(offset);
     carried_offset_m = offset;
     if (resolved) {
@@ -217,4 +252,4 @@ RoadBorderAvoidanceResult RoadBorderAvoidance::adjust(
   return result;
 }
 
-}  // namespace autoware::ml_planner::postprocess
+}  // namespace autoware::trajectory_processor::time_sequence_raw

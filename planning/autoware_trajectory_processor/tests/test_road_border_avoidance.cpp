@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "autoware/ml_planner/postprocessing/road_border_avoidance.hpp"
+#include "autoware/trajectory_processor/time_sequence_raw/road_border_avoidance.hpp"
 
-#include <autoware_utils/geometry/geometry.hpp>
+#include <autoware_utils_geometry/geometry.hpp>
 
 #include <gtest/gtest.h>
 
 #include <cmath>
 #include <vector>
 
-namespace autoware::ml_planner::test
+namespace autoware::trajectory_processor::test
 {
-using autoware::ml_planner::postprocess::RoadBorderAvoidance;
-using autoware::ml_planner::postprocess::RoadBorderAvoidanceParams;
+using autoware::trajectory_processor::time_sequence_raw::RoadBorderAvoidance;
+using autoware::trajectory_processor::time_sequence_raw::RoadBorderAvoidanceParams;
 using autoware_planning_msgs::msg::Trajectory;
 using autoware_planning_msgs::msg::TrajectoryPoint;
 using autoware_utils_geometry::LineString2d;
@@ -34,9 +34,6 @@ class RoadBorderAvoidanceTest : public ::testing::Test
 protected:
   void SetUp() override
   {
-    // Vehicle width = wheel_tread + left/right overhangs = 1.6 + 0.1 + 0.1 = 1.8 m
-    // -> half width 0.9 m; with footprint_margin_m = 0.2 the required lateral
-    // clearance to a parallel border is 1.1 m.
     vehicle_info_ = autoware::vehicle_info_utils::createVehicleInfo(
       0.3, 0.2, 2.75, 1.6, 1.0, 1.0, 0.1, 0.1, 2.0, 0.7);
     params_.enable = true;
@@ -45,7 +42,6 @@ protected:
     ego_pose_.orientation.w = 1.0;
   }
 
-  // Straight trajectory along +x at the given y, heading +x.
   static Trajectory make_straight_trajectory(const double y, const size_t num_points = 20)
   {
     Trajectory trajectory;
@@ -54,13 +50,12 @@ protected:
       TrajectoryPoint point;
       point.pose.position.x = static_cast<double>(i);
       point.pose.position.y = y;
-      point.pose.orientation = autoware_utils::create_quaternion_from_yaw(0.0);
+      point.pose.orientation = autoware_utils_geometry::create_quaternion_from_yaw(0.0);
       trajectory.points.push_back(point);
     }
     return trajectory;
   }
 
-  // Border parallel to the x axis at the given y.
   static LineString2d make_parallel_border(const double y)
   {
     LineString2d border;
@@ -94,7 +89,6 @@ TEST_F(RoadBorderAvoidanceTest, NoOpWhenClear)
 TEST_F(RoadBorderAvoidanceTest, ShiftsAwayFromLeftBorder)
 {
   RoadBorderAvoidance avoidance(params_, vehicle_info_);
-  // Border on the left at y = 1.0 < required clearance 1.1 -> overlap, shift to -y.
   avoidance.set_road_borders({make_parallel_border(1.0)});
 
   const auto raw = make_straight_trajectory(0.0);
@@ -106,7 +100,6 @@ TEST_F(RoadBorderAvoidanceTest, ShiftsAwayFromLeftBorder)
     EXPECT_LT(point.pose.position.y, 0.0);
   }
 
-  // The adjusted trajectory must be clear: a second pass is a no-op.
   const auto second = avoidance.adjust(result.trajectory, ego_pose_);
   EXPECT_EQ(second.num_shifted_points, 0U);
   EXPECT_EQ(second.num_unresolved_points, 0U);
@@ -128,46 +121,22 @@ TEST_F(RoadBorderAvoidanceTest, ShiftsAwayFromRightBorder)
 
 TEST_F(RoadBorderAvoidanceTest, CapsShiftAndReportsUnresolved)
 {
-  params_.max_lateral_shift_m = 0.3;  // not enough to clear a deeply overlapping border
+  params_.max_lateral_shift_m = 0.3;
   RoadBorderAvoidance avoidance(params_, vehicle_info_);
-  avoidance.set_road_borders({make_parallel_border(0.0)});  // border through the path
+  avoidance.set_road_borders({make_parallel_border(0.0)});
 
   const auto raw = make_straight_trajectory(0.0);
   const auto result = avoidance.adjust(raw, ego_pose_);
 
   EXPECT_EQ(result.num_shifted_points, 0U);
   EXPECT_GT(result.num_unresolved_points, 0U);
-  // The capped shift is still applied.
   for (const auto & point : result.trajectory.points) {
     EXPECT_NEAR(std::abs(point.pose.position.y), 0.3, 1e-9);
   }
 }
 
-TEST_F(RoadBorderAvoidanceTest, IgnoresPointsBeforeStartTime)
-{
-  params_.start_time_s = 1.0;
-  RoadBorderAvoidance avoidance(params_, vehicle_info_);
-  avoidance.set_road_borders({make_parallel_border(1.0)});
-
-  auto raw = make_straight_trajectory(0.0);
-  for (size_t i = 0; i < raw.points.size(); ++i) {
-    raw.points[i].time_from_start = rclcpp::Duration::from_seconds(0.1 * (i + 1));
-  }
-  const auto result = avoidance.adjust(raw, ego_pose_);
-
-  for (size_t i = 0; i < raw.points.size(); ++i) {
-    const double time_s = rclcpp::Duration(raw.points[i].time_from_start).seconds();
-    if (time_s < params_.start_time_s) {
-      EXPECT_DOUBLE_EQ(result.trajectory.points[i].pose.position.y, 0.0);
-    } else {
-      EXPECT_LT(result.trajectory.points[i].pose.position.y, 0.0);
-    }
-  }
-}
-
 TEST_F(RoadBorderAvoidanceTest, PropagatesShiftToSubsequentPoints)
 {
-  // Border alongside only the first part of the trajectory (ends at x = 5).
   LineString2d border;
   border.emplace_back(-10.0, 1.0);
   border.emplace_back(5.0, 1.0);
@@ -178,7 +147,6 @@ TEST_F(RoadBorderAvoidanceTest, PropagatesShiftToSubsequentPoints)
     avoidance.set_road_borders({border});
     const auto result = avoidance.adjust(make_straight_trajectory(0.0), ego_pose_);
     EXPECT_GT(result.num_shifted_points, 0U);
-    // The offset is carried to the end of the trajectory.
     EXPECT_LT(result.trajectory.points.back().pose.position.y, 0.0);
   }
   {
@@ -187,8 +155,24 @@ TEST_F(RoadBorderAvoidanceTest, PropagatesShiftToSubsequentPoints)
     avoidance.set_road_borders({border});
     const auto result = avoidance.adjust(make_straight_trajectory(0.0), ego_pose_);
     EXPECT_GT(result.num_shifted_points, 0U);
-    // Without propagation the tail stays on the raw output.
     EXPECT_DOUBLE_EQ(result.trajectory.points.back().pose.position.y, 0.0);
+  }
+}
+
+TEST_F(RoadBorderAvoidanceTest, BisectsAfterThreeLinearSteps)
+{
+  // Half-width + margin = 1.1 m. Border at y=0.73 needs ~0.37 m of shift, so the first
+  // three 0.1 m probes still collide and bisection must land between 0.3 m and 0.4 m.
+  params_.shift_step_m = 0.1;
+  RoadBorderAvoidance avoidance(params_, vehicle_info_);
+  avoidance.set_road_borders({make_parallel_border(0.73)});
+
+  const auto result = avoidance.adjust(make_straight_trajectory(0.0), ego_pose_);
+  ASSERT_GT(result.num_shifted_points, 0U);
+  EXPECT_EQ(result.num_unresolved_points, 0U);
+  for (const auto & point : result.trajectory.points) {
+    EXPECT_LT(point.pose.position.y, -0.3);
+    EXPECT_GT(point.pose.position.y, -0.4);
   }
 }
 
@@ -207,4 +191,4 @@ TEST_F(RoadBorderAvoidanceTest, IgnoresBordersOutsideSearchRadius)
   EXPECT_EQ(result.num_unresolved_points, 0U);
 }
 
-}  // namespace autoware::ml_planner::test
+}  // namespace autoware::trajectory_processor::test
