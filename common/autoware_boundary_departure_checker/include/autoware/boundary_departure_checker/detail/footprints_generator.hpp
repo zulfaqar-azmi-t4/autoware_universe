@@ -40,6 +40,26 @@ struct FootprintMargin
 };
 
 /**
+ * @brief Give the number of leading trajectory points within an arc length from the start.
+ * @param[in] trajectory_points points along the trajectory
+ * @param[in] dist_m arc length from the trajectory start [m]
+ * @return number of leading points inside the arc length
+ */
+size_t count_points_within_distance(
+  const std::vector<TrajectoryPoint> & trajectory_points, const double dist_m);
+
+/**
+ * @brief Correct the trajectory poses near the ego vehicle to start at the measured ego pose.
+ * @param[in] trajectory_points points along the trajectory
+ * @param[in] ego_pose measured ego pose
+ * @param[in] align_dist_m arc length over which the alignment applies [m]
+ * @return trajectory points with the poses near the ego vehicle corrected
+ */
+std::vector<TrajectoryPoint> align_to_ego_pose(
+  const std::vector<TrajectoryPoint> & trajectory_points, const geometry_msgs::msg::Pose & ego_pose,
+  const double align_dist_m);
+
+/**
  * @brief Generate vehicle footprints along a trajectory.
  * @param[in] trajectory_points points along the trajectory
  * @param[in] vehicle_info information about the vehicle

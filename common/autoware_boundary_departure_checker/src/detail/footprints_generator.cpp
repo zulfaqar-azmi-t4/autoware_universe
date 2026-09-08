@@ -41,6 +41,66 @@ FootprintMargin calc_margin_from_covariance(
 
   return FootprintMargin{cov_xy_vehicle(0, 0) * scale, cov_xy_vehicle(1, 1) * scale};
 }
+
+size_t count_points_within_distance(
+  const std::vector<TrajectoryPoint> & trajectory_points, const double dist_m)
+{
+  if (dist_m <= 0.0) {
+    return 0;
+  }
+
+  auto arc_length_m = 0.0;
+  size_t count = 0;
+  for (size_t i = 0; i < trajectory_points.size(); ++i) {
+    if (i > 0) {
+      arc_length_m +=
+        autoware_utils_geometry::calc_distance2d(trajectory_points[i - 1], trajectory_points[i]);
+    }
+
+    if (arc_length_m > dist_m) {
+      break;
+    }
+    ++count;
+  }
+  return count;
+}
+
+std::vector<TrajectoryPoint> align_to_ego_pose(
+  const std::vector<TrajectoryPoint> & trajectory_points, const geometry_msgs::msg::Pose & ego_pose,
+  const double align_dist_m)
+{
+  auto aligned_points = trajectory_points;
+  if (aligned_points.empty() || align_dist_m <= 0.0) {
+    return aligned_points;
+  }
+
+  const auto & start_pose = trajectory_points.front().pose;
+  const auto start_yaw = tf2::getYaw(start_pose.orientation);
+  const auto yaw_difference = tf2::getYaw(ego_pose.orientation) - start_yaw;
+  const auto yaw_correction_rad = std::atan2(std::sin(yaw_difference), std::cos(yaw_difference));
+  const auto x_correction_m = ego_pose.position.x - start_pose.position.x;
+  const auto y_correction_m = ego_pose.position.y - start_pose.position.y;
+
+  const auto aligned_count = count_points_within_distance(trajectory_points, align_dist_m);
+
+  auto arc_length_m = 0.0;
+  for (size_t i = 0; i < aligned_count; ++i) {
+    if (i > 0) {
+      arc_length_m +=
+        autoware_utils_geometry::calc_distance2d(trajectory_points[i - 1], trajectory_points[i]);
+    }
+
+    const auto weight = 1.0 - arc_length_m / align_dist_m;
+    auto & pose = aligned_points[i].pose;
+    pose.position.x += weight * x_correction_m;
+    pose.position.y += weight * y_correction_m;
+    pose.orientation = autoware_utils_geometry::create_quaternion_from_yaw(
+      tf2::getYaw(trajectory_points[i].pose.orientation) + weight * yaw_correction_rad);
+  }
+
+  return aligned_points;
+}
+
 // clang-format off
 /**
  * footprints::generate:
