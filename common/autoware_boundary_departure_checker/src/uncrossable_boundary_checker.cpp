@@ -52,8 +52,10 @@ DepartureResult UncrossableBoundaryChecker::update_departure_status(
   // An align distance of zero leaves the trajectory that the generator gives.
   const auto align_dist_m =
     param_.enable_align_to_ego_pose ? vehicle_info_.max_longitudinal_offset_m : 0.0;
+  const auto expected_alignment =
+    footprints::count_points_within_distance(predicted_traj, align_dist_m);
   const auto aligned_traj =
-    footprints::align_to_ego_pose(predicted_traj, ego_state.pose_with_cov.pose, align_dist_m);
+    footprints::align_to_ego_pose(predicted_traj, ego_state.pose_with_cov.pose, expected_alignment);
 
   const auto footprints =
     footprints::generate(aligned_traj, vehicle_info_, ego_state.pose_with_cov);
@@ -84,10 +86,8 @@ DepartureResult UncrossableBoundaryChecker::update_departure_status(
       severity_evaluator::get_min_lateral_distance_to_bound(*evaluation_result);
   }
 
-  const auto aligned_count = footprints::count_points_within_distance(predicted_traj, align_dist_m);
-
   result.debug_markers = debug::create_debug_markers(
-    state, footprints, aligned_count, ego_state, param_.enable_developer_marker);
+    state, footprints, expected_alignment.align_count, ego_state, param_.enable_developer_marker);
   return result;
 }
 

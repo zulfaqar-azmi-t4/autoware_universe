@@ -14,6 +14,8 @@
 
 #include "autoware/boundary_departure_checker/detail/footprints_generator.hpp"
 
+#include <angles/angles.h>
+
 #include <vector>
 
 namespace autoware::boundary_departure_checker::footprints
@@ -42,11 +44,11 @@ FootprintMargin calc_margin_from_covariance(
   return FootprintMargin{cov_xy_vehicle(0, 0) * scale, cov_xy_vehicle(1, 1) * scale};
 }
 
-size_t count_points_within_distance(
+FootprintAlignment count_points_within_distance(
   const std::vector<TrajectoryPoint> & trajectory_points, const double dist_m)
 {
   if (dist_m <= 0.0 || trajectory_points.empty()) {
-    return 0;
+    return {dist_m, 0UL};
   }
 
   double accumulated_dist = 0.0;
@@ -54,38 +56,38 @@ size_t count_points_within_distance(
     accumulated_dist +=
       autoware_utils_geometry::calc_distance2d(trajectory_points[i - 1], trajectory_points[i]);
 
-    if (accumulated_dist > dist_m) return i;
+    if (accumulated_dist >= dist_m) return {dist_m, i};
   }
 
-  return trajectory_points.size();
+  return {dist_m, trajectory_points.size()};
 }
 
 std::vector<TrajectoryPoint> align_to_ego_pose(
   const std::vector<TrajectoryPoint> & trajectory_points, const geometry_msgs::msg::Pose & ego_pose,
-  const double align_dist_m)
+  const FootprintAlignment expected_alignment)
 {
   auto aligned_points = trajectory_points;
-  if (aligned_points.empty() || align_dist_m <= 0.0) {
+  if (
+    aligned_points.empty() || expected_alignment.align_dist_m <= 0.0 ||
+    expected_alignment.align_count == 0) {
     return aligned_points;
   }
 
   const auto & start_pose = trajectory_points.front().pose;
   const auto start_yaw = tf2::getYaw(start_pose.orientation);
   const auto yaw_correction_rad =
-    angles::shortest_angular_distance(tf2::getYaw(ego_pose.orientation), start_yaw);
+    angles::shortest_angular_distance(start_yaw, tf2::getYaw(ego_pose.orientation));
   const auto x_correction_m = ego_pose.position.x - start_pose.position.x;
   const auto y_correction_m = ego_pose.position.y - start_pose.position.y;
 
-  const auto aligned_count = count_points_within_distance(trajectory_points, align_dist_m);
-
   auto arc_length_m = 0.0;
-  for (size_t i = 0; i < aligned_count; ++i) {
+  for (size_t i = 0; i < expected_alignment.align_count; ++i) {
     if (i > 0) {
       arc_length_m +=
         autoware_utils_geometry::calc_distance2d(trajectory_points[i - 1], trajectory_points[i]);
     }
 
-    const auto weight = 1.0 - arc_length_m / align_dist_m;
+    const auto weight = 1.0 - arc_length_m / expected_alignment.align_dist_m;
     auto & pose = aligned_points[i].pose;
     pose.position.x += weight * x_correction_m;
     pose.position.y += weight * y_correction_m;

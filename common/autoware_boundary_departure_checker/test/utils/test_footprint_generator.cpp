@@ -97,10 +97,10 @@ TEST_F(FootprintGeneratorTest, TestCountPointsWithinDistance)
   // Arrange: the fixture holds two poses that sit 1.0 m apart.
 
   // Act and assert:
-  EXPECT_EQ(footprints::count_points_within_distance(pred_traj_, 2.0), 2U);
-  EXPECT_EQ(footprints::count_points_within_distance(pred_traj_, 0.5), 1U);
-  EXPECT_EQ(footprints::count_points_within_distance(pred_traj_, 0.0), 0U);
-  EXPECT_EQ(footprints::count_points_within_distance(TrajectoryPoints{}, 2.0), 0U);
+  EXPECT_EQ(footprints::count_points_within_distance(pred_traj_, 2.0).align_count, 2U);
+  EXPECT_EQ(footprints::count_points_within_distance(pred_traj_, 0.5).align_count, 1U);
+  EXPECT_EQ(footprints::count_points_within_distance(pred_traj_, 0.0).align_count, 0U);
+  EXPECT_EQ(footprints::count_points_within_distance(TrajectoryPoints{}, 2.0).align_count, 0U);
 }
 
 TEST_F(FootprintGeneratorTest, TestAlignToEgoPoseIsNoOpWhenTrajectoryStartsAtEgo)
@@ -111,7 +111,8 @@ TEST_F(FootprintGeneratorTest, TestAlignToEgoPoseIsNoOpWhenTrajectoryStartsAtEgo
   const auto ego_pose = pred_traj_.front().pose;
 
   // Act:
-  const auto aligned = footprints::align_to_ego_pose(pred_traj_, ego_pose, 5.71);
+  const auto aligned = footprints::align_to_ego_pose(
+    pred_traj_, ego_pose, footprints::count_points_within_distance(pred_traj_, 5.71));
 
   // Assert:
   ASSERT_EQ(aligned.size(), pred_traj_.size());
@@ -140,7 +141,8 @@ TEST_F(FootprintGeneratorTest, TestAlignToEgoPoseCorrectsStoppedEgoPoses)
   }
 
   // Act:
-  const auto aligned = footprints::align_to_ego_pose(stopped_traj, ego_pose, 5.71);
+  const auto aligned = footprints::align_to_ego_pose(
+    stopped_traj, ego_pose, footprints::count_points_within_distance(stopped_traj, 5.71));
 
   // Assert:
   ASSERT_EQ(aligned.size(), stopped_traj.size());
@@ -165,7 +167,8 @@ TEST_F(FootprintGeneratorTest, TestAlignToEgoPoseKeepsGeneratorHeadingChanges)
   ego_pose.orientation = create_quaternion_from_yaw(ego_yaw_offset_rad);
 
   // Act: the align distance is 2.0 m, so the second pose keeps half of the correction.
-  const auto aligned = footprints::align_to_ego_pose(turning_traj, ego_pose, 2.0);
+  const auto aligned = footprints::align_to_ego_pose(
+    turning_traj, ego_pose, footprints::count_points_within_distance(turning_traj, 2.0));
 
   // Assert: the turn of the generator survives the correction.
   ASSERT_EQ(aligned.size(), 2U);
@@ -187,7 +190,8 @@ TEST_F(FootprintGeneratorTest, TestAlignToEgoPoseKeepsPosesBeyondTheAlignDistanc
   ego_pose.orientation = create_quaternion_from_yaw(0.0);
 
   // Act:
-  const auto aligned = footprints::align_to_ego_pose(offset_traj, ego_pose, 0.5);
+  const auto aligned = footprints::align_to_ego_pose(
+    offset_traj, ego_pose, footprints::count_points_within_distance(offset_traj, 0.5));
 
   // Assert:
   ASSERT_EQ(aligned.size(), 2U);
@@ -203,7 +207,8 @@ TEST_F(FootprintGeneratorTest, TestAlignToEgoPoseEmptyTrajectory)
   ego_pose.orientation = create_quaternion_from_yaw(0.0);
 
   // Act:
-  const auto aligned = footprints::align_to_ego_pose(empty_traj, ego_pose, 5.71);
+  const auto aligned = footprints::align_to_ego_pose(
+    empty_traj, ego_pose, footprints::count_points_within_distance(empty_traj, 5.71));
 
   // Assert:
   EXPECT_TRUE(aligned.empty());
