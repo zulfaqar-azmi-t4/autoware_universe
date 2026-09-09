@@ -71,8 +71,8 @@ std::vector<TrajectoryPoint> align_to_ego_pose(
 
   const auto & start_pose = trajectory_points.front().pose;
   const auto start_yaw = tf2::getYaw(start_pose.orientation);
-  const auto yaw_difference = tf2::getYaw(ego_pose.orientation) - start_yaw;
-  const auto yaw_correction_rad = std::atan2(std::sin(yaw_difference), std::cos(yaw_difference));
+  const auto yaw_correction_rad = angles::shortest_angular_distance(
+    tf2::getYaw(ego_pose.orientation), start_yaw);
   const auto x_correction_m = ego_pose.position.x - start_pose.position.x;
   const auto y_correction_m = ego_pose.position.y - start_pose.position.y;
 
