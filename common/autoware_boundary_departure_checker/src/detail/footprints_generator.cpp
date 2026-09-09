@@ -45,24 +45,19 @@ FootprintMargin calc_margin_from_covariance(
 size_t count_points_within_distance(
   const std::vector<TrajectoryPoint> & trajectory_points, const double dist_m)
 {
-  if (dist_m <= 0.0) {
+ if (dist_m <= 0.0 || trajectory_points.empty()) {
     return 0;
   }
 
-  auto arc_length_m = 0.0;
-  size_t count = 0;
-  for (size_t i = 0; i < trajectory_points.size(); ++i) {
-    if (i > 0) {
-      arc_length_m +=
-        autoware_utils_geometry::calc_distance2d(trajectory_points[i - 1], trajectory_points[i]);
-    }
+  double accumulated_dist = 0.0;
+  for (size_t i = 1; i < trajectory_points.size(); ++i) {
+    accumulated_dist += autoware_utils_geometry::calc_distance2d(
+      trajectory_points[i - 1], trajectory_points[i]);
 
-    if (arc_length_m > dist_m) {
-      break;
-    }
-    ++count;
+    if (accumulated_dist > dist_m) return i;
   }
-  return count;
+
+  return trajectory_points.size();
 }
 
 std::vector<TrajectoryPoint> align_to_ego_pose(
