@@ -43,18 +43,12 @@ using utils::obstacle_stop::PointCloud2;
 
 void ObstacleStop::on_initialize(const TrajectoryProcessorParams & params)
 {
-  const auto node_ptr = get_node_ptr();
-  planning_factor_interface_ =
-    std::make_unique<autoware::planning_factor_interface::PlanningFactorInterface>(
-      node_ptr, "modifier_obstacle_stop");
+  init_planning_factor_interface("modifier_obstacle_stop");
 
-  pub_clustered_pointcloud_ =
-    node_ptr->create_publisher<PointCloud2>("~/obstacle_stop/debug/cluster_points", 1);
-  pub_filtered_pointcloud_ =
-    node_ptr->create_publisher<PointCloud2>("~/obstacle_stop/debug/filtered_points", 1);
-  debug_viz_pub_ = node_ptr->create_publisher<visualization_msgs::msg::MarkerArray>(
-    "~/obstacle_stop/debug/marker", 1);
-  pub_debug_text_ = node_ptr->create_publisher<StringStamped>("~/obstacle_stop/debug/text", 1);
+  pub_filtered_pointcloud_ = make_publisher<PointCloud2>("~/obstacle_stop/debug/filtered_points");
+  debug_viz_pub_ =
+    make_publisher<visualization_msgs::msg::MarkerArray>("~/obstacle_stop/debug/marker", 1);
+  pub_debug_text_ = make_publisher<StringStamped>("~/obstacle_stop/debug/text");
 
   params_ = params.obstacle_stop;
   stopping_params_ = params.stopping_constraints;
@@ -69,10 +63,7 @@ void ObstacleStop::on_initialize(const TrajectoryProcessorParams & params)
 
   {
     const auto & p = params_.pointcloud;
-    pointcloud_filter_ = std::make_unique<utils::obstacle_stop::PointCloudFilter>(
-      p.voxel_grid_filter.x, p.voxel_grid_filter.y, p.voxel_grid_filter.z,
-      p.voxel_grid_filter.min_size, p.clustering.tolerance, p.clustering.min_size,
-      p.clustering.max_size);
+    pointcloud_filter_ = std::make_unique<utils::obstacle_stop::PointCloudFilter>(p.target_types);
   }
 
   {
@@ -118,10 +109,7 @@ void ObstacleStop::update_params(const TrajectoryProcessorParams & params)
 
   {
     const auto & p = params_.pointcloud;
-    pointcloud_filter_->set_params(
-      p.voxel_grid_filter.x, p.voxel_grid_filter.y, p.voxel_grid_filter.z,
-      p.voxel_grid_filter.min_size, p.clustering.tolerance, p.clustering.min_size,
-      p.clustering.max_size);
+    pointcloud_filter_->set_params(p.target_types);
   }
 
   {
@@ -230,7 +218,7 @@ bool ObstacleStop::set_stop_point(
     stop_margin > params_.minimum_stop_margin ? params_.duplicate_check_threshold : 0.0;
   if (utils::stop_point_exists(traj_points, target_stop_point_arc_length, overlap_th)) {
     RCLCPP_WARN_THROTTLE(
-      get_node_ptr()->get_logger(), *get_clock(), 1000,
+      get_logger(), *get_clock(), 1000,
       "[TM ObstacleStop] Preceding (or duplicate) stop point exists, skip inserting stop point");
     return false;
   }
@@ -253,8 +241,8 @@ bool ObstacleStop::set_stop_point(
   planning_factor_interface_->add(distance, stop_pose, PlanningFactor::STOP, safety_factors_);
 
   RCLCPP_WARN_THROTTLE(
-    get_node_ptr()->get_logger(), *get_clock(), 1000,
-    "[TM ObstacleStop] Inserted stop point at arc length %f m", target_stop_point_arc_length);
+    get_logger(), *get_clock(), 1000, "[TM ObstacleStop] Inserted stop point at arc length %f m",
+    target_stop_point_arc_length);
   return true;
 }
 
@@ -277,7 +265,7 @@ void ObstacleStop::check_obstacles(
 
   if (collision_point_objects) {
     RCLCPP_WARN_THROTTLE(
-      get_node_ptr()->get_logger(), *get_clock(), 1000,
+      get_logger(), *get_clock(), 1000,
       "[TM ObstacleStop] Detected collision with object at arc length %f m",
       collision_point_objects->arc_length);
     if (debug_data_.colliding_object) {
@@ -291,7 +279,7 @@ void ObstacleStop::check_obstacles(
 
   if (collision_point_pcd) {
     RCLCPP_WARN_THROTTLE(
-      get_node_ptr()->get_logger(), *get_clock(), 1000,
+      get_logger(), *get_clock(), 1000,
       "[TM ObstacleStop] Detected collision with pointcloud at arc length %f m",
       collision_point_pcd->arc_length);
     auto safety_factor = get_safety_factor(collision_point_pcd->point, SafetyFactor::POINTCLOUD);
@@ -368,49 +356,41 @@ std::optional<CollisionPoint> ObstacleStop::check_pointcloud(
       max_z);
   }
 
-  PointCloud::Ptr clustered_points(new PointCloud);
-  {
-    autoware_utils_debug::ScopedTimeTrack stt(
-      "ObstacleStop::cluster_pointcloud", *get_time_keeper());
-    pointcloud_filter_->cluster_pointcloud(
-      filtered_pointcloud, clustered_points, params_.pointcloud.clustering.min_height);
-  }
-
-  if (!clustered_points->empty()) {
+  if (!filtered_pointcloud->empty()) {
     geometry_msgs::msg::TransformStamped transform_stamped;
     try {
       transform_stamped = context_->tf_buffer.lookupTransform(
         "map", input.obstacle_pointcloud->header.frame_id, tf2::TimePointZero);
     } catch (tf2::TransformException & e) {
-      RCLCPP_WARN(get_node_ptr()->get_logger(), "no transform found for pointcloud: %s", e.what());
+      RCLCPP_WARN(get_logger(), "no transform found for pointcloud: %s", e.what());
       return std::nullopt;
     }
 
     Eigen::Affine3f isometry = tf2::transformToEigen(transform_stamped.transform).cast<float>();
-    autoware_utils::transform_pointcloud(*clustered_points, *clustered_points, isometry);
+    for (auto & p : filtered_pointcloud->points) {
+      const Eigen::Vector3f q = isometry * Eigen::Vector3f(p.x, p.y, p.z);
+      p.x = q.x();
+      p.y = q.y();
+      p.z = q.z();
+    }
   }
 
   {
-    const auto cluster_pointcloud_msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
     const auto filtered_pointcloud_msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
-    pcl::toROSMsg(*clustered_points, *cluster_pointcloud_msg);
     pcl::toROSMsg(*filtered_pointcloud, *filtered_pointcloud_msg);
-    cluster_pointcloud_msg->header.stamp = input.obstacle_pointcloud->header.stamp;
-    cluster_pointcloud_msg->header.frame_id = "map";
     filtered_pointcloud_msg->header.stamp = input.obstacle_pointcloud->header.stamp;
     filtered_pointcloud_msg->header.frame_id = "map";
-    debug_data_.cluster_points = cluster_pointcloud_msg;
     debug_data_.filtered_points = filtered_pointcloud_msg;
   }
 
   if (input.predicted_objects && !input.predicted_objects->objects.empty()) {
     autoware_utils_debug::ScopedTimeTrack stt(
       "ObstacleStop::filter_pointcloud_by_object", *get_time_keeper());
-    pointcloud_filter_->filter_pointcloud_by_object(clustered_points, *input.predicted_objects);
+    pointcloud_filter_->filter_pointcloud_by_object(filtered_pointcloud, *input.predicted_objects);
   }
 
   PointCloud::Ptr active_points(new PointCloud);
-  obstacle_tracker_->update_points(clustered_points, active_points, get_clock()->now());
+  obstacle_tracker_->update_points(filtered_pointcloud, active_points, get_clock()->now());
 
   std::optional<CollisionPoint> collision_point;
   {
@@ -427,8 +407,6 @@ void ObstacleStop::publish_debug_string(bool is_safe) const
 {
   const auto filtered_pcd_size =
     debug_data_.filtered_points ? debug_data_.filtered_points->data.size() : 0;
-  const auto cluster_pcd_size =
-    debug_data_.cluster_points ? debug_data_.cluster_points->data.size() : 0;
   std::ostringstream ss;
   ss << std::fixed << std::setprecision(2) << std::boolalpha;
   ss << "OBSTACLE STOP MODIFIER: "
@@ -438,8 +416,7 @@ void ObstacleStop::publish_debug_string(bool is_safe) const
   ss << "\t\t"
      << "OBJECTS: " << debug_data_.filtered_objects.objects.size() << " --> "
      << debug_data_.target_polygons.size() << "\n";
-  ss << "\t\t"
-     << "POINTCLOUD: " << filtered_pcd_size << " --> " << cluster_pcd_size << " --> "
+  ss << "\t\t" << "POINTCLOUD: " << filtered_pcd_size << " --> "
      << debug_data_.target_pcd_points.size() << "\n";
   if (nearest_collision_point_) {
     ss << "\t\t"
@@ -453,13 +430,12 @@ void ObstacleStop::publish_debug_string(bool is_safe) const
   StringStamped string_stamp;
   string_stamp.stamp = get_clock()->now();
   string_stamp.data = ss.str();
-  pub_debug_text_->publish(string_stamp);
+  pub_debug_text_(string_stamp);
 }
 
 void ObstacleStop::publish_debug_data(const std::string & ns) const
 {
-  if (debug_data_.filtered_points) pub_filtered_pointcloud_->publish(*debug_data_.filtered_points);
-  if (debug_data_.cluster_points) pub_clustered_pointcloud_->publish(*debug_data_.cluster_points);
+  if (debug_data_.filtered_points) pub_filtered_pointcloud_(*debug_data_.filtered_points);
 
   MarkerArray marker_array;
   const auto ego_z = debug_data_.ego_z;
@@ -524,7 +500,7 @@ void ObstacleStop::publish_debug_data(const std::string & ns) const
     id++;
   }
 
-  debug_viz_pub_->publish(marker_array);
+  debug_viz_pub_(marker_array);
 }
 
 }  // namespace autoware::trajectory_processor::plugin

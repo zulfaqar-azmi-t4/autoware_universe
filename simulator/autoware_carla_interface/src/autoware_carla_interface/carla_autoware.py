@@ -106,6 +106,16 @@ class InitializeInterface(object):
             randomize = True
         return spawn_point, randomize
 
+    def _get_map_spawn_points(self):
+        """Return the map spawn points, or an empty list if the map is unavailable."""
+        try:
+            return self.world.get_map().get_spawn_points()
+        except RuntimeError as error:
+            # cspell:ignore mapless
+            # Mapless CARLA levels (no parseable OpenDRIVE metadata) expose no map.
+            print(f"WARNING: Map spawn points are unavailable (mapless level?): {error}")
+            return []
+
     def _snap_spawn_point_to_ground(self, spawn_point):
         """Snap a spawn point onto the CARLA map geometry, if enabled.
 
@@ -139,6 +149,28 @@ class InitializeInterface(object):
         )
         return snapped
 
+    def _flatten_steering_curve(self):
+        """Replace the vehicle's speed-based steering curve with an identity curve.
+
+        CARLA 0.10 ships corrupt steering-curve data (duplicated, unsorted
+        points such as (10, 0.5); the curve's speed axis is mph on Chaos) which
+        the simulator applies internally, attenuating the achievable steering
+        angle at driving speeds. Writing a flat curve back removes the
+        server-side attenuation so the commanded steer fraction maps directly to
+        the wheel angle.
+        """
+        try:
+            physics = self.ego_actor.get_physics_control()
+            physics.steering_curve = [
+                carla.Vector2D(0.0, 1.0),
+                carla.Vector2D(120.0, 1.0),
+            ]
+            self.ego_actor.apply_physics_control(physics)
+            self.interface.physics_control = physics
+            print("INFO: Applied a flat steering curve to the ego vehicle.")
+        except RuntimeError as error:
+            print(f"WARNING: Failed to flatten the steering curve: {error}")
+
     def _reload_world(self, client):
         """Reload the world via client.load_world(); return the failure, if any."""
         self.logger.info(f"Loading CARLA world '{self.carla_map}' with client.load_world()")
@@ -159,13 +191,18 @@ class InitializeInterface(object):
         """Reduce a CARLA level name such as 'Carla/Maps/Town01' to 'Town01'."""
         return map_name.split("/")[-1]
 
-    def _current_world_map(self, client):
-        """Return the current world's map name, or None if it cannot be determined."""
+    def _query_world_map(self, client):
+        """Return (map_name, query_failed) for the currently active CARLA world."""
         try:
-            return self._normalize_map_name(client.get_world().get_map().name)
+            return self._normalize_map_name(client.get_world().get_map().name), False
         except RuntimeError as exc:
             self.logger.warning(f"Failed to query the active CARLA map: {exc}")
-            return None
+            return None, True
+
+    def _current_world_map(self, client):
+        """Return the current world's map name, or None if it cannot be determined."""
+        name, _ = self._query_world_map(client)
+        return name
 
     def _load_world_if_different(self, client):
         """Try load_world_if_different(); return True on success, False to fall back."""
@@ -185,18 +222,38 @@ class InitializeInterface(object):
             return False
 
     def _verify_world_loaded(self, client, load_error):
-        """Raise unless the requested map is the world CARLA is actually running."""
+        """Raise unless the requested map is the world CARLA is actually running.
+
+        Returns True when the map name was verified, False when verification was
+        skipped because the map metadata is not parseable (mapless level).
+        """
         expected = self._normalize_map_name(self.carla_map)
         deadline = time.time() + max(float(self.timeout), 1.0)
         current = None
+        query_ever_failed = False
         while True:
-            current = self._current_world_map(client)
+            current, query_failed = self._query_world_map(client)
+            query_ever_failed = query_ever_failed or query_failed
             if current == expected:
                 self.logger.info(f"Loaded CARLA world '{expected}'")
-                return
+                return True
             if time.time() >= deadline:
                 break
             time.sleep(1.0)
+
+        if query_ever_failed:
+            # cspell:ignore libcarla
+            # The map query raised at least once instead of returning a name (e.g. a
+            # CARLA level without parseable OpenDRIVE metadata). After such a failure
+            # libcarla keeps serving the previous episode's cached map, so a later
+            # "successful" query reporting a mismatched name cannot be trusted either.
+            # CarlaDataProvider tolerates running without a map, so proceed rather
+            # than aborting the bridge.
+            self.logger.warning(
+                f"Could not verify CARLA loaded '{expected}' by map name (no parseable "
+                "OpenDRIVE metadata); continuing without map verification."
+            )
+            return False
 
         message = (
             f"CARLA world mismatch: requested map '{expected}' but the active world is "
@@ -208,7 +265,11 @@ class InitializeInterface(object):
         raise CarlaWorldLoadError(message) from load_error
 
     def _load_carla_world(self, client):
-        """Load the requested map while supporting CARLA Python API version differences."""
+        """Load the requested map while supporting CARLA Python API version differences.
+
+        Returns True when the loaded map name was verified, False when the level
+        exposes no parseable map metadata (see _verify_world_loaded).
+        """
         load_error = None
         if self.force_load_world:
             load_error = self._reload_world(client)
@@ -216,17 +277,48 @@ class InitializeInterface(object):
             if self._current_world_map(client) != self._normalize_map_name(self.carla_map):
                 load_error = self._reload_world(client)
 
-        self._verify_world_loaded(client, load_error)
+        return self._verify_world_loaded(client, load_error)
+
+    def _force_green_traffic_lights(self):
+        """Set every CARLA traffic light to green and freeze it there.
+
+        No-op unless ``traffic_light.force_green`` is enabled (the check lives here so
+        the caller stays a single unconditional call). Camera-less closed-loop runs
+        have no traffic-light recognition, so the planner would otherwise hold
+        indefinitely at every signalized stop line. Freezing all lights green lets the
+        ego proceed while still exercising the rest of the stack. When
+        traffic_light.publish is also enabled, carla_ros publishes these frozen green
+        states on /perception/traffic_light_recognition/traffic_signals.
+        """
+        if not self.interface.param_values.get("traffic_light.force_green", False):
+            return
+        traffic_lights = self.world.get_actors().filter("*traffic_light*")
+        count = 0
+        for traffic_light in traffic_lights:
+            traffic_light.set_state(carla.TrafficLightState.Green)
+            traffic_light.freeze(True)
+            count += 1
+        print(f"INFO: Forced {count} traffic lights to green and froze them.", flush=True)
 
     def _setup_traffic_manager(self, client):
         """Configure traffic manager with NPC vehicles."""
+        spawn_points_tm = self._get_map_spawn_points()
+        if not spawn_points_tm:
+            # No spawn points means there is nowhere to place NPC traffic; skip it
+            # so mapless levels can still start with use_traffic_manager enabled.
+            print("WARNING: Skipping traffic-manager NPC setup; no map spawn points available.")
+            return
+
         traffic_manager = client.get_trafficmanager()  # cspell:ignore trafficmanager
         traffic_manager.set_synchronous_mode(True)
         traffic_manager.set_random_device_seed(0)
         random.seed(0)
-        spawn_points_tm = self.world.get_map().get_spawn_points()
         for i, spawn_point in enumerate(spawn_points_tm):
             self.world.debug.draw_string(spawn_point.location, str(i), life_time=10)
+        self._spawn_npc_vehicles(spawn_points_tm)
+
+    def _npc_vehicle_blueprints(self):
+        """Return the blueprints of the vehicle models used as NPC traffic."""
         models = [
             "dodge",
             "audi",
@@ -239,26 +331,33 @@ class InitializeInterface(object):
             "crown",
             "impala",
         ]
-        blueprints = []
-        for vehicle in self.world.get_blueprint_library().filter("*vehicle*"):
-            if any(model in vehicle.id for model in models):
-                blueprints.append(vehicle)
-        max_vehicles = 30
-        max_vehicles = min([max_vehicles, len(spawn_points_tm)])
+        return [
+            vehicle
+            for vehicle in self.world.get_blueprint_library().filter("*vehicle*")
+            if any(model in vehicle.id for model in models)
+        ]
+
+    def _spawn_npc_vehicles(self, spawn_points_tm):
+        """Spawn autopilot NPC vehicles on a random subset of the spawn points."""
+        blueprints = self._npc_vehicle_blueprints()
+        max_vehicles = min(30, len(spawn_points_tm))
         vehicles = []
-        for i, spawn_point in enumerate(random.sample(spawn_points_tm, max_vehicles)):
-            temp = self.world.try_spawn_actor(random.choice(blueprints), spawn_point)
-            if temp is not None:
-                vehicles.append(temp)
+        for spawn_point in random.sample(spawn_points_tm, max_vehicles):
+            vehicle = self.world.try_spawn_actor(random.choice(blueprints), spawn_point)
+            if vehicle is not None:
+                vehicles.append(vehicle)
 
         for vehicle in vehicles:
             vehicle.set_autopilot(True)
 
-    def load_world(self):
+    def _connect_client(self):
+        """Open a CARLA client on the configured host/port with the configured timeout."""
         client = carla.Client(self.local_host, self.port)
         client.set_timeout(self.timeout)
-        self._load_carla_world(client)
+        return client
 
+    def _wait_for_world(self, client):
+        """Fetch the world once it is loaded and confirm it can be ticked."""
         # Wait for the world to be fully loaded
         # This is critical for non-default maps that need time to load
         time.sleep(2.0)
@@ -274,32 +373,71 @@ class InitializeInterface(object):
             # In this case, just wait a bit more
             time.sleep(1.0)
 
+    def _apply_world_settings(self):
+        """Push the configured simulation settings onto the loaded world."""
         settings = self.world.get_settings()
         settings.fixed_delta_seconds = self.fixed_delta_seconds
         settings.synchronous_mode = self.sync_mode
         settings.no_rendering_mode = self.no_rendering_mode
         self.world.apply_settings(settings)
-        CarlaDataProvider.set_world(self.world)
-        CarlaDataProvider.set_client(client)
 
+    def _spawn_ego_actor(self):
+        """Spawn the ego vehicle at the configured (optionally ground-snapped) spawn point."""
         spawn_point, randomize = self._parse_spawn_point()
         if not randomize:
             spawn_point = self._snap_spawn_point_to_ground(spawn_point)
-        self.ego_actor = CarlaDataProvider.request_new_actor(
+        ego_actor = CarlaDataProvider.request_new_actor(
             self.vehicle_type, spawn_point, self.agent_role_name, random_location=randomize
         )
-        if self.ego_actor is None:
+        if ego_actor is None:
             raise RuntimeError(
                 f"Failed to spawn ego vehicle '{self.vehicle_type}' at "
                 f"({spawn_point.location.x:.1f}, {spawn_point.location.y:.1f}, "
                 f"{spawn_point.location.z:.1f}); the spawn point may be occupied "
                 "or invalid for this map"
             )
+        return ego_actor
+
+    def load_world(self):
+        client = self._connect_client()
+        map_verified = self._load_carla_world(client)
+        if not map_verified:
+            # After a failed OpenDRIVE parse, libcarla keeps serving the previous
+            # episode's cached map through this client, so world.get_map() would
+            # return a stale (wrong) map instead of raising. Reconnect with a fresh
+            # client so the mapless world reports honestly downstream
+            # (CarlaDataProvider.set_world then runs its map-optional fallbacks).
+            self.logger.warning(
+                "Reconnecting the CARLA client to discard the stale map cache "
+                "of the previous episode."
+            )
+            client = self._connect_client()
+
+        self._wait_for_world(client)
+        self._apply_world_settings()
+        CarlaDataProvider.set_world(self.world)
+        CarlaDataProvider.set_client(client)
+        # Vehicle physics differ between CARLA 0.9.x and 0.10 (Chaos); let the
+        # interface derive its capability flags (e.g. whether the wheel steer
+        # angle is reported) from the server version.
+        self.interface.set_carla_version(client.get_server_version())
+
+        self.ego_actor = self._spawn_ego_actor()
         self.interface.ego_actor = self.ego_actor  # TODO improve design
         self.interface.physics_control = self.ego_actor.get_physics_control()
+        if self.interface.param_values.get("flatten_steering_curve", False):
+            self._flatten_steering_curve()
 
         self.sensor_wrapper = SensorWrapper(self.interface)
         self.sensor_wrapper.setup_sensors(self.ego_actor, False)
+
+        # World, map and ego are now all confirmed loaded: resolve the map
+        # origin from the final map and apply any initial pose that arrived
+        # (and was buffered) during startup.
+        self.interface.on_world_ready()
+
+        # No-op unless traffic_light.force_green is enabled.
+        self._force_green_traffic_lights()
 
         if self.use_traffic_manager:
             self._setup_traffic_manager(client)
