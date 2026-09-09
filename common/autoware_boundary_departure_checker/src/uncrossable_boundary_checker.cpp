@@ -50,7 +50,7 @@ DepartureResult UncrossableBoundaryChecker::update_departure_status(
   }
 
   // An align distance of zero leaves the trajectory that the generator gives.
-  const auto align_dist_m = param_.enable_align_to_ego_pose ? vehicle_info_.front_overhang_m : 0.0;
+  const auto align_dist_m = param_.enable_align_to_ego_pose ? vehicle_info_.max_longitudinal_offset_m : 0.0;
   const auto aligned_traj =
     footprints::align_to_ego_pose(predicted_traj, ego_state.pose_with_cov.pose, align_dist_m);
 
