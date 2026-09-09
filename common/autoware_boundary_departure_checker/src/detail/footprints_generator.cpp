@@ -45,14 +45,14 @@ FootprintMargin calc_margin_from_covariance(
 size_t count_points_within_distance(
   const std::vector<TrajectoryPoint> & trajectory_points, const double dist_m)
 {
- if (dist_m <= 0.0 || trajectory_points.empty()) {
+  if (dist_m <= 0.0 || trajectory_points.empty()) {
     return 0;
   }
 
   double accumulated_dist = 0.0;
   for (size_t i = 1; i < trajectory_points.size(); ++i) {
-    accumulated_dist += autoware_utils_geometry::calc_distance2d(
-      trajectory_points[i - 1], trajectory_points[i]);
+    accumulated_dist +=
+      autoware_utils_geometry::calc_distance2d(trajectory_points[i - 1], trajectory_points[i]);
 
     if (accumulated_dist > dist_m) return i;
   }
@@ -71,8 +71,8 @@ std::vector<TrajectoryPoint> align_to_ego_pose(
 
   const auto & start_pose = trajectory_points.front().pose;
   const auto start_yaw = tf2::getYaw(start_pose.orientation);
-  const auto yaw_correction_rad = angles::shortest_angular_distance(
-    tf2::getYaw(ego_pose.orientation), start_yaw);
+  const auto yaw_correction_rad =
+    angles::shortest_angular_distance(tf2::getYaw(ego_pose.orientation), start_yaw);
   const auto x_correction_m = ego_pose.position.x - start_pose.position.x;
   const auto y_correction_m = ego_pose.position.y - start_pose.position.y;
 
